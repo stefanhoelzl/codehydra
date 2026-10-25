@@ -3,23 +3,24 @@
  * Integration tests for OpenCodeProvider.sendMessage and .sendPromptAsync.
  *
  * The provider builds its own OpenCodeClient; the client module is swapped for
- * one that runs the real client over the behavioral SDK mock.
+ * one that runs the real client over the behavioral wire mock.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  createSdkClientMock,
-  createSdkFactoryMock,
-  type MockSdkClient,
-} from "./sdk-client.state-mock";
+  createWireClientMock,
+  wireFactoryMock,
+  type MockWireClient,
+} from "./wire-client.state-mock";
 import type * as ClientModule from "./client";
 import type { Logger } from "../../../boundaries/platform/logging";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
+import { OpenCodeError } from "../../../shared/errors/service-errors";
 import { OpenCodeProvider } from "./provider";
 import { Path } from "../../../utils/path/path";
 import { workspaceRefSchema } from "../../../intents/contract";
 
-const sdk = vi.hoisted(() => ({ current: null as MockSdkClient | null }));
+const wire = vi.hoisted(() => ({ current: null as MockWireClient | null }));
 
 // The factory runs when ./provider first imports ./client — after the imports
 // above, so the state mock is already there to use.
@@ -30,7 +31,8 @@ vi.mock("./client", async (importOriginal) => {
       super(
         port,
         logger,
-        createSdkFactoryMock(sdk.current!) as unknown as ClientModule.SdkClientFactory
+        { major: 1, directory: "/workspace/feature-a" },
+        wireFactoryMock(wire.current!)
       );
     }
   }
@@ -42,7 +44,7 @@ describe("OpenCodeProvider.sendMessage", () => {
   let provider: OpenCodeProvider;
 
   beforeEach(async () => {
-    sdk.current = createSdkClientMock();
+    wire.current = createWireClientMock();
     provider = new OpenCodeProvider(
       workspaceRefSchema.parse("ch::local::/workspace::feature-a"),
       new Path("/workspace/feature-a"),
@@ -59,7 +61,7 @@ describe("OpenCodeProvider.sendMessage", () => {
     await expect(provider.sendMessage(message, { waitMs: 0 })).rejects.toThrow(
       /No OpenCode session is running/
     );
-    expect(sdk.current!.$.prompts).toHaveLength(0);
+    expect(wire.current!.$.prompts).toHaveLength(0);
   });
 
   it("queues the message on the primary session, the sender tagged on the first line", async () => {
@@ -68,7 +70,7 @@ describe("OpenCodeProvider.sendMessage", () => {
     await provider.sendMessage(message, { waitMs: 0 });
 
     const sessionId = provider.getSession()!.sessionId;
-    expect(sdk.current!.$.prompts).toEqual([
+    expect(wire.current!.$.prompts).toEqual([
       expect.objectContaining({
         sessionId,
         prompt: "[from CodeHydra · workspace other] the build is green",
@@ -82,7 +84,7 @@ describe("OpenCodeProvider.sendMessage", () => {
     provider.markActive();
     await sending;
 
-    expect(sdk.current!.$.prompts).toHaveLength(1);
+    expect(wire.current!.$.prompts).toHaveLength(1);
   });
 
   it("fails again once the agent terminal closes", async () => {
@@ -96,9 +98,10 @@ describe("OpenCodeProvider.sendMessage", () => {
 
   it("surfaces a prompt the server did not accept", async () => {
     provider.markActive();
-    sdk.current!.session.promptAsync = vi
-      .fn()
-      .mockResolvedValue({ data: undefined, error: { name: "NotFoundError" } });
+    wire.current!.sendPromptAsync = vi.fn().mockResolvedValue({
+      ok: false,
+      error: new OpenCodeError("NotFoundError", "REQUEST_FAILED"),
+    });
 
     await expect(provider.sendMessage(message, { waitMs: 0 })).rejects.toThrow("NotFoundError");
   });
@@ -108,7 +111,7 @@ describe("OpenCodeProvider.sendPromptAsync", () => {
   let provider: OpenCodeProvider;
 
   beforeEach(async () => {
-    sdk.current = createSdkClientMock();
+    wire.current = createWireClientMock();
     provider = new OpenCodeProvider(
       workspaceRefSchema.parse("ch::local::/workspace::feature-a"),
       new Path("/workspace/feature-a"),
@@ -132,7 +135,7 @@ describe("OpenCodeProvider.sendPromptAsync", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(sdk.current!.$.prompts).toEqual([
+    expect(wire.current!.$.prompts).toEqual([
       expect.objectContaining({
         sessionId: session.value.id,
         prompt: "build feature X",
@@ -167,6 +170,6 @@ describe("OpenCodeProvider.sendPromptAsync", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain("Not connected");
-    expect(sdk.current!.$.prompts).toHaveLength(0);
+    expect(wire.current!.$.prompts).toHaveLength(0);
   });
 });

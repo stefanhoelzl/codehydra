@@ -41,7 +41,7 @@ import {
   workspacesDir,
   POLL_INTERVALS,
 } from "./fixtures";
-import type { Agent } from "./env.ts";
+import { projectAgent, type Agent } from "./env.ts";
 
 const WORKSPACE_NAME = "agent-turn";
 
@@ -135,7 +135,7 @@ function readWorkspaceTitle(): string {
 
 /** The agent this Playwright project exercises. */
 function currentAgent(): Agent {
-  return test.info().project.name as Agent;
+  return projectAgent(test.info().project.name);
 }
 
 /**

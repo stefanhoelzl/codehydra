@@ -74,12 +74,18 @@ interface SetupOptions {
   downloaded?: readonly string[];
   /** Channel → version the host currently serves. */
   channels?: Record<string, string>;
-  /** Directories on PATH, and which of them hold a working/broken `agent`. */
+  /**
+   * Directories on PATH, and which of them hold an `agent` — and what its
+   * `--version` prints: "works" (exit 0, no version), "broken" (exit 1), or
+   * `{ stdout }` (exit 0 printing that).
+   */
   path?: readonly string[];
-  systemAgents?: Record<string, "works" | "broken">;
+  systemAgents?: Record<string, "works" | "broken" | { stdout: string }>;
   platform?: SupportedPlatform;
   env?: Record<string, string>;
   systemCandidates?: readonly string[];
+  /** Majors the descriptor accepts from a system install. */
+  supportedMajors?: readonly number[];
 }
 
 function setup(options: SetupOptions = {}) {
@@ -116,7 +122,14 @@ function setup(options: SetupOptions = {}) {
       const known = Object.entries(systemAgents).find(([executable]) =>
         command.includes(native(executable))
       );
-      return { exitCode: known?.[1] === "works" ? 0 : 1 };
+      const configured = known?.[1];
+      if (configured === undefined || configured === "broken") {
+        return { exitCode: 1 };
+      }
+      if (configured === "works") {
+        return { exitCode: 0 };
+      }
+      return { exitCode: 0, stdout: configured.stdout };
     },
   });
 
@@ -125,6 +138,7 @@ function setup(options: SetupOptions = {}) {
     descriptor: {
       ...descriptor,
       ...(options.systemCandidates && { systemCandidates: options.systemCandidates }),
+      ...(options.supportedMajors && { supportedMajors: options.supportedMajors }),
     },
     version: { get: () => options.version ?? null },
     pathProvider: createMockPathProvider({ bundlesRootDir: BUNDLES }),
@@ -193,6 +207,16 @@ describe("agent binary resolver", () => {
 
       expect(await resolver.prepare()).toEqual({ needsDownload: true });
     });
+
+    it("refuses to download a pin of an unsupported major", async () => {
+      const { resolver, httpClient } = setup({ version: "3.0.0", supportedMajors: [1, 2] });
+
+      expect(await resolver.prepare()).toEqual({ needsDownload: true });
+      await expect(resolver.download()).rejects.toMatchObject({ code: "INVALID_VERSION" });
+
+      expect(httpClient).toHaveRequestCount(0);
+      expect(resolver.current()).toBeNull();
+    });
   });
 
   describe("the system install", () => {
@@ -232,6 +256,63 @@ describe("agent binary resolver", () => {
       await resolver.prepare();
 
       expect(resolver.current()?.path).toBe(native("/usr/bin/agent"));
+    });
+
+    it("carries the version a system install reports for --version", async () => {
+      const { resolver } = setup({
+        path: ["/usr/bin"],
+        systemAgents: { "/usr/bin/agent": { stdout: "opencode v2.1.4\n" } },
+      });
+
+      await resolver.prepare();
+
+      expect(resolver.current()).toEqual({
+        path: native("/usr/bin/agent"),
+        source: "system",
+        version: "2.1.4",
+      });
+    });
+
+    it("is used when its version output names no version", async () => {
+      const { resolver } = setup({
+        path: ["/usr/bin"],
+        systemAgents: { "/usr/bin/agent": { stdout: "agent, custom build\n" } },
+      });
+
+      await resolver.prepare();
+
+      expect(resolver.current()).toMatchObject({ source: "system", version: null });
+    });
+
+    it("is skipped when its major is not supported, falling back to a download", async () => {
+      const { resolver, httpClient } = setup({
+        path: ["/usr/bin"],
+        systemAgents: { "/usr/bin/agent": { stdout: "opencode v3.0.0\n" } },
+        supportedMajors: [1, 2],
+      });
+
+      expect(await resolver.prepare()).toEqual({ needsDownload: true });
+      // The channel was looked up: the unsupported system install was not used.
+      expect(httpClient).toHaveRequested(`${HOST}/stable`);
+    });
+
+    it("takes a later PATH match when an earlier one is an unsupported major", async () => {
+      const { resolver } = setup({
+        path: ["/home/me/.local/bin", "/usr/bin"],
+        systemAgents: {
+          "/home/me/.local/bin/agent": { stdout: "opencode v3.0.0\n" },
+          "/usr/bin/agent": { stdout: "opencode v1.19.2\n" },
+        },
+        supportedMajors: [1, 2],
+      });
+
+      await resolver.prepare();
+
+      expect(resolver.current()).toMatchObject({
+        path: native("/usr/bin/agent"),
+        source: "system",
+        version: "1.19.2",
+      });
     });
 
     it("finds an npm .cmd shim on Windows through a `Path` key and runs it via a shell", async () => {

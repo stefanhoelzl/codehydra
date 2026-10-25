@@ -39,27 +39,27 @@ These rules MUST be followed. Violations require explicit user approval.
 
 All external access MUST use abstraction interfaces:
 
-| External System       | Required Interface                    | Forbidden Direct Access |
-| --------------------- | ------------------------------------- | ----------------------- |
-| Filesystem            | `FileSystemBoundary`                  | `node:fs/promises`      |
-| HTTP requests         | `HttpClient`                          | `fetch()`               |
-| Port operations       | `PortManager`                         | `net` module            |
-| Local sockets         | `LocalSocketClient`                   | `net.createConnection`  |
-| Process spawning      | `ProcessRunner`                       | `execa`                 |
-| Agent operations      | `AgentProvider`, `AgentServerManager` | Direct OpenCode SDK     |
-| OpenCode API          | `SdkClientFactory`                    | Direct HTTP/SSE         |
-| Git operations        | `IGitClient`                          | `simple-git`            |
-| Electron Window       | `WindowBoundary`                      | `BaseWindow`            |
-| Electron View         | `ViewBoundary`                        | `WebContentsView`       |
-| Electron Session      | `SessionBoundary`                     | `session`               |
-| Electron IPC          | `ViewBoundary.send` / `onIpc`         | `ipcMain`               |
-| Electron Dialog       | `DialogBoundary`                      | `dialog`                |
-| Electron Image        | `ImageBoundary`                       | `nativeImage`           |
-| Electron App          | `AppBoundary`                         | `app`                   |
-| Electron Power        | `AppBoundary.allowPowerSaving`        | `powerSaveBlocker`      |
-| Electron Menu         | `MenuBoundary`                        | `Menu`                  |
-| Electron Notification | `OsNotificationBoundary`              | `Notification`          |
-| PostHog telemetry     | `PostHogBoundary`                     | `posthog-node`          |
+| External System       | Required Interface                                            | Forbidden Direct Access |
+| --------------------- | ------------------------------------------------------------- | ----------------------- |
+| Filesystem            | `FileSystemBoundary`                                          | `node:fs/promises`      |
+| HTTP requests         | `HttpClient`                                                  | `fetch()`               |
+| Port operations       | `PortManager`                                                 | `net` module            |
+| Local sockets         | `LocalSocketClient`                                           | `net.createConnection`  |
+| Process spawning      | `ProcessRunner`                                               | `execa`                 |
+| Agent operations      | `AgentProvider`, `AgentServerManager`                         | Direct agent SDK/client |
+| OpenCode API          | `WireClient` (1.x `@opencode-ai/sdk`, 2.x `@opencode/client`) | Direct HTTP/SSE         |
+| Git operations        | `IGitClient`                                                  | `simple-git`            |
+| Electron Window       | `WindowBoundary`                                              | `BaseWindow`            |
+| Electron View         | `ViewBoundary`                                                | `WebContentsView`       |
+| Electron Session      | `SessionBoundary`                                             | `session`               |
+| Electron IPC          | `ViewBoundary.send` / `onIpc`                                 | `ipcMain`               |
+| Electron Dialog       | `DialogBoundary`                                              | `dialog`                |
+| Electron Image        | `ImageBoundary`                                               | `nativeImage`           |
+| Electron App          | `AppBoundary`                                                 | `app`                   |
+| Electron Power        | `AppBoundary.allowPowerSaving`                                | `powerSaveBlocker`      |
+| Electron Menu         | `MenuBoundary`                                                | `Menu`                  |
+| Electron Notification | `OsNotificationBoundary`                                      | `Notification`          |
+| PostHog telemetry     | `PostHogBoundary`                                             | `posthog-node`          |
 
 **Acceptable exceptions**: Third-party libraries that encapsulate their own I/O internally do not need abstraction layers. We abstract our own I/O, not the internals of external libraries.
 

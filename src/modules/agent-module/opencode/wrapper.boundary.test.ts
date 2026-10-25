@@ -30,6 +30,8 @@ const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../../dist/bin/ch.cjs");
  */
 interface FakeOpencodeOutput {
   args: string[];
+  /** The child's OPENCODE_PASSWORD, as the wrapper bridged it (2.x). */
+  password: string | null;
 }
 
 /**
@@ -56,7 +58,8 @@ async function createFakeOpencodeBinary(opencodeDir: string): Promise<string> {
   const fakeNodeContent = `#!/usr/bin/env node
 // Fake opencode binary for testing - outputs JSON for structured assertions
 const output = {
-  args: process.argv.slice(2)
+  args: process.argv.slice(2),
+  password: process.env.OPENCODE_PASSWORD ?? null
 };
 console.log(JSON.stringify(output));
 const exitCode = parseInt(process.env.OPENCODE_EXIT_CODE || "0", 10);
@@ -352,6 +355,89 @@ describe("ch opencode boundary tests", () => {
       expect(output!.args).toContain("http://127.0.0.1:59999");
       expect(output!.args).toContain("--session");
       expect(output!.args).toContain("ses-123");
+    });
+  });
+
+  describe("the 2.x wire", () => {
+    it("connects with --server instead of attach", async () => {
+      const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
+        {
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
+          _CH_OPENCODE_MAJOR: "2",
+          _CH_OPENCODE_SESSION_ID: "ses-abc123",
+        },
+        tempDir.path,
+        ["opencode"]
+      );
+
+      expect(result.status).toBe(0);
+      expect(parseFakeOpencodeOutput(result.stdout)!.args).toEqual([
+        "--server",
+        "http://127.0.0.1:14001",
+        "--session",
+        "ses-abc123",
+      ]);
+    });
+
+    it("hands the password to the child as OPENCODE_PASSWORD", async () => {
+      const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
+        {
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
+          _CH_OPENCODE_MAJOR: "2",
+          _CH_OPENCODE_PASSWORD: "sekret-pass",
+        },
+        tempDir.path,
+        ["opencode", "--print-logs"]
+      );
+
+      expect(result.status).toBe(0);
+      const output = parseFakeOpencodeOutput(result.stdout)!;
+      // The child got the server password as OPENCODE_PASSWORD...
+      expect(output.password).toBe("sekret-pass");
+      // ...and the 2.x connect form, with arguments passed on.
+      expect(output.args).toEqual(["--server", "http://127.0.0.1:14001", "--print-logs"]);
+    });
+
+    it("omits the password entirely when the server has none", async () => {
+      const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
+        {
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
+          _CH_OPENCODE_MAJOR: "2",
+        },
+        tempDir.path,
+        ["opencode"]
+      );
+
+      expect(result.status).toBe(0);
+      expect(parseFakeOpencodeOutput(result.stdout)!.password).toBeNull();
+    });
+
+    it("stays on attach for an unset or unknown major", async () => {
+      for (const major of [undefined, "3"]) {
+        const result = await executeScript(
+          COMPILED_SCRIPT_PATH,
+          {
+            _CH_OPENCODE_PORT: "14001",
+            _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
+            ...(major !== undefined && { _CH_OPENCODE_MAJOR: major }),
+          },
+          tempDir.path,
+          ["opencode"]
+        );
+
+        expect(result.status).toBe(0);
+        const output = parseFakeOpencodeOutput(result.stdout)!;
+        expect(output.args).toContain("attach");
+        expect(output.args).not.toContain("--server");
+        // 1.x has no password to bridge.
+        expect(output.password).toBeNull();
+      }
     });
   });
 });

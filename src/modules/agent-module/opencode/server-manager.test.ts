@@ -36,6 +36,13 @@ const TEST_BINARY: ResolvedAgentBinary = {
   version: "1.0.223",
 };
 
+/** A 2.x `opencode`: the other server API CodeHydra speaks. */
+const TEST_BINARY_V2: ResolvedAgentBinary = {
+  path: "/bundles/opencode/2.1.4/opencode",
+  source: "download",
+  version: "2.1.4",
+};
+
 /**
  * Create a mock HttpClient with vitest spies.
  */
@@ -557,6 +564,97 @@ describe("OpenCodeServerManager", () => {
 
       const parsed = JSON.parse(configContent!) as Record<string, unknown>;
       expect(parsed.mcp).toBeUndefined();
+    });
+  });
+
+  describe("the 2.x wire", () => {
+    it("gives the server a password and health-checks /api/info with it", async () => {
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
+        binary: TEST_BINARY_V2,
+      });
+
+      const spawned = mockProcessRunner.$.spawned(0);
+      const password = spawned.$.env?.OPENCODE_PASSWORD;
+      expect(typeof password).toBe("string");
+      expect(password!.length).toBeGreaterThan(0);
+
+      // The readiness endpoint is authenticated, so a healthy check also
+      // proves the password works.
+      const [url, options] = mockHttpClient.fetch.mock.calls[0]! as [
+        string,
+        { headers?: Record<string, string> },
+      ];
+      expect(url).toBe("http://127.0.0.1:14001/api/info");
+      const expected = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
+      expect(options?.headers?.Authorization).toBe(expected);
+
+      // The wire it speaks is visible to the provider and the wrapper.
+      expect(manager.getWireInfo(TEST_WORKSPACE_REF)).toEqual({ major: 2, password });
+    });
+
+    it("health-checks 1.x on /path without auth", async () => {
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
+        binary: TEST_BINARY,
+      });
+
+      const [url, options] = mockHttpClient.fetch.mock.calls[0]! as [
+        string,
+        { headers?: Record<string, string> },
+      ];
+      expect(url).toBe("http://127.0.0.1:14001/path");
+      expect(options?.headers?.Authorization).toBeUndefined();
+      expect(manager.getWireInfo(TEST_WORKSPACE_REF)).toEqual({
+        major: 1,
+        password: undefined,
+      });
+    });
+
+    it("configures the 2.x config shapes", async () => {
+      manager.setMcpConfig({
+        nodePath: "/ide/node",
+        cliPath: "/data/bin/ch.cjs",
+        port: 12345,
+        token: "test-token",
+      });
+
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
+        binary: TEST_BINARY_V2,
+      });
+
+      const parsed = JSON.parse(mockProcessRunner.$.spawned(0).$.env!.OPENCODE_CONFIG_CONTENT!) as {
+        update?: string;
+        autoupdate?: boolean;
+        mcp: { servers: { codehydra: Record<string, unknown> } };
+      };
+      // `update` replaces 1.x's `autoupdate`; `mcp.servers` replaces the
+      // top-level server map, with no `enabled` to flip.
+      expect(parsed.update).toBe("disable");
+      expect(parsed.autoupdate).toBeUndefined();
+      expect(parsed.mcp.servers.codehydra.type).toBe("local");
+      // Direct tools, not only Code Mode's `execute` catalog.
+      expect(parsed.mcp.servers.codehydra.codemode).toBe(false);
+      expect(parsed.mcp.servers.codehydra.command).toEqual([
+        "/ide/node",
+        "/data/bin/ch.cjs",
+        "mcp",
+      ]);
+      expect(parsed.mcp.servers.codehydra.enabled).toBeUndefined();
+    });
+
+    it("reuses the same password across a restart, drops it on a stop", async () => {
+      const ref = refOf("/workspace/feature-a");
+      await manager.startServer(ref, new Path("/workspace/feature-a"), {
+        binary: TEST_BINARY_V2,
+      });
+      const password = mockProcessRunner.$.spawned(0).$.env?.OPENCODE_PASSWORD;
+
+      await manager.restartServer(ref);
+      // Same port and password: the attached terminal's env still works.
+      expect(mockProcessRunner.$.spawned(1).$.env?.OPENCODE_PASSWORD).toBe(password);
+      expect(manager.getWireInfo(ref)).toEqual({ major: 2, password });
+
+      await manager.stopServer(ref);
+      expect(manager.getWireInfo(ref)).toBeUndefined();
     });
   });
 

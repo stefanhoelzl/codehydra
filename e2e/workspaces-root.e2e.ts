@@ -14,7 +14,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
-import type { Agent } from "./env";
+import { projectAgent, type Agent } from "./env";
 import {
   createWorkspace,
   DATA_ROOT,
@@ -35,7 +35,7 @@ let newRoot: string;
 
 /** The agent project this spec is running under, for a relaunch. */
 function currentAgent(): Agent {
-  return test.info().project.name as Agent;
+  return projectAgent(test.info().project.name);
 }
 
 /** Record a requested move, as "Migrate and restart" does before it relaunches. */

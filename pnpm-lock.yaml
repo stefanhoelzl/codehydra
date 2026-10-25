@@ -20,6 +20,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.18.33
         version: 1.18.33
+      '@opencode/client':
+        specifier: ^2.1.4
+        version: 2.1.4(effect@4.0.1)
       '@simple-git/argv-parser':
         specifier: 2.0.1
         version: 2.0.1
@@ -1153,6 +1156,23 @@ packages:
   '@opencode-ai/sdk@1.18.33':
     resolution: {integrity: sha512-Nyurky9+AA2tvZ6my8UtO5pxPoXxrNypqjeEqMshBGiR542glOy+KE1Y+3lwWU+Z6HC/hSmrdXNbX81+qiuTzg==}
 
+  '@opencode/client@2.1.4':
+    resolution: {integrity: sha512-xNHP8Xu4wcq4G849Xnbb8IxYxMTzF0TqvohWVUQZH5aURrVHIIbHMfXbZY6s4i4C9kpVbwjXFFwWAo6KIK3oiw==}
+    peerDependencies:
+      effect: 4.0.1
+      solid-js: '>=1.9.0'
+    peerDependenciesMeta:
+      effect:
+        optional: true
+      solid-js:
+        optional: true
+
+  '@opencode/protocol@2.1.4':
+    resolution: {integrity: sha512-dnifgvY6p4xdHkXRH3PEaobfCqrHb1AhihKxPNRNkGn5SueRCFCfK2pZW1GkeC36fGCmcLxlfihuIMaQL1BVzA==}
+
+  '@opencode/schema@2.1.4':
+    resolution: {integrity: sha512-PLr8eFW81Yz6U7YsSgfSUClUUH//8omh3HiXu/L08VX5arorWNAu2uSjoXyHIGkm7TaTbdXBGPmmDfpvrDM2wQ==}
+
   '@oxc-project/types@0.151.0':
     resolution: {integrity: sha512-J1yXrIlNDZVzE3ada310xeAw7nH8yCAyLPuUIsjKatFPmfn5bS1oW+cM+QsGOtVWd5nhSpbwZWx/rue+r5Z+PA==}
 
@@ -1450,6 +1470,9 @@ packages:
 
   '@socket.io/component-emitter@3.1.2':
     resolution: {integrity: sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA==}
+
+  '@standard-schema/spec@1.1.0':
+    resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
   '@sveltejs/acorn-typescript@1.0.13':
     resolution: {integrity: sha512-wgKggnhZVL9Bfx1OaKKTrYY9BFRk6C8UAkQNUcIv1+llzYrIqy+RZm5HPKzn0NpEBvTVhTqB4kQyllZywsRBRQ==}
@@ -2402,6 +2425,9 @@ packages:
 
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
+
+  effect@4.0.1:
+    resolution: {integrity: sha512-b1VlQG9g8fwxE5QnIZuPoOP/0MsqHJSRKxUijjoM80E5q95FXrX5yWtY5XI8G+GJsBQAVSDbLS458z9a++uVvw==}
 
   ejs@3.1.10:
     resolution: {integrity: sha512-UeJmFfOrAQS8OJWPZ4qtgHyWExa088/MtK5UEyoJGFH67cDEXkZSviOiKRCZ4Xij0zxI3JECgYs3oKx+AizQBA==}
@@ -5610,6 +5636,23 @@ snapshots:
     dependencies:
       cross-spawn: 7.0.6
 
+  '@opencode/client@2.1.4(effect@4.0.1)':
+    dependencies:
+      '@opencode/protocol': 2.1.4
+      '@opencode/schema': 2.1.4
+    optionalDependencies:
+      effect: 4.0.1
+
+  '@opencode/protocol@2.1.4':
+    dependencies:
+      '@opencode/schema': 2.1.4
+      effect: 4.0.1
+
+  '@opencode/schema@2.1.4':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      effect: 4.0.1
+
   '@oxc-project/types@0.151.0': {}
 
   '@peculiar/asn1-schema@2.10.0':
@@ -5808,6 +5851,8 @@ snapshots:
   '@sindresorhus/merge-streams@4.0.0': {}
 
   '@socket.io/component-emitter@3.1.2': {}
+
+  '@standard-schema/spec@1.1.0': {}
 
   '@sveltejs/acorn-typescript@1.0.13(acorn@8.18.0)':
     dependencies:
@@ -6925,6 +6970,8 @@ snapshots:
       version-range: 4.15.0
 
   ee-first@1.1.1: {}
+
+  effect@4.0.1: {}
 
   ejs@3.1.10:
     dependencies:

@@ -279,7 +279,9 @@ const claudeVersionConfig = configService.register("version.claude", {
 });
 const opencodeVersionConfig = configService.register("version.opencode", {
   default: null,
-  description: "OpenCode agent version: null = system install, else latest; x.y.z | latest",
+  description:
+    "OpenCode agent version (1.x or 2.x; system installs of either): null = system install, " +
+    "else latest; x.y.z | latest",
   ...storeString({ nullable: true }),
 });
 const downloadBinariesConfig = configService.register("download-binaries", {

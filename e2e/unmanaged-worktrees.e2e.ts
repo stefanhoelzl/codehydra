@@ -16,7 +16,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
-import type { Agent } from "./env";
+import { projectAgent, type Agent } from "./env";
 import { launchApp, nameField, useApp, workspaceRow, workspacesDir } from "./fixtures";
 
 const app = useApp();
@@ -27,7 +27,7 @@ let strayDir: string;
 
 /** The agent project this spec is running under, for a relaunch. */
 function currentAgent(): Agent {
-  return test.info().project.name as Agent;
+  return projectAgent(test.info().project.name);
 }
 
 /** Run git in the fixture repo, failing loudly — a bad fixture must not read as a pass. */

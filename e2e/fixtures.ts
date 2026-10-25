@@ -23,6 +23,8 @@ import {
   mode,
   freePort,
   packagedExecutable,
+  projectAgent,
+  projectOpenCodeMajor,
   resetDataState,
   resetRoot,
   type Agent,
@@ -131,6 +133,52 @@ export async function launchCommand(options: LaunchAppOptions = {}): Promise<{
   };
 }
 
+/**
+ * Pins an OpenCode project to the binary of its lane's major that
+ * download-binaries seeded into the root (an env override, which beats
+ * config.json): `opencode` runs 2.x, `opencode-legacy` 1.x. Both are pinned —
+ * unpinned, the app prefers an `opencode` on PATH, which can be either major,
+ * and a lane would pass on the wrong wire.
+ */
+function openCodeVersionPin(): Record<string, string> {
+  let project: string;
+  try {
+    project = test.info().project.name;
+  } catch {
+    // Launched outside a test context: nothing to pin.
+    return {};
+  }
+  if (projectAgent(project) !== "opencode") return {};
+  const major = String(projectOpenCodeMajor(project));
+  const dir = join(ROOT_DIR, "opencode");
+  const version = existsSync(dir)
+    ? readdirSync(dir).find((name) => name.split(".")[0] === major)
+    : undefined;
+  if (version === undefined) {
+    throw new Error(
+      `The ${project} project runs OpenCode ${major}.x, but none is in ${dir} — run the download-binaries project first`
+    );
+  }
+  return { CH_VERSION__OPENCODE: version };
+}
+
+/**
+ * A database of its own for every OpenCode server a project's app starts: the
+ * app hands its environment to `opencode serve`. Without it the lanes share
+ * the runner's `opencode.db`, and once the 2.x lane has created that file the
+ * 1.x lane cannot start a server at all ("Database is not empty and has no
+ * session table"). Under ROOT_DIR, so a run never sees an earlier run's.
+ */
+function openCodeDatabase(): Record<string, string> {
+  let project: string;
+  try {
+    project = test.info().project.name;
+  } catch {
+    project = "default";
+  }
+  return { OPENCODE_DB: join(ROOT_DIR, `opencode-${project}.db`) };
+}
+
 export async function launchApp(driver: AppDriver, options: LaunchAppOptions = {}): Promise<void> {
   const args = await appFlags(options);
   // Before launch, not after: the app logs from its very first tick.
@@ -144,6 +192,8 @@ export async function launchApp(driver: AppDriver, options: LaunchAppOptions = {
       ...process.env,
       _CHDEV_ROOT_DIR: ROOT_DIR,
       ...(typeof options.env === "function" ? options.env() : (options.env ?? {})),
+      ...openCodeVersionPin(),
+      ...openCodeDatabase(),
     },
     timeout: 120_000,
     actionTimeout: 15_000,
@@ -432,7 +482,7 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
     launchedAt = 0;
     if (options.cold) return;
     // The warm projects are named after the agent they exercise.
-    const agent = options.agent ?? (test.info().project.name as Agent);
+    const agent = options.agent ?? projectAgent(test.info().project.name);
     // Warm start: keep config.json (agent choice), bundles, and installed VSIXes.
     await resetDataState({ keepConfig: true });
     await launchApp(driver, { ...options, agent });

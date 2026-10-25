@@ -34,7 +34,7 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. Everyt
 
 **Existing implementations:**
 
-- **OpenCode** (`src/modules/agent-module/opencode/`) - SSE-based SDK client, one server per workspace
+- **OpenCode** (`src/modules/agent-module/opencode/`) - SSE client over a dual-stack wire (1.x and 2.x server APIs), one server per workspace
 - **Claude Code** (`src/modules/agent-module/claude/`) - HTTP hook server, shared across all workspaces
 
 ---
@@ -116,12 +116,15 @@ src/modules/agent-module/
   module-provider.ts        # createAgentModuleProvider core + AgentModuleSpec
   status-utils.ts           # Pure status conversion helpers
   opencode/
-    setup-info.ts           # Version/URL/bundle-dir helper functions
+    setup-info.ts           # Download coordinates (1.x GitHub, 2.x npm) + wire helpers
     server-manager.ts       # OpenCodeServerManager (one server per workspace)
-    provider.ts             # OpenCodeProvider (SSE client wrapper)
-    client.ts               # OpenCodeClient (official SDK + SSE)
+    provider.ts             # OpenCodeProvider (client wrapper + status aggregation)
+    client.ts               # OpenCodeClient (wire-agnostic facade)
+    wire.ts                 # WireClient seam (calls + normalized events)
+    wire-v1.ts              # 1.x wire (@opencode-ai/sdk endpoints)
+    wire-v2.ts              # 2.x wire (@opencode/client, /api/*, Basic auth)
     module-provider.ts      # createOpenCodeModuleProvider (spec definition)
-    wrapper.ts              # CLI wrapper (redirects to `opencode attach`)
+    wrapper.ts              # CLI wrapper (redirects to `opencode attach` / `--server`)
   claude/
     setup-info.ts           # Version/URL/sub-path helper functions
     server-manager.ts       # ClaudeCodeServerManager (shared HTTP hook server)
@@ -155,7 +158,7 @@ Per-agent behavior is supplied via `AgentModuleSpec<P>` (generic over the concre
 | Spec member              | Claude                                                              | OpenCode                                                 |
 | ------------------------ | ------------------------------------------------------------------- | -------------------------------------------------------- |
 | `binary` / `binaryEnv`   | resolver; `_CH_CLAUDE_BIN` (+ `DISABLE_AUTOUPDATER` for a download) | resolver; `_CH_OPENCODE_BIN`                             |
-| `createProvider`         | `new ClaudeCodeProvider({serverManager, workspaceRef, logger})`     | `new OpenCodeProvider(ref, path, logger)`                |
+| `createProvider`         | `new ClaudeCodeProvider({serverManager, workspaceRef, logger})`     | `new OpenCodeProvider(ref, path, logger, wireInfo)`      |
 | `connectProvider`        | `connect(port)`                                                     | `connect(port)` + `fetchStatus()`                        |
 | `initialStatus`          | always `"none"` (status arrives via hooks)                          | derived from `getEffectiveCounts()`                      |
 | `onProviderRegistered`   | —                                                                   | queues the pending initial prompt on the primary session |
@@ -261,16 +264,16 @@ interface AgentSessionInfo {
 
 ### Pending Request Override
 
-For agents like OpenCode, sessions waiting on the user are displayed as "idle" (green indicator) rather than "busy", though OpenCode itself still reports them busy. A session waits on the user for a permission prompt or for its `question` tool; `OpenCodeClient` normalizes both into `UserRequestEvent`s (`asked` / `resolved`, with a `kind`). The provider tracks `pendingRequests: Map<sessionId, Set<requestId>>`; any pending request makes `getEffectiveCounts()` report idle.
+For agents like OpenCode, sessions waiting on the user are displayed as "idle" (green indicator) rather than "busy", though OpenCode itself still reports them busy. A session waits on the user for a permission prompt or for a question the user must answer (1.x's `question` tool, 2.x's forms); `OpenCodeClient` normalizes both into `UserRequestEvent`s (`asked` / `resolved`, with a `kind`). The provider tracks `pendingRequests: Map<sessionId, Set<requestId>>`; any pending request makes `getEffectiveCounts()` report idle.
 
-**Event handling:**
+**Event handling (after wire normalization):**
 
-- `permission.asked`, `question.asked`: Adds the request to `pendingRequests`
-- `permission.replied`, `question.replied`, `question.rejected`: Removes it from `pendingRequests`
+- `permission.asked`, a question/form asked: Adds the request to `pendingRequests`
+- `permission.replied`, a question/form answered or dismissed: Removes it from `pendingRequests`
 - `session.deleted`: Clears pending requests for that session
 - Disconnect: Clears all pending requests (reconnection safety)
 
-These are the event names since OpenCode 1.1.1; the older `permission.updated` is ignored. The v1 SDK the client uses does not type them, so `handleSdkEvent` accepts the SDK's v2 `Event` union too.
+The permission names go back to OpenCode 1.1.1 (the older `permission.updated` is ignored). Event normalization — where the two wires' payloads become the same shapes — lives in `wire-v1.ts` / `wire-v2.ts` and is unit-tested there (`normalizeSdkEvent` / `normalizeV2Event`).
 
 ### Open Modal Override
 
@@ -353,20 +356,20 @@ Agent servers are configured to connect to CodeHydra's MCP server for workspace 
 
 ### OpenCode MCP Configuration
 
-OpenCode servers receive the MCP config inline via the `OPENCODE_CONFIG_CONTENT` environment variable at spawn time:
+OpenCode servers receive the MCP config inline via the `OPENCODE_CONFIG_CONTENT` environment variable at spawn time — a local (stdio) server, so `ch mcp` is spawned with everything it needs passed explicitly. 1.x nests servers at the top level of `mcp` with an `enabled` flag; 2.x groups them under `mcp.servers` (its inverse `disabled` defaults to false) and sets `codemode: false` — 2.x otherwise puts an MCP server in Code Mode, where the model gets no `codehydra_*` tools, only a catalog inside its JavaScript `execute` tool:
 
-```json
+```jsonc
+// 1.x
 {
-  "mcp": {
-    "codehydra": {
-      "type": "remote",
-      "url": "http://127.0.0.1:<mcp-port>/mcp",
-      "headers": { "X-Workspace-Path": "<workspace-path>" },
-      "enabled": true
-    }
-  }
+  "mcp": { "codehydra": { "type": "local", "command": ["…", "ch.cjs", "mcp"], "environment": { "…": "…" }, "enabled": true } }
+}
+// 2.x
+{
+  "mcp": { "servers": { "codehydra": { "type": "local", "command": ["…", "ch.cjs", "mcp"], "environment": { "…": "…" }, "codemode": false } } }
 }
 ```
+
+The same env var carries the system prompt (`instructions`) and the update policy (`autoupdate: false` in 1.x, `update: "disable"` in 2.x — downloads only; a system install is the user's to manage). `instructions` unions across config sources in both, so a user's own entries survive (pinned by `server-manager.boundary.test.ts` against the real binaries).
 
 ### Claude Code MCP Configuration
 
@@ -390,20 +393,22 @@ The MCP server exposes workspace management tools (`workspace.getStatus`, `works
 
 The sidekick extension applies the env vars from `getEnvironmentVariables()` to all new terminals:
 
-| Variable                  | Purpose                            |
-| ------------------------- | ---------------------------------- |
-| `_CH_OPENCODE_PORT`       | OpenCode server port               |
-| `_CH_OPENCODE_SESSION_ID` | OpenCode session ID for attachment |
-| `_CH_BRIDGE_PORT`         | Claude hook bridge port            |
-| `_CH_WORKSPACE`           | Workspace ref (both agents)        |
+| Variable                  | Purpose                               |
+| ------------------------- | ------------------------------------- |
+| `_CH_OPENCODE_PORT`       | OpenCode server port                  |
+| `_CH_OPENCODE_SESSION_ID` | OpenCode session ID for attachment    |
+| `_CH_OPENCODE_MAJOR`      | Which wire the server speaks (1 or 2) |
+| `_CH_OPENCODE_PASSWORD`   | 2.x only: the server's password       |
+| `_CH_BRIDGE_PORT`         | Claude hook bridge port               |
+| `_CH_WORKSPACE`           | Workspace ref (both agents)           |
 
-The OpenCode wrapper script reads these to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT --session $SESSION_ID`.
+The OpenCode wrapper script reads these to redirect `opencode` invocations to the workspace's server — `opencode attach http://127.0.0.1:$PORT --session $SESSION_ID` on 1.x, `opencode --server http://127.0.0.1:$PORT --session $SESSION_ID` on 2.x. The wrapper hands the password to the spawned opencode as `OPENCODE_PASSWORD`, the name the TUI reads. It keeps other local processes off the server; it is no secret from the agent — the agent terminal holds `_CH_OPENCODE_PASSWORD`, and `opencode serve`'s own tool commands inherit `OPENCODE_PASSWORD`.
 
 ---
 
 ## OpenCode Implementation
 
-OpenCode uses SSE (Server-Sent Events) for real-time status updates.
+OpenCode uses SSE (Server-Sent Events) for real-time status updates. CodeHydra speaks both server APIs — 1.x and 2.x are different contracts (see the [wire seam](#the-wire-seam-1x-vs-2x)) — selected by the resolved binary's major version.
 
 ### Server Startup Flow
 
@@ -411,48 +416,72 @@ OpenCode uses SSE (Server-Sent Events) for real-time status updates.
 1. startServer(workspaceRef, workspacePath, options) called
 2. Allocate port via PortManager
 3. Spawn `opencode serve --port N` (cwd = workspace)
-4. HTTP probe to `/path` confirms server is ready
+   2.x only: a generated per-workspace password is given via OPENCODE_PASSWORD
+4. Health check — 1.x: HTTP probe to `/path`; 2.x: authenticated `GET /api/info`
 5. Fire onServerStarted(ref, port, pendingPrompt)
-6. Provider.connect(port) finds/creates a session and connects SSE
+6. Provider.connect(port) finds/creates a session and connects the event stream
 ```
 
-### SSE Event Types
+The server manager exposes the result as `getWireInfo(ref)` — `{major, password}` — which the provider reads at `connect()` (to build the client and the terminal environment) and the wrapper reads through `_CH_OPENCODE_MAJOR`/`_CH_OPENCODE_PASSWORD` (to choose its arguments and authenticate). A restart keeps the port and the password: the attached terminal's environment holds both.
 
-OpenCode sends **unnamed SSE events** (no `event:` prefix) with the event type embedded in the JSON payload:
+### The wire seam (1.x vs 2.x)
+
+All version differences live behind the `WireClient` interface (`opencode/wire.ts`), picked in the client's constructor by the resolved major:
+
+|                 | 1.x (`wire-v1.ts`)                                            | 2.x (`wire-v2.ts`)                                                                                                                                                                                                                                                                                                                                          |
+| --------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Client          | `@opencode-ai/sdk` (its `/v2` subpath is still 1.x wire)      | `@opencode/client`, `/api/*` routes                                                                                                                                                                                                                                                                                                                         |
+| Auth            | none                                                          | HTTP Basic, user `opencode`, the per-workspace password                                                                                                                                                                                                                                                                                                     |
+| Sessions        | `session.list/status/create/prompt/promptAsync`               | directory-scoped `session.list`, `location`-carrying `session.create`, `session.active`                                                                                                                                                                                                                                                                     |
+| Turn completion | `session.prompt` resolves when the turn ends                  | prompt resolves on admission; the wire adds `session.wait` (and `switchAgent`/`switchModel` for a prompt's agent/model, which then stays the session's)                                                                                                                                                                                                     |
+| Queued prompts  | `promptAsync`                                                 | `prompt` with `delivery: "queue"`                                                                                                                                                                                                                                                                                                                           |
+| MCP readiness   | servers connected at start                                    | servers connect asynchronously, and a session created before one connected misses its tools for ~100 ms after `connected` (measured on 2.1.4). `createSession` and both prompt calls first poll `mcp.list` until `codehydra` leaves `pending` (capped at 15 s): the primary session is created after it, so the initial prompt's turn has CodeHydra's tools |
+| Status signal   | `session.status` / `session.idle` events                      | the execution lifecycle: `session.execution.started` → busy, `succeeded`/`failed`/`interrupted` → idle, `retry.scheduled` → busy (verified against a real 2.1.x: a turn emits no `session.status`)                                                                                                                                                          |
+| User requests   | `permission.asked/replied`, `question.asked/replied/rejected` | `permission.asked/replied`, and `form.created/replied/cancelled` — what the `question` tool became                                                                                                                                                                                                                                                          |
+
+Both wires normalize to the same `WireEvent` shapes (`normalizeSdkEvent` / `normalizeV2Event`), so `OpenCodeClient`'s session tracking (roots vs subagents), status aggregation and listener surface are version-free. `retry` maps to `busy`; a subagent session's status never flips the workspace — only its user requests surface, correlated through the child→root mapping.
+
+### Event stream
+
+OpenCode sends **unnamed SSE events** (no `event:` prefix) with the event type embedded in the JSON payload. 1.x nests it under `properties`; 2.x under `data`:
 
 ```
-data: {"type":"session.status","properties":{"sessionID":"...","status":{"type":"busy"}}}
+data: {"type":"session.status","properties":{"sessionID":"...","status":{"type":"busy"}}}   # 1.x
+data: {"type":"session.execution.started","data":{"sessionID":"..."}}                       # 2.x
 ```
 
-**Event types handled:**
+**Event types handled (per wire, before normalization):**
 
-| Event Type           | Description                      |
-| -------------------- | -------------------------------- |
-| `session.status`     | Status changes (idle/busy/retry) |
-| `session.created`    | New root session tracking        |
-| `session.idle`       | Explicit idle notification       |
-| `session.deleted`    | Session cleanup                  |
-| `permission.asked`   | Permission request added         |
-| `permission.replied` | Permission response received     |
-| `question.asked`     | Question tool waiting on user    |
-| `question.replied`   | Question answered                |
-| `question.rejected`  | Question dismissed               |
+| 1.x Event                                | 2.x Event                         | Meaning                             |
+| ---------------------------------------- | --------------------------------- | ----------------------------------- |
+| `session.status`                         | `session.status` (rare)           | Status changes (idle/busy/retry)    |
+| —                                        | `session.execution.started`       | Turn started → busy                 |
+| —                                        | `session.execution.*` outcomes    | Turn ended → idle                   |
+| —                                        | `session.retry.scheduled`         | Retrying → busy                     |
+| `session.created`                        | `session.created`                 | New session (root or subagent)      |
+| `session.idle`                           | —                                 | Explicit idle notification          |
+| `session.deleted`                        | `session.deleted`                 | Session cleanup                     |
+| `permission.asked`                       | `permission.asked`                | Permission request added            |
+| `permission.replied`                     | `permission.replied`              | Permission response received        |
+| `question.asked`                         | `form.created`                    | A question/form waiting on the user |
+| `question.replied` / `question.rejected` | `form.replied` / `form.cancelled` | Answered / dismissed                |
 
-### OpenCode SDK Integration
+### OpenCode Client Integration
 
-`OpenCodeClient` uses the official `@opencode-ai/sdk`:
+`OpenCodeClient` is wire-agnostic; the wires are injected through a factory for testing:
 
 ```typescript
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk";
+import { wireFactoryMock, createWireClientMock } from "./opencode/wire-client.state-mock";
 
-export type SdkClientFactory = (baseUrl: string) => OpencodeClient;
-
-export class OpenCodeClient implements IDisposable {
-  constructor(port: number, logger: Logger, sdkFactory: SdkClientFactory = defaultSdkFactory) {
-    // ...
-  }
-}
+const client = new OpenCodeClient(
+  8080,
+  logger,
+  { major: 2, password: "…", directory: workspacePath },
+  wireFactoryMock(createWireClientMock())
+);
 ```
+
+The real wires are constructed by the default factory (`OpenCodeWireV1` / `OpenCodeWireV2`); their behavior is pinned against real servers in `opencode/client.boundary.test.ts` (1.x lane) and `opencode/client-v2.boundary.test.ts` (2.x lane).
 
 ### TUI-Attached Gate
 
@@ -562,12 +591,15 @@ The primary suites are `claude/module-provider.integration.test.ts` and `opencod
 ### Testing the OpenCode Client
 
 ```typescript
-const mockSdk = createMockSdkClient({
+const mockWire = createWireClientMock({
   sessions: [createTestSession({ id: "ses-1", directory: "/test" })],
-  sessionStatuses: { "ses-1": { type: "idle" } },
 });
-const factory = createMockSdkFactory(mockSdk);
-const client = new OpenCodeClient(8080, SILENT_LOGGER, factory);
+const client = new OpenCodeClient(
+  8080,
+  SILENT_LOGGER,
+  { major: 1, directory: "/test" },
+  wireFactoryMock(mockWire)
+);
 ```
 
-See `opencode/sdk-client.state-mock.ts` and docs/TESTING.md for conventions.
+See `opencode/wire-client.state-mock.ts` and docs/TESTING.md for conventions. The wires themselves run against real servers in the boundary suites (`client.boundary.test.ts` for 1.x, `client-v2.boundary.test.ts` for 2.x).

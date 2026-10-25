@@ -1,29 +1,62 @@
 /**
- * Focused tests for OpenCode's download coordinates: release URLs and reading
- * the latest version from the `releases/latest` redirect.
+ * Focused tests for OpenCode's download coordinates: release URLs, npm package
+ * URLs for 2.x, and reading the latest version from the `releases/latest`
+ * redirect. The test harness's latest-2.x lookup is tested in
+ * src/utils/testing/ensure-binaries.test.ts.
  */
 
 import { describe, it, expect } from "vitest";
 import {
   OPENCODE_LATEST_URL,
   createOpencodeBinaryDescriptor,
-  getOpencodeUrlForVersion,
+  getOpencodeDownload,
+  opencodeWireVersion,
   parseOpencodeReleaseTagUrl,
 } from "./setup-info";
 import { createMockHttpClient } from "../../../boundaries/platform/http-client.state-mock";
 
 const RELEASES = "https://github.com/anomalyco/opencode/releases";
+const NPM = "https://registry.npmjs.org";
 
-describe("getOpencodeUrlForVersion", () => {
+describe("getOpencodeDownload", () => {
   it.each([
     ["linux", "x64", "opencode-linux-x64.tar.gz"],
     ["linux", "arm64", "opencode-linux-arm64.tar.gz"],
     ["darwin", "arm64", "opencode-darwin-arm64.zip"],
     ["win32", "x64", "opencode-windows-x64.zip"],
-  ] as const)("names the %s/%s asset", (platform, arch, asset) => {
-    expect(getOpencodeUrlForVersion("1.18.32", platform, arch)).toBe(
-      `${RELEASES}/download/v1.18.32/${asset}`
-    );
+  ] as const)("names the %s/%s asset for 1.x", (platform, arch, asset) => {
+    expect(getOpencodeDownload("1.18.32", platform, arch)).toEqual({
+      url: `${RELEASES}/download/v1.18.32/${asset}`,
+      archiveExtension: asset.endsWith(".zip") ? ".zip" : ".tar.gz",
+    });
+  });
+
+  it.each([
+    ["linux", "x64", "cli-linux-x64"],
+    ["linux", "arm64", "cli-linux-arm64"],
+    ["darwin", "arm64", "cli-darwin-arm64"],
+    ["win32", "x64", "cli-windows-x64"],
+  ] as const)("downloads 2.x from the %s/%s npm package", (platform, arch, pkg) => {
+    expect(getOpencodeDownload("2.1.4", platform, arch)).toEqual({
+      url: `${NPM}/@opencode/${pkg}/-/${pkg}-2.1.4.tgz`,
+      archiveExtension: ".tgz",
+      // The executable is promoted out of the tarball's package/bin/.
+      subPath: "package/bin",
+    });
+  });
+});
+
+describe("opencodeWireVersion", () => {
+  it("reads the wire from a version", () => {
+    expect(opencodeWireVersion("1.18.32")).toBe(1);
+    expect(opencodeWireVersion("2.1.4")).toBe(2);
+  });
+
+  it("defaults to the 1.x wire for anything unreadable", () => {
+    expect(opencodeWireVersion(null)).toBe(1);
+    expect(opencodeWireVersion(undefined)).toBe(1);
+    expect(opencodeWireVersion("")).toBe(1);
+    expect(opencodeWireVersion("banana")).toBe(1);
   });
 });
 
@@ -80,6 +113,23 @@ describe("createOpencodeBinaryDescriptor", () => {
       destDir: "/b/opencode/1.18.32",
       archiveExtension: ".zip",
       executablePath: "opencode",
+    });
+  });
+
+  it("builds an npm archive request for 2.x, promoting package/bin", async () => {
+    const request = await createOpencodeBinaryDescriptor("linux", "x64").downloadRequest(
+      "2.1.4",
+      "/b/opencode/2.1.4",
+      createMockHttpClient()
+    );
+
+    expect(request).toEqual({
+      name: "opencode",
+      url: `${NPM}/@opencode/cli-linux-x64/-/cli-linux-x64-2.1.4.tgz`,
+      destDir: "/b/opencode/2.1.4",
+      archiveExtension: ".tgz",
+      executablePath: "opencode",
+      subPath: "package/bin",
     });
   });
 });

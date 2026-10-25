@@ -6,8 +6,9 @@
  *
  * It:
  * 1. Reads environment variables for configuration
- * 2. Spawns `opencode attach` with the session ID from environment, followed by
- *    any arguments `ch opencode` was given
+ * 2. Spawns the TUI attached to the workspace's server — `opencode attach`
+ *    (1.x) or `opencode --server` (2.x) — with the session ID from
+ *    environment, followed by any arguments `ch opencode` was given
  */
 
 import { spawnSync } from "node:child_process";
@@ -50,6 +51,10 @@ function main(userArgs: readonly string[]): never {
   // part of the command line quoted (a path or argument with a space).
   const useShell = needsCmdShell(binaryPath, process.platform);
 
+  // 3. Which server API the workspace's server speaks. Unset means 1.x, the
+  //    wire a terminal from an older CodeHydra was built for.
+  const major = process.env._CH_OPENCODE_MAJOR === "2" ? 2 : 1;
+
   // 4. Build base URL
   const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -57,18 +62,26 @@ function main(userArgs: readonly string[]): never {
   const sessionId = process.env._CH_OPENCODE_SESSION_ID;
 
   // 6. Build spawn arguments
-  const args = ["attach", baseUrl];
+  const args = major === 2 ? ["--server", baseUrl] : ["attach", baseUrl];
   if (sessionId) {
     args.push("--session", sessionId);
   }
   args.push(...userArgs);
 
-  // 7. Spawn opencode binary
-  const result = useShell
-    ? spawnSync(cmdCommandLine(binaryPath, args), [], { stdio: "inherit", shell: true })
-    : spawnSync(binaryPath, args, { stdio: "inherit", shell: false });
+  // 7. A 2.x server needs its password. It arrives as _CH_OPENCODE_PASSWORD
+  //    and is handed to the spawned opencode as OPENCODE_PASSWORD, the name
+  //    the TUI reads.
+  const env: NodeJS.ProcessEnv | undefined =
+    major === 2 && process.env._CH_OPENCODE_PASSWORD
+      ? { ...process.env, OPENCODE_PASSWORD: process.env._CH_OPENCODE_PASSWORD }
+      : undefined;
 
-  // 8. Handle result
+  // 8. Spawn opencode binary
+  const result = useShell
+    ? spawnSync(cmdCommandLine(binaryPath, args), [], { stdio: "inherit", shell: true, env })
+    : spawnSync(binaryPath, args, { stdio: "inherit", shell: false, env });
+
+  // 9. Handle result
   if (result.error) {
     console.error(`Error: Failed to start opencode: ${result.error.message}`);
     process.exit(EXIT_SPAWN_FAILED);
@@ -83,8 +96,8 @@ function main(userArgs: readonly string[]): never {
  * Exported because `ch opencode` is the entry point — the sidekick types that
  * into the agent terminal. There is no separate script on disk.
  *
- * `userArgs` are what followed `ch opencode`; they are passed on to
- * `opencode attach`.
+ * `userArgs` are what followed `ch opencode`; they are passed on to the
+ * opencode invocation.
  */
 export function runOpencodeWrapper(userArgs: readonly string[]): never {
   try {

@@ -20,7 +20,7 @@
 import { expect, test } from "@playwright/test";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DATA_ROOT, resetDataState, type Agent } from "./env";
+import { DATA_ROOT, projectAgent, resetDataState } from "./env";
 import { launchApp, useApp, POLL_INTERVALS } from "./fixtures";
 
 /** Matches the sweep's own limit: `{ kind: "keepRecent", path: "logs", keep: 20 }`. */
@@ -64,7 +64,7 @@ test.beforeAll(async () => {
   // Seeded *before* launch, so the app sees it the way a real upgrade would.
   expect(logFiles().length).toBeGreaterThanOrEqual(SEEDED_LOGS);
 
-  await launchApp(app(), { agent: test.info().project.name as Agent });
+  await launchApp(app(), { agent: projectAgent(test.info().project.name) });
 });
 
 test("prunes screenshot directories whose project is gone, and keeps the rest", async () => {

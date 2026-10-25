@@ -304,7 +304,10 @@ describe("OpenCodeClient boundary tests", () => {
     "connect times out when server is unresponsive",
     async () => {
       // Create client pointing to non-existent port (no withOpencode needed)
-      const badClient = new OpenCodeClient(59998, SILENT_LOGGER);
+      const badClient = new OpenCodeClient(59998, SILENT_LOGGER, {
+        major: 1,
+        directory: "/workspace",
+      });
 
       // The SDK may either:
       // 1. Throw immediately if the connection fails fast

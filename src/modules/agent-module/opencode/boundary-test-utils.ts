@@ -10,6 +10,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { onTestFailed, onTestFinished, vi } from "vitest";
 import { createOpencodeClient, type OpencodeClient as SdkClient } from "@opencode-ai/sdk";
+import { OpenCode as OpenCodeV2Factory } from "@opencode/client";
 import type { SpawnedProcess, ProcessRunner } from "../../../boundaries/platform/process";
 import { ExecaProcessRunner } from "../../../boundaries/platform/process";
 import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
@@ -46,13 +47,17 @@ function createDefaultRunner(): ProcessRunner {
  * from. CI never notices, because a fresh runner has neither directory and
  * nothing else running.
  *
- * One fixed directory rather than a fresh one per run: it is equally isolated
- * from the developer, it cannot accumulate (there is exactly one, forever),
- * and opencode's plugin install is paid once per machine instead of once per
- * run. Two suites running at the same time share it, which is what they
- * already did through the real HOME, so nothing is worse than before.
+ * One fixed directory per vitest worker slot rather than a fresh one per run:
+ * it is equally isolated from the developer, it cannot accumulate (one per
+ * slot, forever), and opencode's plugin install is paid once per slot instead
+ * of once per run. Per slot, not one for all: the 1.x and 2.x suites run in
+ * parallel workers, and two servers on one database fail to start with
+ * "database is locked". Within a worker the scenarios run one at a time.
  */
-const ISOLATED_HOME = join(tmpdir(), "codehydra-opencode-boundary-home");
+const ISOLATED_HOME = join(
+  tmpdir(),
+  `codehydra-opencode-boundary-home-${process.env.VITEST_POOL_ID ?? "0"}`
+);
 
 function isolatedHomeEnv(): NodeJS.ProcessEnv {
   const xdg = {
@@ -81,14 +86,12 @@ export interface OpencodeTestConfig {
   readonly port: number;
   /** Working directory (must be a git repo) */
   readonly cwd: string;
-  /** OpenCode configuration */
-  readonly config: {
-    readonly provider: Record<string, unknown>;
-    readonly model: string;
-    readonly permission: OpencodePermissionConfig;
-    /** opencode's per-step git snapshot of the worktree (its diffs and revert). */
-    readonly snapshot: boolean;
-  };
+  /** Which server API the binary speaks (decides CLI flag spellings) */
+  readonly major: 1 | 2;
+  /** OpenCode configuration, written to the project's opencode.jsonc */
+  readonly config: Record<string, unknown>;
+  /** The server password, passed as OPENCODE_PASSWORD (2.x only) */
+  readonly password?: string;
 }
 
 /**
@@ -158,6 +161,11 @@ async function startOpencode(
     // A throwaway HOME, so this server shares no plugin install and no session
     // database with the machine running the tests. See isolatedHomeEnv().
     ...isolatedHomeEnv(),
+    // A database per major: a 1.x server refuses to open an `opencode.db` that
+    // a 2.x server created ("Database is not empty and has no session table"),
+    // and one worker slot can run both suites in turn.
+    OPENCODE_DB: join(ISOLATED_HOME, `opencode-v${config.major}.db`),
+    ...(config.password !== undefined && { OPENCODE_PASSWORD: config.password }),
     // No file watcher. Nothing here tests one — these are HTTP client tests —
     // and on Linux the watcher takes an inotify instance from a per-user pool
     // of 128 that CodeHydra itself drains: every workspace's IDE server and
@@ -175,8 +183,16 @@ async function startOpencode(
   const proc: SpawnedProcess = runner.run(
     config.binaryPath,
     // opencode logs only to a file unless asked, which leaves output() with
-    // nothing to say about a scenario that hangs after startup.
-    ["serve", "--port", String(config.port), "--print-logs", "--log-level", "DEBUG"],
+    // nothing to say about a scenario that hangs after startup. (2.x spell the
+    // log level lower-case; 1.x accepted DEBUG.)
+    [
+      "serve",
+      "--port",
+      String(config.port),
+      "--print-logs",
+      "--log-level",
+      config.major === 2 ? "debug" : "DEBUG",
+    ],
     {
       cwd: config.cwd,
       env,
@@ -227,6 +243,9 @@ const REPORT_LOG_LINES = 80;
 /** Opens every failure report, so a failure that already carries one is told apart. */
 const REPORT_HEADER = "timeline (ms since the scenario started";
 
+/** The password every 2.x-lane server here is given. */
+const V2_TEST_PASSWORD = "boundary-test-password";
+
 /**
  * Options for withOpencode helper.
  */
@@ -237,7 +256,17 @@ export interface WithOpencodeOptions {
   readonly permission?: OpencodePermissionConfig;
   /** Mock LLM response mode */
   readonly mockLlmMode: MockLlmMode;
+  /** Which server API to exercise: 1.x (default) or 2.x */
+  readonly major?: 1 | 2;
+  /**
+   * The tool the `tool-call` mode asks the model to call — `bash` on 1.x
+   * (default), `shell` on 2.x.
+   */
+  readonly toolCallName?: string;
 }
+
+/** The @opencode/client instance a 2.x lane hands to its tests. */
+export type OpenCodeV2Client = ReturnType<typeof OpenCodeV2Factory.make>;
 
 /**
  * Context passed to test function in withOpencode.
@@ -245,8 +274,10 @@ export interface WithOpencodeOptions {
 export interface OpencodeTestContext {
   /** Port opencode is listening on */
   readonly port: number;
-  /** OpenCode SDK client for sending prompts */
+  /** 1.x SDK client for sending prompts (the 1.x lane's raw wire) */
   readonly sdk: SdkClient;
+  /** @opencode/client for talking to a 2.x server (the 2.x lane's raw wire) */
+  readonly v2: OpenCodeV2Client;
   /** OpenCodeClient under test */
   readonly client: OpenCodeClient;
   /** Working directory (git repo) */
@@ -412,35 +443,65 @@ export async function withOpencode(
     const llm = createMockLlmServer();
     mockLlm = llm;
     await llm.start();
-    llm.setMode(options.mockLlmMode);
+    // 1.x calls its shell tool `bash`; 2.x calls it `shell`.
+    llm.setMode(options.mockLlmMode, options.major === 2 ? "shell" : "bash");
     mockEntry.end = elapsed();
 
     // Find free port for opencode
     const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
     const port = await networkLayer.findFreePort();
 
+    const major = options.major ?? 1;
+    const permission = options.permission ?? { bash: "allow", edit: "allow", webfetch: "allow" };
+    // The two servers' config shapes: 1.x names the provider map `provider`
+    // and permissions per tool; 2.x has `providers`, an ordered `permissions`
+    // array and renamed tools (`bash` → `shell`).
+    const config: Record<string, unknown> =
+      major === 2
+        ? {
+            providers: {
+              mock: {
+                package: "aisdk:@ai-sdk/openai-compatible",
+                settings: { baseURL: `http://127.0.0.1:${llm.port}/v1` },
+                models: { test: { name: "Test Model" } },
+              },
+            },
+            model: "mock/test",
+            permissions: [
+              { action: "shell", resource: "*", effect: permission.bash },
+              { action: "edit", resource: "*", effect: permission.edit },
+              { action: "webfetch", resource: "*", effect: permission.webfetch },
+            ],
+            // Off: nothing here tests snapshots, and copying the worktree
+            // before every step dominates the prompt-to-model latency.
+            snapshots: false,
+          }
+        : {
+            provider: {
+              mock: {
+                npm: "@ai-sdk/openai-compatible",
+                options: { baseURL: `http://127.0.0.1:${llm.port}/v1` },
+                models: { test: { name: "Test Model" } },
+              },
+            },
+            model: "mock/test",
+            permission,
+            // Off. Before every step of a prompt opencode copies the worktree into a
+            // hidden git repo, spawning git to do it, and on a loaded Windows runner
+            // that was most of the ~6.5s between a prompt and the model's request —
+            // which a test that prompts twice pays twice, up to 20s of a 30s budget.
+            // Nothing here tests diffs or revert, and CodeHydra uses neither.
+            snapshot: false,
+          };
+
     const startEntry = begin(`start opencode on port ${port}`);
     opencodeProcess = await startOpencode({
       binaryPath: options.binaryPath,
       port,
       cwd: repo.path,
-      config: {
-        provider: {
-          mock: {
-            npm: "@ai-sdk/openai-compatible",
-            options: { baseURL: `http://127.0.0.1:${llm.port}/v1` },
-            models: { test: { name: "Test Model" } },
-          },
-        },
-        model: "mock/test",
-        permission: options.permission ?? { bash: "allow", edit: "allow", webfetch: "allow" },
-        // Off. Before every step of a prompt opencode copies the worktree into a
-        // hidden git repo, spawning git to do it, and on a loaded Windows runner
-        // that was most of the ~6.5s between a prompt and the model's request —
-        // which a test that prompts twice pays twice, up to 20s of a 30s budget.
-        // Nothing here tests diffs or revert, and CodeHydra uses neither.
-        snapshot: false,
-      },
+      major,
+      config,
+      ...(major === 2 && { password: V2_TEST_PASSWORD }),
     });
 
     // Wait for opencode to be ready.
@@ -456,10 +517,27 @@ export async function withOpencode(
     // serve, and a connection opened and dropped in that window leaves the
     // next request hanging until it times out — while a request that simply
     // retries on refusal is answered as soon as the server is up.
+    //
+    // 2.x has no `/path` (its web-UI catch-all answers 200 for anything);
+    // its readiness endpoint is `GET /api/info`, authenticated — a healthy
+    // check also proves the password works.
+    const healthUrl =
+      major === 2 ? `http://127.0.0.1:${port}/api/info` : `http://127.0.0.1:${port}/path`;
+    const healthHeaders =
+      major === 2
+        ? {
+            Authorization: `Basic ${Buffer.from(`opencode:${V2_TEST_PASSWORD}`).toString("base64")}`,
+          }
+        : undefined;
     try {
       await waitForHealthy({
         checkFn: async () =>
-          (await networkLayer.fetch(`http://127.0.0.1:${port}/path`, { timeout: 2000 })).ok,
+          (
+            await networkLayer.fetch(healthUrl, {
+              timeout: 2000,
+              ...(healthHeaders !== undefined && { headers: healthHeaders }),
+            })
+          ).ok,
         timeoutMs: STARTUP_TIMEOUT_MS,
         intervalMs: 100,
       });
@@ -473,10 +551,20 @@ export async function withOpencode(
 
     // Create clients
     const sdk = createOpencodeClient({ baseUrl: `http://127.0.0.1:${port}` });
-    client = new OpenCodeClient(port, SILENT_LOGGER);
+    const v2 = OpenCodeV2Factory.make({
+      baseUrl: `http://127.0.0.1:${port}`,
+      headers: {
+        Authorization: `Basic ${Buffer.from(`opencode:${V2_TEST_PASSWORD}`).toString("base64")}`,
+      },
+    });
+    client = new OpenCodeClient(port, SILENT_LOGGER, {
+      major,
+      ...(major === 2 && { password: V2_TEST_PASSWORD }),
+      directory: repo.path,
+    });
 
     // Run the test
-    await fn({ port, sdk, client, cwd: repo.path, mockLlm: llm, step, waitFor });
+    await fn({ port, sdk, v2, client, cwd: repo.path, mockLlm: llm, step, waitFor });
   } finally {
     // The normal path: free the port and the temp repo now rather than at the
     // end of the test, so the next scenario starts from a quiet machine.

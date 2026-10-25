@@ -71,10 +71,11 @@ export type SessionStatus =
 // ============ User Request Event Types ============
 
 /**
- * What a session is waiting on the user for. OpenCode parks a session on either
- * one mid-turn: a tool call that needs permission, or its `question` tool.
+ * What a session is waiting on the user for. OpenCode parks a session on
+ * either one mid-turn: a tool call that needs permission, or a question the
+ * user must answer (1.x's `question` tool, 2.x's forms).
  */
-export type UserRequestKind = "permission" | "question";
+export type UserRequestKind = "permission" | "question" | "form";
 
 /**
  * A session asked the user something (`permission.asked` / `question.asked`).

@@ -2,6 +2,11 @@
 
 This directory contains the source code for VS Code extensions used by CodeHydra.
 
+> **`markdown-review-editor` talks OpenCode's 1.x server API only** (`@opencode-ai/sdk`).
+> It does not work against OpenCode 2 servers yet — its `opencode-handler.ts` needs
+> porting to `@opencode/client` (plus the server password and `location` scoping), the
+> same migration the app's own client went through (`src/modules/agent-module/opencode/wire-v2.ts`).
+
 ## Directory Structure
 
 ```

@@ -98,7 +98,7 @@ Default `null` · `src/main.ts`. `null` = the `claude` on PATH, else a download 
 
 #### `version.opencode`
 
-Default `null` · `src/main.ts`. `null` = the `opencode` on PATH, else a download of the latest release; set = that version (exact, or `latest`), downloaded and used even over a system install.
+Default `null` · `src/main.ts`. OpenCode 1.x or 2.x — both server APIs are spoken, the wire picked by the resolved major. `null` = the `opencode` on PATH whose `--version` reports a supported major (1 or 2), else a download of the latest release; set = that version (exact, or `latest`), downloaded and used even over a system install. A download of another major fails on the setup screen. 2.x downloads come from npm (`@opencode/cli-<os>-<arch>`), as 2.x GitHub releases ship no binaries; `latest` follows the GitHub `releases/latest` redirect, so it stays 1.x until upstream marks a 2.x release latest, then flips with it.
 
 #### `version.vscodium`
 

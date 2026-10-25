@@ -54,7 +54,7 @@ export interface MockLlmServer {
   /** Stop the server */
   stop(): Promise<void>;
   /** Set the response mode */
-  setMode(mode: MockLlmMode): void;
+  setMode(mode: MockLlmMode, toolName?: string): void;
   /**
    * Every request served so far, oldest first. Kept after stop(), so a failed
    * test can still say what the model was asked and when.
@@ -69,8 +69,11 @@ export interface MockLlmServer {
 /**
  * Install the fixtures for one mode. First match wins, so the order within each
  * mode is part of its meaning.
+ *
+ * `toolName` names the tool the `tool-call` mode asks the model to call —
+ * `bash` on OpenCode 1, `shell` on OpenCode 2.
  */
-function applyMode(mock: LLMock, mode: MockLlmMode): void {
+function applyMode(mock: LLMock, mode: MockLlmMode, toolName = "bash"): void {
   mock.clearFixtures();
 
   switch (mode) {
@@ -91,7 +94,7 @@ function applyMode(mock: LLMock, mode: MockLlmMode): void {
       // must not consume the tool-call slot: they would leave the build agent
       // with a plain completion and no permission flow.
       mock.on({ predicate: (req) => (req.tools?.length ?? 0) === 0 }, { content: "ok" });
-      // The result of the bash call comes back on the same conversation.
+      // The result of the tool call comes back on the same conversation.
       mock.on({ hasToolResult: true }, { content: "Tool executed successfully." });
       // The bash tool's schema requires `description` alongside `command`.
       mock.on(
@@ -99,7 +102,7 @@ function applyMode(mock: LLMock, mode: MockLlmMode): void {
         {
           toolCalls: [
             {
-              name: "bash",
+              name: toolName,
               arguments: { command: "echo hello", description: "Prints hello to stdout" },
             },
           ],
@@ -195,8 +198,8 @@ export function createMockLlmServer(port = 0): MockLlmServer {
       started = false;
     },
 
-    setMode(mode: MockLlmMode): void {
-      applyMode(mock, mode);
+    setMode(mode: MockLlmMode, toolName?: string): void {
+      applyMode(mock, mode, toolName);
       // Sequence counts are per fixture group; a mode swap must not inherit the
       // previous mode's counter.
       mock.resetMatchCounts();

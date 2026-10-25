@@ -1357,19 +1357,21 @@ CodeHydra downloads its binaries instead of bundling them: VSCodium (reh-web) al
 `binary-resolver.ts` (`createAgentBinaryResolver`) decides which executable an agent runs, the same way for Claude and OpenCode:
 
 1. `version.<agent>` set → that version under `<bundles>/<agent>/<version>/`, downloaded if missing. A channel word (`latest`/`stable` for Claude, `latest` for OpenCode) is resolved to a version first. Beats a system install.
-2. Otherwise the first `<agent>` on the app's PATH whose `--version` exits 0 (Windows also probes the npm `.cmd` shim, spawned through a shell).
+2. Otherwise the first `<agent>` on the app's PATH whose `--version` exits 0 with a supported major (Windows also probes the npm `.cmd` shim, spawned through a shell). The version the probe reported is carried along — for OpenCode it decides which server API the workspace speaks (1.x or 2.x); a PATH install of any other major is skipped like one that does not run.
 3. Otherwise the agent's default channel (Claude `stable`, OpenCode `latest`).
 
 Nothing is recorded: the version directories are the record ("installed" = the directory holds the executable). A channel is re-resolved at every start (`prepare()`, memoized per launch after it succeeds). A failed lookup falls back to the newest downloaded version; a newer version than the one downloaded starts a background download, and `current()` switches once it lands, so workspaces launched afterwards run it. `bundleVersionsInUse()` feeds the cleanup `bundle` rule (in use + in flight; null until resolved).
 
-Each workspace snapshots `current()` at `startWorkspace` and passes it on: Claude's terminal gets `_CH_CLAUDE_BIN` (plus `DISABLE_AUTOUPDATER=1` for a download), OpenCode's server is spawned with it (kept per workspace for restarts; `autoupdate: false` for a download) and its terminal gets `_CH_OPENCODE_BIN`. The wrappers run that path and never search PATH themselves.
+Each workspace snapshots `current()` at `startWorkspace` and passes it on: Claude's terminal gets `_CH_CLAUDE_BIN` (plus `DISABLE_AUTOUPDATER=1` for a download), OpenCode's server is spawned with it (kept per workspace for restarts; `autoupdate: false` in 1.x / `update: "disable"` in 2.x for a download) and its terminal gets `_CH_OPENCODE_BIN`. The wrappers run that path and never search PATH themselves.
 
 Download coordinates live in each agent's `setup-info.ts`:
 
-| Agent    | Channel lookup                                                          | Download                                                                                         |
-| -------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Claude   | `downloads.claude.ai/claude-code-releases/<channel>` (a version string) | `<version>/manifest.json` → `<version>/<platform>-<arch>/claude[.exe]`, raw file, sha256-checked |
-| OpenCode | where `github.com/anomalyco/opencode/releases/latest` redirects         | `releases/download/v<version>/opencode-<os>-<arch>.{tar.gz,zip}`, extracted, no checksum         |
+| Agent    | Channel lookup                                                          | Download                                                                                                                                                                                                                                                          |
+| -------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude   | `downloads.claude.ai/claude-code-releases/<channel>` (a version string) | `<version>/manifest.json` → `<version>/<platform>-<arch>/claude[.exe]`, raw file, sha256-checked                                                                                                                                                                  |
+| OpenCode | where `github.com/anomalyco/opencode/releases/latest` redirects         | 1.x: `releases/download/v<version>/opencode-<os>-<arch>.{tar.gz,zip}`, extracted, no checksum. 2.x: GitHub releases carry no platform binaries, so the npm platform package (`@opencode/cli-<os>-<arch>`, a `.tgz` whose `package/bin/` is promoted), no checksum |
+
+OpenCode downloads are routed by the resolved version's major, so the channel pointing at a 2.x tag someday (it points at 1.x today) simply switches the download source with it. The test harness resolves the newest 2.x separately, from npm's `@opencode/cli` dist-tags (`resolveLatestOpenCode2` in `src/utils/testing/ensure-binaries.ts` — test-only, the app has no latest-2.x channel), to seed its two OpenCode lanes.
 
 Claude's manifest also lists musl builds; they are unused, since Electron itself needs glibc. Windows builds are x64 only (`assertWindowsX64`).
 

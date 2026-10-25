@@ -41,6 +41,8 @@ describe("OpenCodeServerManager Boundary Tests", () => {
   let processRunner: ExecaProcessRunner;
   /** The downloaded opencode these tests run. */
   let TEST_BINARY: ResolvedAgentBinary;
+  /** OPENCODE_DB as it was before this suite set its own. */
+  let previousOpencodeDb: string | undefined;
 
   beforeAll(async () => {
     // Ensure opencode binary is available (downloads if missing)
@@ -56,6 +58,13 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     await mkdir(testDir, { recursive: true });
     await mkdir(join(testDir, "opencode"), { recursive: true });
     await mkdir(join(testDir, "workspace"), { recursive: true });
+
+    // A database of this suite's own. The manager hands its environment to
+    // every server it spawns, so without this they would share the machine's
+    // `opencode.db` — which a 2.x server elsewhere may have created in a schema
+    // 1.x refuses to open.
+    previousOpencodeDb = process.env.OPENCODE_DB;
+    process.env.OPENCODE_DB = join(testDir, "opencode.db");
 
     // Use test path provider for binary resolution
     pathProvider = getTestPathProvider();
@@ -73,6 +82,12 @@ describe("OpenCodeServerManager Boundary Tests", () => {
   });
 
   afterAll(async () => {
+    if (previousOpencodeDb === undefined) {
+      delete process.env.OPENCODE_DB;
+    } else {
+      process.env.OPENCODE_DB = previousOpencodeDb;
+    }
+
     // Clean up test directory
     try {
       await rm(testDir, { recursive: true, force: true });

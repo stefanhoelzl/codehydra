@@ -26,6 +26,7 @@ import {
   resetToColdStart,
   useApp,
 } from "./fixtures";
+import { ensureBinaryForTests } from "../src/utils/testing/ensure-binaries";
 
 // A real VSCodium reh-web download and two ~200MB agent binaries, all over the
 // network. Generous on purpose: a cold runner on a bad day is slow.
@@ -64,7 +65,22 @@ test("--download-binaries fetches every binary, and the app starts on it", async
   const exe = (name: string): string => (process.platform === "win32" ? `${name}.exe` : name);
   expect(readdirSync(ROOT_DIR), output).toContain("vscodium");
   expect(downloadedVersions("claude", exe("claude")), output).toHaveLength(1);
-  expect(downloadedVersions("opencode", exe("opencode")), output).toHaveLength(1);
+  // The 1.x lane (`latest`, which the GitHub releases/latest redirect picks)
+  // from --download-binaries itself…
+  const opencodeExe = exe("opencode");
+  expect(
+    downloadedVersions("opencode", opencodeExe).filter((v) => v.split(".")[0] === "1"),
+    output
+  ).toHaveLength(1);
+
+  // …and the 2.x lane from npm, for the `opencode` project to pin. 2.x GitHub
+  // releases carry no platform binaries, so this is the download the app makes
+  // for a 2.x pin too.
+  await ensureBinaryForTests("opencode", { opencodeMajor: 2 });
+  expect(
+    downloadedVersions("opencode", opencodeExe).filter((v) => v.split(".")[0] === "2"),
+    "the 2.x lane did not land next to the 1.x one"
+  ).toHaveLength(1);
   // Nothing but binaries: it must not have started the app.
   expect(existsSync(join(DATA_ROOT, "projects")), output).toBe(false);
 

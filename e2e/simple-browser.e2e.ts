@@ -68,12 +68,18 @@ test("renders a file:// page with its stylesheet and scripts", async () => {
     .poll(() => existsSync(workspace), { intervals: POLL_INTERVALS, timeout: 60_000 })
     .toBe(true);
   // Editor commands go through the workspace's sidekick extension, which
-  // connects some time after the frame shows; before that they fail.
+  // connects some time after the frame shows; before that they fail. The
+  // sidekick's connection, which logs no kind — not the agent's `ch mcp`
+  // (kind "mcp"), a guest that connects from the same workspace and usually
+  // first.
   await expect
     .poll(
       () =>
         appLogEntries().some(
-          (e) => e.message === "Client connected" && e.scope?.["ws"] === "local-page"
+          (e) =>
+            e.message === "Client connected" &&
+            e.scope?.["ws"] === "local-page" &&
+            e.context?.["kind"] === undefined
         ),
       { intervals: POLL_INTERVALS, timeout: 120_000 }
     )

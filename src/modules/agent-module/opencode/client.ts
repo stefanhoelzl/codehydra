@@ -1,79 +1,46 @@
 /**
- * OpenCode client for communicating with OpenCode instances.
- * Uses the official @opencode-ai/sdk for HTTP and SSE operations.
+ * OpenCode client for communicating with an OpenCode server.
+ *
+ * Owns the wire-agnostic machinery: session tracking (roots and subagents),
+ * status aggregation, and the listener surface the provider consumes. The
+ * server API itself — 1.x or 2.x — is behind the {@link WireClient} seam
+ * (wire-v1.ts, wire-v2.ts), picked by the resolved binary's major version.
  */
 
-import {
-  createOpencodeClient,
-  type OpencodeClient,
-  type Session as SdkSession,
-  type Event as SdkEvent,
-  type SessionStatus as SdkSessionStatus,
-} from "@opencode-ai/sdk";
-import type { Event as SdkV2Event } from "@opencode-ai/sdk/v2";
 import { OpenCodeError, getErrorMessage } from "../../../shared/errors/service-errors";
-import { errorCode } from "../../../shared/error-utils";
-import { withTimeout } from "../../../utils/timeout";
 import type { Logger } from "../../../boundaries/platform/logging";
 import { isBackgroundAgentLabel } from "../status-utils";
-import {
-  ok,
-  err,
-  type Result,
-  type Session,
-  type SessionStatus,
-  type ClientStatus,
-  type IDisposable,
-  type Unsubscribe,
-  type UserRequestKind,
-  type UserRequestAskedEvent,
-  type UserRequestResolvedEvent,
+import type {
+  Result,
+  Session,
+  SessionStatus,
+  ClientStatus,
+  IDisposable,
+  Unsubscribe,
+  UserRequestAskedEvent,
+  UserRequestResolvedEvent,
 } from "./types";
+import type { WireClient, WireClientFactory, WireEvent, WirePromptOptions } from "./wire";
+import { OpenCodeWireV1 } from "./wire-v1";
+import { OpenCodeWireV2 } from "./wire-v2";
 
-/**
- * Factory function type for creating SDK clients.
- * Used for dependency injection and testing.
- */
-export type SdkClientFactory = (baseUrl: string) => OpencodeClient;
-
-/**
- * Default SDK factory that creates a real OpencodeClient.
- */
-const defaultSdkFactory: SdkClientFactory = (baseUrl: string) => createOpencodeClient({ baseUrl });
-
-/**
- * An event from the server's `/event` stream.
- *
- * The v1 SDK still types that stream, but the server is newer: since OpenCode
- * 1.1.1 permissions go through `permission.asked` / `permission.replied` with a
- * `requestID`, and its `question` tool parks a session the same way. Those only
- * exist in the SDK's v2 types.
- */
-type ServerEvent = SdkEvent | SdkV2Event;
-
-/**
- * Type guard for the `{ id, sessionID }` a `permission.asked` or
- * `question.asked` event carries.
- */
-export function isUserRequestAsked(value: unknown): value is { id: string; sessionID: string } {
-  if (typeof value !== "object" || value === null) return false;
-
-  const obj = value as Record<string, unknown>;
-  return typeof obj.id === "string" && typeof obj.sessionID === "string";
+/** What the client needs to know about the server it talks to. */
+export interface OpenCodeClientOptions {
+  /** Which server API the server speaks. */
+  readonly major: 1 | 2;
+  /** 2.x only: the server's password (Basic auth, user `opencode`). */
+  readonly password?: string;
+  /** The workspace directory: where sessions are created, and how listings scope (2.x). */
+  readonly directory: string;
+  /** 2.x only: an MCP server a prompt waits for, so the turn sees its tools. */
+  readonly mcpServer?: string;
 }
 
-/**
- * Type guard for the `{ sessionID, requestID }` a `permission.replied`,
- * `question.replied` or `question.rejected` event carries.
- */
-export function isUserRequestResolved(
-  value: unknown
-): value is { sessionID: string; requestID: string } {
-  if (typeof value !== "object" || value === null) return false;
-
-  const obj = value as Record<string, unknown>;
-  return typeof obj.sessionID === "string" && typeof obj.requestID === "string";
-}
+/** Builds the wire the server's API version calls for. */
+const defaultWireFactory: WireClientFactory = (baseUrl, options, logger) =>
+  options.major === 2
+    ? new OpenCodeWireV2(baseUrl, options, logger)
+    : new OpenCodeWireV1(baseUrl, options, logger);
 
 /**
  * Callback for session events.
@@ -98,27 +65,19 @@ export type UserRequestEvent =
 export type UserRequestEventCallback = (event: UserRequestEvent) => void;
 
 /**
- * Result from SDK event.subscribe()
- */
-interface SdkEventSubscription {
-  stream: AsyncIterable<SdkEvent>;
-}
-
-/**
- * Client for communicating with a single OpenCode instance.
+ * Client for communicating with a single OpenCode server.
  *
- * Uses the official @opencode-ai/sdk for HTTP and SSE operations.
- * SDK client is injected via factory for testability.
+ * The wire client is injected via factory for testability; the default builds
+ * the 1.x or 2.x wire from the options.
  */
 export class OpenCodeClient implements IDisposable {
-  private readonly baseUrl: string;
   private readonly port: number;
-  private readonly sdk: OpencodeClient;
   private readonly logger: Logger;
+  private readonly wire: WireClient;
   private readonly listeners = new Set<SessionEventCallback>();
   private readonly userRequestListeners = new Set<UserRequestEventCallback>();
   private readonly statusListeners = new Set<StatusChangedCallback>();
-  private eventSubscription: SdkEventSubscription | null = null;
+  private connected = false;
   private disposed = false;
 
   /**
@@ -156,11 +115,22 @@ export class OpenCodeClient implements IDisposable {
    */
   private _currentStatus: ClientStatus = "idle";
 
-  constructor(port: number, logger: Logger, sdkFactory: SdkClientFactory = defaultSdkFactory) {
+  constructor(
+    port: number,
+    logger: Logger,
+    options: OpenCodeClientOptions,
+    wireFactory: WireClientFactory = defaultWireFactory
+  ) {
     this.port = port;
-    this.baseUrl = `http://127.0.0.1:${port}`;
     this.logger = logger;
-    this.sdk = sdkFactory(this.baseUrl);
+    const wireOptions = {
+      major: options.major,
+      ...(options.password !== undefined && { password: options.password }),
+      directory: options.directory,
+      ...(options.mcpServer !== undefined && { mcpServer: options.mcpServer }),
+    };
+    this.wire = wireFactory(`http://127.0.0.1:${port}`, wireOptions, logger);
+    this.wire.onWireEvent((event) => this.handleWireEvent(event));
   }
 
   /**
@@ -168,14 +138,7 @@ export class OpenCodeClient implements IDisposable {
    * Returns all sessions without filtering (caller can filter as needed).
    */
   async listSessions(): Promise<Result<Session[], OpenCodeError>> {
-    this.logger.debug("Listing sessions");
-    try {
-      const result = await this.sdk.session.list();
-      const sessions = result.data as SdkSession[];
-      return ok(sessions.map((s) => this.mapSdkSession(s)));
-    } catch (error) {
-      return err(this.mapSdkError(error));
-    }
+    return this.wire.listSessions();
   }
 
   /**
@@ -188,7 +151,8 @@ export class OpenCodeClient implements IDisposable {
 
   /**
    * Subscribe to user request events: a root or tracked child session asking
-   * for permission or asking a question, and that request being resolved.
+   * for permission or asking a question (a form, on 2.x), and that request
+   * being resolved.
    */
   onUserRequestEvent(callback: UserRequestEventCallback): Unsubscribe {
     this.userRequestListeners.add(callback);
@@ -217,18 +181,7 @@ export class OpenCodeClient implements IDisposable {
    * Empty or all idle -> "idle", any busy/retry -> "busy"
    */
   async getStatus(): Promise<Result<ClientStatus, OpenCodeError>> {
-    try {
-      const result = await this.sdk.session.status();
-      const statuses = result.data as Record<string, SdkSessionStatus>;
-
-      // Aggregate: empty OR all idle -> "idle", any busy/retry -> "busy"
-      const hasBusy = Object.values(statuses).some((s) => s.type === "busy" || s.type === "retry");
-      const status: ClientStatus = hasBusy ? "busy" : "idle";
-
-      return ok(status);
-    } catch (error) {
-      return err(this.mapSdkError(error));
-    }
+    return this.wire.getStatus();
   }
 
   /**
@@ -239,27 +192,19 @@ export class OpenCodeClient implements IDisposable {
    * @returns The full session object on success, or an error
    */
   async createSession(): Promise<Result<Session, OpenCodeError>> {
-    try {
-      const result = await this.sdk.session.create({ body: {} });
-      if (!result.data) {
-        return err(new OpenCodeError("Session creation returned no data", "REQUEST_FAILED"));
-      }
-
-      const session = this.mapSdkSession(result.data);
-
-      // Track immediately - don't wait for SSE session.created event
-      // This ensures session.status events are handled correctly
-      this.rootSessionIds.add(session.id);
-
-      this.logger.debug("Session created", { port: this.port, sessionId: session.id });
-      return ok(session);
-    } catch (error) {
-      return err(this.mapSdkError(error));
+    const result = await this.wire.createSession();
+    if (result.ok) {
+      // Track immediately - don't wait for the session.created event
+      // This ensures session status events are handled correctly
+      this.rootSessionIds.add(result.value.id);
+      this.logger.debug("Session created", { port: this.port, sessionId: result.value.id });
     }
+    return result;
   }
 
   /**
-   * Send a prompt to an existing session.
+   * Send a prompt to an existing session. Resolves when the turn it starts
+   * has finished.
    *
    * @param sessionId - The session to send the prompt to
    * @param prompt - The prompt text
@@ -268,28 +213,18 @@ export class OpenCodeClient implements IDisposable {
   async sendPrompt(
     sessionId: string,
     prompt: string,
-    options?: { agent?: string; model?: { providerID: string; modelID: string } }
+    options?: WirePromptOptions
   ): Promise<Result<void, OpenCodeError>> {
-    try {
-      await this.sdk.session.prompt({
-        path: { id: sessionId },
-        body: {
-          ...(options?.agent !== undefined && { agent: options.agent }),
-          ...(options?.model !== undefined && { model: options.model }),
-          parts: [{ type: "text", text: prompt }],
-        },
-      });
-
+    const result = await this.wire.sendPrompt(sessionId, prompt, options);
+    if (result.ok) {
       this.logger.debug("Prompt sent", {
         port: this.port,
         sessionId,
         promptLength: prompt.length,
         ...(options?.agent !== undefined && { agent: options.agent }),
       });
-      return ok(undefined);
-    } catch (error) {
-      return err(this.mapSdkError(error));
     }
+    return result;
   }
 
   /**
@@ -306,66 +241,34 @@ export class OpenCodeClient implements IDisposable {
   async sendPromptAsync(
     sessionId: string,
     prompt: string,
-    options?: { agent?: string; model?: { providerID: string; modelID: string } }
+    options?: WirePromptOptions
   ): Promise<Result<void, OpenCodeError>> {
-    try {
-      const result = await this.sdk.session.promptAsync({
-        path: { id: sessionId },
-        body: {
-          ...(options?.agent !== undefined && { agent: options.agent }),
-          ...(options?.model !== undefined && { model: options.model }),
-          parts: [{ type: "text", text: prompt }],
-        },
-      });
-      if (result.error !== undefined) {
-        return err(
-          new OpenCodeError(
-            `Prompt was not accepted: ${JSON.stringify(result.error)}`,
-            "REQUEST_FAILED"
-          )
-        );
-      }
+    const result = await this.wire.sendPromptAsync(sessionId, prompt, options);
+    if (result.ok) {
       this.logger.debug("Prompt queued", {
         port: this.port,
         sessionId,
         promptLength: prompt.length,
       });
-      return ok(undefined);
-    } catch (error) {
-      return err(this.mapSdkError(error));
     }
+    return result;
   }
 
   /**
-   * Connect to SSE event stream.
+   * Connect to the server's event stream.
    *
    * @param timeoutMs - Connection timeout in milliseconds. Default: 5000
    * @throws Error if connection fails or times out
    */
   async connect(timeoutMs = 5000): Promise<void> {
-    if (this.disposed || this.eventSubscription) return;
+    if (this.disposed || this.connected) return;
 
     this.logger.info("Connecting", { port: this.port });
 
-    const events = await withTimeout(
-      this.sdk.event.subscribe(),
-      timeoutMs,
-      () => new Error("Connect timeout")
-    );
-
-    this.eventSubscription = events;
+    await this.wire.connect(timeoutMs);
+    this.connected = true;
 
     this.logger.info("Connected", { port: this.port });
-
-    // Process events in background with error handling
-    this.processEvents(events.stream).catch((processError) => {
-      if (!this.disposed) {
-        this.logger.warn("Connection error", {
-          port: this.port,
-          error: getErrorMessage(processError),
-        });
-      }
-    });
 
     // Sync initial status with error handling
     try {
@@ -382,18 +285,18 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Disconnect from SSE event stream.
+   * Disconnect from the event stream.
    *
-   * This method closes the SSE subscription but keeps the SDK client instance.
-   * Used during server restart flow to temporarily disconnect while preserving
-   * session tracking state. After restart, create a new OpenCodeClient and
-   * call connect() to resume event streaming.
+   * This closes the subscription but keeps the wire client and session
+   * tracking state. Used during server restart flow: create a new
+   * OpenCodeClient and call connect() to resume event streaming.
    *
    * Note: For permanent cleanup, use dispose() instead which also clears
    * all listeners and session tracking.
    */
   disconnect(): void {
-    this.eventSubscription = null;
+    this.connected = false;
+    this.wire.disconnect();
     this.logger.info("Disconnected", { port: this.port });
   }
 
@@ -413,76 +316,38 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Process events from the SDK event stream.
+   * Handle a normalized wire event and dispatch to the tracking state and
+   * the listeners.
    */
-  private async processEvents(stream: AsyncIterable<SdkEvent>): Promise<void> {
-    try {
-      for await (const event of stream) {
-        if (this.disposed || !this.eventSubscription) break;
-        this.handleSdkEvent(event);
-      }
-    } catch (error) {
-      if (this.disposed) return; // Expected during shutdown
-      throw error; // Re-throw for .catch() handler
-    }
-  }
-
-  /**
-   * Handle an SDK event and dispatch to appropriate handlers.
-   */
-  private handleSdkEvent(event: ServerEvent): void {
+  private handleWireEvent(event: WireEvent): void {
     switch (event.type) {
       case "session.status":
-        this.handleSessionStatus(event.properties);
+        this.handleSessionStatus(event.sessionID, event.status);
         break;
       case "session.created":
-        this.handleSessionCreated(event.properties);
-        break;
-      case "session.idle":
-        this.handleSessionIdle(event.properties);
+        this.handleSessionCreated(event.sessionID, event.parentID, event.title);
         break;
       case "session.deleted":
-        this.handleSessionDeleted(event.properties);
+        this.handleSessionDeleted(event.sessionID);
         break;
-      case "permission.asked":
-        this.handleUserRequestAsked("permission", event.properties);
+      case "user-request.asked":
+        this.handleUserRequestAsked(event.kind, event.id, event.sessionID);
         break;
-      case "permission.replied":
-        this.handleUserRequestResolved("permission", event.properties);
-        break;
-      case "question.asked":
-        this.handleUserRequestAsked("question", event.properties);
-        break;
-      case "question.replied":
-      case "question.rejected":
-        this.handleUserRequestResolved("question", event.properties);
+      case "user-request.resolved":
+        this.handleUserRequestResolved(event.kind, event.requestID, event.sessionID);
         break;
     }
   }
 
   /**
-   * Handle session.status events.
+   * Handle a session's status.
    */
-  private handleSessionStatus(properties: { sessionID: string; status: SdkSessionStatus }): void {
-    if (!properties?.sessionID || !properties?.status?.type) return;
-
-    const statusType = properties.status.type;
+  private handleSessionStatus(sessionId: string, status: "idle" | "busy" | "retry"): void {
     // Map "retry" to "busy"
-    if (statusType === "idle" || statusType === "busy" || statusType === "retry") {
-      const mappedType = statusType === "retry" ? "busy" : statusType;
-      this.logger.debug("Session status", { sessionId: properties.sessionID, status: mappedType });
-      this.emitSessionEvent({ type: mappedType, sessionId: properties.sessionID });
-      this.applySessionStatus(properties.sessionID, mappedType);
-    }
-  }
-
-  /**
-   * Handle session.idle events.
-   */
-  private handleSessionIdle(properties: { sessionID: string }): void {
-    if (!properties?.sessionID) return;
-    this.emitSessionEvent({ type: "idle", sessionId: properties.sessionID });
-    this.applySessionStatus(properties.sessionID, "idle");
+    const mappedType = status === "retry" ? "busy" : status;
+    this.logger.debug("Session status", { sessionId, status: mappedType });
+    this.emitSessionEvent({ type: mappedType, sessionId });
+    this.applySessionStatus(sessionId, mappedType);
   }
 
   /**
@@ -529,14 +394,9 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Handle session.deleted events.
-   * Accepts either SDK format ({ info: Session }) or legacy format ({ sessionID: string }).
+   * Handle a session.deleted event.
    */
-  private handleSessionDeleted(properties?: { info?: { id?: string }; sessionID?: string }): void {
-    // Support SDK format (info.id) and legacy format (sessionID)
-    const sessionId = properties?.info?.id ?? properties?.sessionID;
-    if (!sessionId) return;
-
+  private handleSessionDeleted(sessionId: string): void {
     // Clean up child mapping if this was a child session
     this.childToRootSession.delete(sessionId);
     this.optedOutChildSessions.delete(sessionId);
@@ -566,32 +426,27 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Handle session.created events.
+   * Handle a session.created event.
    * Adds new root sessions to the tracking set, and maps child sessions to their root.
    * Emits a "created" event to notify listeners that a session exists but status is unknown.
    */
-  private handleSessionCreated(properties?: {
-    info?: { id?: string; parentID?: string; title?: string };
-  }): void {
-    const sessionInfo = properties?.info;
-    if (!sessionInfo || typeof sessionInfo.id !== "string") return;
-
-    if (!sessionInfo.parentID) {
+  private handleSessionCreated(sessionId: string, parentID?: string, title?: string): void {
+    if (parentID === undefined) {
       // Root session
-      this.rootSessionIds.add(sessionInfo.id);
-      // Emit "created" event - status is unknown until we receive session.status
+      this.rootSessionIds.add(sessionId);
+      // Emit "created" event - status is unknown until a status event arrives
       // This allows sessionToPort tracking without assuming idle status
-      this.emitSessionEvent({ type: "created", sessionId: sessionInfo.id });
+      this.emitSessionEvent({ type: "created", sessionId });
     } else {
       // Child session: map to its root
-      if (this.rootSessionIds.has(sessionInfo.parentID)) {
+      if (this.rootSessionIds.has(parentID)) {
         // Direct child of a root session
-        this.childToRootSession.set(sessionInfo.id, sessionInfo.parentID);
+        this.childToRootSession.set(sessionId, parentID);
       } else {
         // Parent is also a child - find its root
-        const rootId = this.childToRootSession.get(sessionInfo.parentID);
+        const rootId = this.childToRootSession.get(parentID);
         if (rootId) {
-          this.childToRootSession.set(sessionInfo.id, rootId);
+          this.childToRootSession.set(sessionId, rootId);
         }
       }
       // The task tool titles a child session after the task description (1.x:
@@ -599,38 +454,45 @@ export class OpenCodeClient implements IDisposable {
       // and with it everything it spawns. OpenCode 1.x runs a task in the
       // background only with OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true.
       if (
-        this.childToRootSession.has(sessionInfo.id) &&
-        (isBackgroundAgentLabel(sessionInfo.title) ||
-          this.optedOutChildSessions.has(sessionInfo.parentID))
+        this.childToRootSession.has(sessionId) &&
+        (isBackgroundAgentLabel(title) || this.optedOutChildSessions.has(parentID))
       ) {
-        this.optedOutChildSessions.add(sessionInfo.id);
+        this.optedOutChildSessions.add(sessionId);
       }
     }
   }
 
   /**
-   * Handle permission.asked / question.asked events.
+   * Handle a session asking the user something (permission asked, question
+   * or — on 2.x — a form created).
    * Emits for root sessions and tracked child sessions.
    */
-  private handleUserRequestAsked(kind: UserRequestKind, properties: unknown): void {
-    if (!isUserRequestAsked(properties) || !this.isTrackedSession(properties.sessionID)) return;
+  private handleUserRequestAsked(
+    kind: UserRequestAskedEvent["kind"],
+    id: string,
+    sessionID: string
+  ): void {
+    if (!this.isTrackedSession(sessionID)) return;
 
-    const event = { kind, id: properties.id, sessionID: properties.sessionID };
+    const event = { kind, id, sessionID };
     for (const listener of this.userRequestListeners) {
       listener({ type: "asked", event });
     }
   }
 
   /**
-   * Handle permission.replied / question.replied / question.rejected events.
+   * Handle a pending request being answered. Only the fact matters here, not
+   * the answer.
    * Emits for root sessions and tracked child sessions.
    */
-  private handleUserRequestResolved(kind: UserRequestKind, properties: unknown): void {
-    if (!isUserRequestResolved(properties) || !this.isTrackedSession(properties.sessionID)) {
-      return;
-    }
+  private handleUserRequestResolved(
+    kind: UserRequestResolvedEvent["kind"],
+    requestID: string,
+    sessionID: string
+  ): void {
+    if (!this.isTrackedSession(sessionID)) return;
 
-    const event = { kind, requestID: properties.requestID, sessionID: properties.sessionID };
+    const event = { kind, requestID, sessionID };
     for (const listener of this.userRequestListeners) {
       listener({ type: "resolved", event });
     }
@@ -642,40 +504,7 @@ export class OpenCodeClient implements IDisposable {
   private isTrackedSession(sessionId: string): boolean {
     return this.rootSessionIds.has(sessionId) || this.childToRootSession.has(sessionId);
   }
-
-  /**
-   * Map SDK session to our Session type.
-   */
-  private mapSdkSession(sdkSession: SdkSession): Session {
-    const session: Session = {
-      id: sdkSession.id,
-      directory: sdkSession.directory,
-      title: sdkSession.title,
-    };
-    // Only add parentID if it exists (to satisfy exactOptionalPropertyTypes)
-    if (sdkSession.parentID) {
-      return { ...session, parentID: sdkSession.parentID };
-    }
-    return session;
-  }
-
-  /**
-   * Map SDK errors to OpenCodeError.
-   *
-   * Classified by fetch's structured fields, never the message: a refused
-   * connection rejects with `cause.code` "ECONNREFUSED", an AbortSignal timeout
-   * with name "TimeoutError". The original message is kept either way.
-   */
-  private mapSdkError(error: unknown): OpenCodeError {
-    if (error instanceof Error) {
-      if (error.name === "TimeoutError") {
-        return new OpenCodeError(error.message, "TIMEOUT");
-      }
-      if (errorCode(error.cause) === "ECONNREFUSED") {
-        return new OpenCodeError(error.message, "CONNECTION_REFUSED");
-      }
-      return new OpenCodeError(error.message, "REQUEST_FAILED");
-    }
-    return new OpenCodeError("Unknown error", "REQUEST_FAILED");
-  }
 }
+
+/** Re-exported for the provider's convenience. */
+export type { WirePromptOptions } from "./wire";

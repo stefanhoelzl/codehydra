@@ -19,7 +19,11 @@ import {
 import {
   createOpencodeBinaryDescriptor,
   getOpencodeExecutablePath,
+  OPENCODE_NPM_PACKAGE,
+  OPENCODE_NPM_REGISTRY,
 } from "../../modules/agent-module/opencode/setup-info";
+import type { HttpClient } from "../../boundaries/platform/network";
+import { BinaryDownloadError } from "../../shared/errors/service-errors";
 import {
   compareVersions,
   createAgentBinaryResolver,
@@ -49,6 +53,12 @@ export interface EnsureBinaryOptions {
   platformInfo?: PlatformInfo;
   /** Timeout for download in milliseconds (default: 300000 = 5 minutes) */
   timeout?: number;
+  /**
+   * Which OpenCode wire the tests exercise: 1.x (default) or 2.x. Decides
+   * which major is downloaded and which install is picked — both can be on
+   * disk at once, one version directory per major.
+   */
+  opencodeMajor?: 1 | 2;
 }
 
 /**
@@ -90,13 +100,43 @@ function buildVscodiumRequest(
   };
 }
 
+/** npm's dist-tags for the OpenCode 2 CLI package; its `latest` is the newest 2.x. */
+export const OPENCODE_NPM_DIST_TAGS_URL = `${OPENCODE_NPM_REGISTRY}/-/package/${OPENCODE_NPM_PACKAGE}/dist-tags`;
+
 /**
- * The newest downloaded OpenCode, or null. Tests run the latest release like
- * the app does, so there is no pinned version to look for.
+ * The latest OpenCode 2, from npm's dist-tags: the version the 2.x test lane
+ * runs. Test-only — the app has no such channel; its `latest` is whatever the
+ * GitHub `releases/latest` redirect names (1.x today).
+ */
+export async function resolveLatestOpenCode2(
+  httpClient: Pick<HttpClient, "fetch">
+): Promise<string> {
+  const response = await httpClient.fetch(OPENCODE_NPM_DIST_TAGS_URL);
+  if (!response.ok) {
+    throw new BinaryDownloadError(
+      `HTTP ${response.status} looking up the latest OpenCode 2 on npm`,
+      "NETWORK_ERROR"
+    );
+  }
+  const tags = (await response.json()) as Partial<Record<string, unknown>>;
+  const version = tags.latest;
+  if (typeof version !== "string" || version.length === 0) {
+    throw new BinaryDownloadError(
+      "Could not read the latest OpenCode 2 from npm's dist-tags",
+      "INVALID_VERSION"
+    );
+  }
+  return version;
+}
+
+/**
+ * The newest downloaded OpenCode of a major, or null. The 1.x lane runs the
+ * latest release like the app does; the 2.x lane runs the latest 2.x.
  */
 function findDownloadedOpencode(
   pathProvider: DefaultPathProvider,
-  platformInfo: PlatformInfo
+  platformInfo: PlatformInfo,
+  major: 1 | 2
 ): string | null {
   const root = pathProvider.bundlePath("opencode").toNative();
   const executable = getOpencodeExecutablePath(platformInfo.platform as SupportedPlatform);
@@ -106,7 +146,8 @@ function findDownloadedOpencode(
   } catch {
     return null;
   }
-  for (const version of versions.sort((a, b) => compareVersions(b, a))) {
+  const ofMajor = versions.filter((v) => v.split(".")[0] === String(major));
+  for (const version of ofMajor.sort((a, b) => compareVersions(b, a))) {
     const binaryPath = join(root, version, executable);
     if (existsSync(binaryPath)) return binaryPath;
   }
@@ -165,14 +206,19 @@ export async function ensureBinaryForTests(
   const platformInfo = options?.platformInfo ?? new NodePlatformInfo();
 
   if (binary === "opencode") {
-    // The latest release, whatever is installed on the system — the same
-    // download `codehydra --download-binaries` makes. Skipped when present.
+    // The 1.x lane seeds the latest release, whatever is installed on the
+    // system — the same download `codehydra --download-binaries` makes. The 2.x
+    // lane seeds the latest 2.x npm dist-tag instead, since the GitHub
+    // `releases/latest` redirect still points at 1.x. Skipped when present.
+    const major = options?.opencodeMajor ?? 1;
+    const version =
+      major === 2 ? await resolveLatestOpenCode2(createDownloadDeps().httpClient) : null;
     const resolver = createAgentBinaryResolver({
       descriptor: createOpencodeBinaryDescriptor(
         platformInfo.platform as SupportedPlatform,
         platformInfo.arch as SupportedArch
       ),
-      version: { get: () => null },
+      version: { get: () => version },
       pathProvider,
       fileSystem: new DefaultFileSystemBoundary(SILENT_LOGGER),
       processRunner: new ExecaProcessRunner(SILENT_LOGGER),
@@ -181,8 +227,8 @@ export async function ensureBinaryForTests(
       platform: platformInfo.platform as SupportedPlatform,
       logger: SILENT_LOGGER,
     });
-    const version = await resolver.seed(reportProgress(binary));
-    console.log(`opencode v${version} ready for tests`);
+    const seeded = await resolver.seed(reportProgress(binary));
+    console.log(`opencode v${seeded} ready for tests`);
     return;
   }
 
@@ -249,7 +295,7 @@ export function getBinaryPathForTests(
   const platformInfo = options?.platformInfo ?? new NodePlatformInfo();
   const binaryPath =
     binary === "opencode"
-      ? findDownloadedOpencode(pathProvider, platformInfo)
+      ? findDownloadedOpencode(pathProvider, platformInfo, options?.opencodeMajor ?? 1)
       : buildVscodiumRequest(pathProvider, platformInfo).binaryPath;
 
   if (binaryPath === null || !existsSync(binaryPath)) {

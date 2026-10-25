@@ -38,7 +38,7 @@ CodeHydra uses behavior-driven testing with vitest. Tests verify **behavior** th
 
 - Node.js: `FileSystemBoundary`, `ProcessRunner`, `HttpClient`, `PortManager`, `ArchiveExtractor`
 - Git: `IGitClient`
-- OpenCode: `SdkClientFactory`
+- OpenCode: the two wire clients (`WireClient`, `major: 1` and `major: 2`) — `client.boundary.test.ts` runs the 1.x lane, `client-v2.boundary.test.ts` the 2.x lane, both through `withOpencode` (`boundary-test-utils.ts`) against a real `opencode serve` with a mock model
 - Electron Shell: `WindowBoundary`, `ViewBoundary`, `SessionBoundary`
 - Electron Platform: `DialogBoundary`, `ImageBoundary`, `AppBoundary`, `MenuBoundary`, `OsNotificationBoundary` (IPC is `ViewBoundary.send` / `onIpc`)
 
@@ -256,11 +256,24 @@ at build time, not from `app.isPackaged`, so CI's PR artifacts are dev-flavored.
 override such a build writes its data into whatever `cwd` it inherited.
 
 **Projects.** `download-binaries` runs against an empty root: it runs the app with
-`--download-binaries` (real VSCodium, Claude and OpenCode downloads), seeds `config.json`
-with the OpenCode choice, then starts the app once so the VSIX installs run, and leaves the
-root warm. (The first-run wizard's ordering is covered by `app-start.integration.test.ts`.) The `opencode` and `claude` projects then run the remaining specs against that warm
-root, flipping agent with `--agent=` (CLI beats config.json, and `wasConfigured()` is now
-true so the wizard stays away). `workers: 1`, `retries: 0`.
+`--download-binaries` (real VSCodium, Claude and the latest 1.x OpenCode downloads — plus
+the latest 2.x OpenCode from npm, which GitHub 2.x releases do not ship binaries for), seeds
+`config.json` with the OpenCode choice, then starts the app once so the VSIX installs run, and
+leaves the root warm. (The first-run wizard's ordering is covered by
+`app-start.integration.test.ts`.) The `opencode` (OpenCode 2) and `opencode-legacy`
+(OpenCode 1) projects are each pinned to the seeded binary of their major by `launchApp`'s
+version pin — unpinned, an `opencode` on the developer's PATH would win, of either major.
+
+**Every test gives OpenCode its own database** (`OPENCODE_DB`): e2e per project
+(`opencode-<project>.db` under the root, set by `launchApp`), the client boundary suites per
+major in their worker's home, `server-manager.boundary.test.ts` in its test directory. Never
+the machine's `opencode.db`: a 1.x server refuses one a 2.x server created ("Database is not
+empty and has no session table"), so a shared file breaks the 1.x lane as soon as the 2.x lane
+has run on a fresh machine.
+
+They and the `claude` project then run the remaining specs against that warm root,
+flipping agent with `--agent=` (CLI beats config.json, and `wasConfigured()` is now true so
+the wizard stays away). `workers: 1`, `retries: 0`.
 
 **Gotchas the specs encode:**
 
@@ -320,7 +333,8 @@ mocked. No login, no API key, no network:
 - Grant the agent permission, or it parks on a prompt nobody answers — and `PermissionRequest`
   maps to _idle_, so the workspace would look finished. Claude takes
   `--permission-mode bypassPermissions` on `ch ws create`; OpenCode has no such flag, so its
-  grant is `permission: { "*": "allow" }` in the config the mock writes.
+  grant comes from the config the mock writes — `permission: { "*": "allow" }` on 1.x, the
+  explicit `permissions` rule on 2.x (whose base policy already allows everything).
 - Claude gets `ANTHROPIC_AUTH_TOKEN`, not `ANTHROPIC_API_KEY`: an API key makes it ask the
   user to approve it once. Plus its own `CLAUDE_CONFIG_DIR` (seeded past onboarding, so the
   run never touches `~/.claude`) and `DISABLE_NON_ESSENTIAL_MODEL_CALLS`, which keeps the
@@ -1115,23 +1129,22 @@ expect(runner.$.spawned(0)).toHaveBeenKilledWith(1000, 1000);
 | `toHaveBeenKilled()`               | MockSpawnedProcess | Verify kill() was called         |
 | `toHaveBeenKilledWith(term, kill)` | MockSpawnedProcess | Verify kill() with specific args |
 
-### SDK Client Mock
+### Wire Client Mock
 
-The OpenCode SDK client mock provides behavioral simulation for `@opencode-ai/sdk` integration testing.
+The OpenCode wire client mock provides behavioral simulation for the `WireClient` seam — the same interface both server APIs (1.x and 2.x) are normalized into, so one mock serves either lane.
 
 **Factory Function**:
 
 ```typescript
 import {
-  createSdkClientMock,
-  createSdkFactoryMock,
+  createWireClientMock,
+  wireFactoryMock,
   createTestSession,
-  type SdkClientFactory,
-  type MockSdkClient,
-} from "src/modules/agent-module/opencode/sdk-client.state-mock";
+  type MockWireClient,
+} from "src/modules/agent-module/opencode/wire-client.state-mock";
 
 // Create mock with initial sessions
-const mock = createSdkClientMock({
+const mock = createWireClientMock({
   sessions: [
     { id: "ses-0001", directory: "/test", status: { type: "idle" } },
     { id: "ses-0002", directory: "/test", status: { type: "busy" } },
@@ -1139,22 +1152,22 @@ const mock = createSdkClientMock({
 });
 
 // Create factory for dependency injection
-const factory = createSdkFactoryMock(mock);
+const factory = wireFactoryMock(mock);
 ```
 
-**State Interface** (`SdkClientMockState`):
+**State Interface** (`WireClientMockState`):
 
-| Property              | Type                               | Description                       |
-| --------------------- | ---------------------------------- | --------------------------------- |
-| `sessions`            | `ReadonlyMap<string, MockSession>` | Session ID → session with status  |
-| `connected`           | `boolean`                          | Whether event stream is connected |
-| `prompts`             | `readonly PromptRecord[]`          | History of prompts sent           |
-| `emittedEvents`       | `readonly SdkEvent[]`              | History of emitted events         |
-| `permissionResponses` | `readonly PermissionResponse[]`    | History of permission responses   |
-| `emitEvent(event)`    | `(event: SdkEvent) => void`        | Push event synchronously          |
-| `completeStream()`    | `() => void`                       | End the event stream              |
-| `errorStream(error)`  | `(error: Error) => void`           | Error the event stream            |
-| `setConnectionError`  | `(error: Error \| null) => void`   | Make subscribe() reject           |
+| Property           | Type                                     | Description                                              |
+| ------------------ | ---------------------------------------- | -------------------------------------------------------- |
+| `sessions`         | `ReadonlyMap<string, MockSession>`       | Session ID → session with status                         |
+| `connected`        | `boolean`                                | Whether event stream is connected                        |
+| `prompts`          | `readonly PromptRecord[]`                | History of prompts sent                                  |
+| `emittedEvents`    | `readonly WireEvent[]`                   | History of emitted events                                |
+| `switchCalls`      | `readonly {sessionId, agent?, model?}[]` | Agent/model switches (2.x prompts switch on the session) |
+| `emitEvent(event)` | `(event: WireEvent) => void`             | Push event synchronously                                 |
+| `setConnectError`  | `(error: Error \| null) => void`         | Make connect() throw                                     |
+| `setListError`     | `(error: Error \| null) => void`         | Make listSessions() fail                                 |
+| `setStatusError`   | `(error: Error \| null) => void`         | Make getStatus() fail                                    |
 
 **Custom Matchers**:
 

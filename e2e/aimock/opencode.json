@@ -6,6 +6,11 @@
       "response": { "content": "Rename workspace" }
     },
     {
+      "_comment": "The same title call on OpenCode 2, whose title generator has a system prompt of its own.",
+      "match": { "systemMessage": "You name conversations so the user can find them later" },
+      "response": { "content": "Rename workspace" }
+    },
+    {
       "_comment": "A message sent from outside (`ch ws agent message`) is queued as a prompt of its own, prefixed with its sender. Matched on the probe inside it and answered with text. Before turn 1, whose gate (the MCP tool, no tool result) this request would otherwise also pass.",
       "match": {
         "systemMessage": "You are running inside CodeHydra.",

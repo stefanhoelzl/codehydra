@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
-import type { Agent } from "./env";
+import { projectAgent } from "./env";
 import {
   HOME_ROOT,
   createWorkspace,
@@ -67,7 +67,7 @@ test("a restart lists every workspace at once and lands on the topmost while the
   );
 
   await app().stop();
-  await launchApp(app(), { agent: test.info().project.name as Agent });
+  await launchApp(app(), { agent: projectAgent(test.info().project.name) });
   const ui = app().uiPage();
 
   // The startup screen is gone and alpha — the topmost row — is usable while
