@@ -304,6 +304,9 @@ function agentEnv(
     DISABLE_AUTOUPDATER: "1",
     DISABLE_TELEMETRY: "1",
     DISABLE_ERROR_REPORTING: "1",
+    // Since 2.1.310 Claude defers MCP tools behind ToolSearch, so a request no
+    // longer lists them and no fixture matches. List every tool up front.
+    ENABLE_TOOL_SEARCH: "false",
   };
 }
 
