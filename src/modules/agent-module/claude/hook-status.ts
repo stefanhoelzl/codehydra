@@ -15,6 +15,7 @@
 import type { AgentActivity } from "../types";
 import {
   getStatusChangeForHook,
+  isOptedOutSubagent,
   taskKeepsBusy,
   type ClaudeCodeBridgePayload,
   type ClaudeCodeHookName,
@@ -43,6 +44,13 @@ export interface HookFlags {
    */
   readonly busyForBackgroundTasks: boolean;
   /**
+   * The last Stop went idle while background sub-agents opted out with `[bg]`
+   * keep working. Their hooks (which carry an agent_id) are ignored until the
+   * main agent starts a turn again, so their tool activity cannot flip the
+   * workspace back to busy while it waits on the user.
+   */
+  readonly idleBesideBackgroundAgents: boolean;
+  /**
    * The agent terminal is open (WrapperStart, until WrapperEnd). Open without an
    * inbox means `claude` is still starting.
    */
@@ -55,6 +63,7 @@ export const INITIAL_HOOK_FLAGS: HookFlags = {
   awaitingUserInputResolution: false,
   ignoreNextSessionStart: false,
   busyForBackgroundTasks: false,
+  idleBesideBackgroundAgents: false,
   terminalOpen: false,
 };
 
@@ -79,8 +88,11 @@ export type HookSuppression =
 /** A hook that does not drive the main status at all. */
 export interface IgnoredHook {
   readonly kind: "ignored";
-  /** A sub-agent's Stop/StopFailure, or a sub-agent's (or prompt-suggestion fork's) PreToolUse. */
-  readonly reason: "subagent-stop" | "subagent-pre-tool-use";
+  /**
+   * A sub-agent's Stop/StopFailure, a sub-agent's (or prompt-suggestion fork's)
+   * PreToolUse, or any sub-agent hook while idle beside `[bg]` sub-agents.
+   */
+  readonly reason: "subagent-stop" | "subagent-pre-tool-use" | "background-subagent";
 }
 
 /** The outcome of a hook that went through the status rules. */
@@ -143,12 +155,21 @@ export function deriveStatus(
     return { kind: "ignored", reason: "subagent-pre-tool-use" };
   }
 
+  // The workspace went idle beside `[bg]` sub-agents: the main agent's turn is
+  // over, and every task still running was opted out, so any hook carrying an
+  // agent_id comes from them. Their tool calls (PostToolUse → busy) would
+  // otherwise pull the workspace back to busy while it waits on the user.
+  if (input.flags.idleBesideBackgroundAgents && payload.agent_id) {
+    return { kind: "ignored", reason: "background-subagent" };
+  }
+
   const current = input.status;
   let {
     busyOnWrapperStart,
     awaitingUserInputResolution,
     ignoreNextSessionStart,
     busyForBackgroundTasks,
+    idleBesideBackgroundAgents,
     terminalOpen,
   } = input.flags;
   let startupTimer: DerivedStatus["startupTimer"] = null;
@@ -262,9 +283,12 @@ export function deriveStatus(
 
   // Background tasks: the Stop payload carries background_tasks — the live list
   // of still-running background work (shells and background sub-agents).
-  // taskKeepsBusy() decides which keep the workspace busy: sub-agents always
-  // do; shells do by default, unless invoked through the `ch-bg` wrapper (its
-  // marker in the command opts the shell out). When any qualifies, the idle
+  // taskKeepsBusy() decides which keep the workspace busy: sub-agents do unless
+  // their description starts with `[bg]`; shells do by default, unless invoked
+  // through the `ch-bg` wrapper (its marker in the command opts the shell out).
+  // When none qualifies but `[bg]` sub-agents run on, the workspace goes idle
+  // and their hooks are ignored until the main agent's next turn
+  // (idleBesideBackgroundAgents). When any qualifies, the idle
   // transition is suppressed and the decision is stashed so the ~60s-later
   // idle_prompt Notification (handled above) stays suppressed too. When a task
   // finishes, Claude Code re-invokes the agent (UserPromptSubmit), which clears
@@ -289,6 +313,10 @@ export function deriveStatus(
     const wasParked = awaitingUserInputResolution;
     awaitingUserInputResolution = false;
     busyForBackgroundTasks = busyTasks.length > 0;
+    // Idle with `[bg]` sub-agents still at work (a Stop held back by compaction
+    // does not go idle, so it does not count).
+    idleBesideBackgroundAgents =
+      busyTasks.length === 0 && !ignoreNextSessionStart && tasks.some(isOptedOutSubagent);
     if (busyTasks.length > 0) {
       status = wasParked ? "busy" : null;
       suppressed.push({
@@ -298,16 +326,31 @@ export function deriveStatus(
     }
   } else if (hookName === "StopFailure") {
     busyForBackgroundTasks = false;
+    idleBesideBackgroundAgents = false;
   }
   if (hookName === "UserPromptSubmit") {
     busyForBackgroundTasks = false;
     awaitingUserInputResolution = false;
   }
 
+  // The main agent working again ends the idle beside `[bg]` sub-agents — a
+  // prompt (the user's, or the wake-up a finished sub-agent sends), a tool of
+  // its own (sub-agent PreToolUse never gets here), a compaction or a new
+  // session. The next Stop decides afresh from its background_tasks.
+  if (
+    hookName === "UserPromptSubmit" ||
+    hookName === "PreToolUse" ||
+    hookName === "PreCompact" ||
+    hookName === "SessionStart"
+  ) {
+    idleBesideBackgroundAgents = false;
+  }
+
   // Terminal hooks clear background-task state as defensive cleanup.
   if (hookName === "WrapperEnd" || hookName === "SessionEnd") {
     busyForBackgroundTasks = false;
     awaitingUserInputResolution = false;
+    idleBesideBackgroundAgents = false;
   }
 
   // While parked on an AskUserQuestion the main agent is blocked on the user;
@@ -334,6 +377,7 @@ export function deriveStatus(
       awaitingUserInputResolution,
       ignoreNextSessionStart,
       busyForBackgroundTasks,
+      idleBesideBackgroundAgents,
       terminalOpen,
     },
     status,

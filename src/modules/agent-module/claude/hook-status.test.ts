@@ -282,6 +282,94 @@ describe("deriveStatus", () => {
     );
   });
 
+  describe("[bg] sub-agents", () => {
+    const bgAgent = { type: "subagent", status: "running", description: "[bg] review auth" };
+
+    it("goes idle on a Stop when only [bg] sub-agents run, and remembers them", () => {
+      const result = derive(input("busy"), "Stop", { background_tasks: [bgAgent] });
+      expect(result).toMatchObject({
+        status: "idle",
+        flags: { busyForBackgroundTasks: false, idleBesideBackgroundAgents: true },
+        suppressed: [],
+      });
+    });
+
+    it("matches the marker case-insensitively, at the start only", () => {
+      const marked = derive(input("busy"), "Stop", {
+        background_tasks: [{ ...bgAgent, description: "  [BG] review" }],
+      });
+      expect(marked.status).toBe("idle");
+      const prose = derive(input("busy"), "Stop", {
+        background_tasks: [{ ...bgAgent, description: "review [bg] marker" }],
+      });
+      expect(prose.status).toBeNull();
+    });
+
+    it("stays busy when an unmarked sub-agent or shell runs beside them", () => {
+      const result = derive(input("busy"), "Stop", {
+        background_tasks: [bgAgent, { type: "shell", status: "running", command: "npm test" }],
+      });
+      expect(result).toMatchObject({
+        status: null,
+        flags: { busyForBackgroundTasks: true, idleBesideBackgroundAgents: false },
+      });
+    });
+
+    it("goes idle when a Stop lifts a dropped park with only [bg] sub-agents left", () => {
+      const result = derive(input("idle", { awaitingUserInputResolution: true }), "Stop", {
+        background_tasks: [bgAgent],
+      });
+      expect(result).toMatchObject({
+        status: "idle",
+        flags: { awaitingUserInputResolution: false, idleBesideBackgroundAgents: true },
+      });
+    });
+
+    it("does not count a Stop held back by compaction", () => {
+      const result = derive(input("busy", { ignoreNextSessionStart: true }), "Stop", {
+        background_tasks: [bgAgent],
+      });
+      expect(result).toMatchObject({ status: null, flags: { idleBesideBackgroundAgents: false } });
+    });
+
+    it.each(["PostToolUse", "PermissionRequest", "Notification", "SubagentStop"] as const)(
+      "ignores a sub-agent's %s while idle beside them",
+      (hookName) => {
+        expect(
+          deriveStatus(input("idle", { idleBesideBackgroundAgents: true }), hookName, {
+            agent_id: "a1",
+            tool_name: "Read",
+          })
+        ).toEqual({ kind: "ignored", reason: "background-subagent" });
+      }
+    );
+
+    it("still lets a sub-agent's PostToolUse turn the workspace busy otherwise", () => {
+      const result = derive(input("idle"), "PostToolUse", { agent_id: "a1", tool_name: "Read" });
+      expect(result.status).toBe("busy");
+    });
+
+    it.each([
+      "UserPromptSubmit",
+      "PreToolUse",
+      "PreCompact",
+      "SessionStart",
+      "StopFailure",
+      "SessionEnd",
+      "WrapperEnd",
+    ] as const)("ends the idle beside them on the main agent's %s", (hookName) => {
+      const result = derive(input("idle", { idleBesideBackgroundAgents: true }), hookName);
+      expect(result.flags.idleBesideBackgroundAgents).toBe(false);
+    });
+
+    it("decides afresh on the Stop after a wake-up", () => {
+      const woken = derive(input("idle", { idleBesideBackgroundAgents: true }), "UserPromptSubmit");
+      expect(woken.status).toBe("busy");
+      const done = derive(input("busy", woken.flags), "Stop", { background_tasks: [] });
+      expect(done).toMatchObject({ status: "idle", flags: { idleBesideBackgroundAgents: false } });
+    });
+  });
+
   describe("untracked turns", () => {
     it("flags a main-agent Stop on an idle workspace", () => {
       expect(derive(input("idle"), "Stop").untrackedTurn).toBe(true);

@@ -291,8 +291,13 @@ the bridge evaluates it (`taskKeepsBusy`) and, when any qualifies, keeps the wor
 busy instead of going idle:
 
 - A running **sub-agent** (`type: "subagent"`, from an `Agent` tool call with
-  `run_in_background`) always keeps the workspace busy — it is unambiguous agent work,
-  independent of config.
+  `run_in_background`) keeps the workspace busy, unless its `description` starts with
+  `[bg]` (`isBackgroundAgentLabel`, `status-utils.ts`). A Stop that goes idle beside `[bg]`
+  sub-agents sets `idleBesideBackgroundAgents`, and their hooks (which carry an `agent_id`)
+  are ignored until the main agent's next turn, so their tool calls cannot flip it back to
+  busy. OpenCode reads the same marker from a child session's title (the task
+  description) and keeps the workspace busy while an unmarked child runs; a `[bg]`
+  child's descendants are opted out with it.
 - A running **shell** (`type: "shell"`, Bash with `run_in_background`) keeps it busy only
   when `experimental.busy-during-background-shell` selects it: `true` for any shell, or an
   array of regexes (config.json only) for shells whose command matches (e.g. `["ship-wait"]`

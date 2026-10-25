@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import {
   ALL_HOOK_NAMES,
   isBackgroundWrapped,
+  isOptedOutSubagent,
   registeredHooks,
   taskKeepsBusy,
   WRAPPER_HOOK_NAMES,
@@ -75,8 +76,19 @@ describe("taskKeepsBusy", () => {
     );
   });
 
-  it("subagents always keep busy, wrapper marker notwithstanding", () => {
+  it("subagents keep busy, wrapper marker notwithstanding", () => {
     expect(taskKeepsBusy({ id: "t1", type: "subagent", status: "running" })).toBe(true);
+    expect(
+      taskKeepsBusy({ id: "t1", type: "subagent", status: "running", description: "ch bg x" })
+    ).toBe(true);
+  });
+
+  it("excludes a subagent whose description starts with [bg]", () => {
+    const agent = { id: "t1", type: "subagent", status: "running", description: "[bg] review" };
+    expect(taskKeepsBusy(agent)).toBe(false);
+    expect(isOptedOutSubagent(agent)).toBe(true);
+    expect(isOptedOutSubagent({ ...agent, status: "completed" })).toBe(false);
+    expect(isOptedOutSubagent({ ...agent, type: "shell" })).toBe(false);
   });
 
   it("non-shell, non-subagent types never keep busy", () => {

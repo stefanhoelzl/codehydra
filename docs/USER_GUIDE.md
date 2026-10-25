@@ -374,7 +374,27 @@ It runs the command unchanged, with the same output and exit code (128 + the
 signal number when a signal kills it, as a shell reports it), and only
 tells CodeHydra to leave the workspace status alone. It matters only for
 Claude Code: OpenCode's background shells never affect its status, so there it
-simply runs the command. A background sub-agent always keeps the workspace busy.
+simply runs the command.
+
+A background sub-agent keeps the workspace busy too, with either agent. An
+agent that spawns one and then keeps talking with you — an orchestrator handing
+out work while you discuss the next step — can opt it out by starting the
+sub-agent's description with `[bg]` (case doesn't matter):
+
+```text
+[bg] review the auth module
+```
+
+Once the agent's turn ends and only `[bg]` sub-agents (and `ch bg` shells) are
+still running, the workspace goes **idle**, so it shows that it needs you; their
+work doesn't flip it back. When one finishes, the agent is woken with its
+result: the workspace reads busy while it handles that, then idle again, with
+the usual chime and notification. In OpenCode, everything a `[bg]` sub-agent
+spawns is opted out with it; OpenCode 1.x runs sub-agents in the background only
+when you set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in its
+environment (e.g. from a `before-workspace-opened` plugin hook's `env`). Agents are told about `[bg]` in their system
+prompt, and the description shows in their task list, so you can see which
+sub-agents were opted out.
 
 ## Configuration
 
@@ -1404,7 +1424,9 @@ opened on purpose with `xdg-open`, `open` or `ch ws open`.
 
 You don't have to explain CodeHydra to your agent. Every session gets a short
 system prompt: what busy and idle mean (so it ends its turn only when it needs
-you), that the worktree's lifecycle belongs to CodeHydra, that an `index.lock`
+you) and how to keep a background sub-agent from holding it busy (`[bg]`, see
+[Background processes](#background-processes-ch-bg)), that the worktree's
+lifecycle belongs to CodeHydra, that an `index.lock`
 that survives a retry while no git process is running is stale and can be
 deleted (otherwise it gives you the lock's path), that creating another
 workspace is your call, that `ch` is on its `PATH`, that

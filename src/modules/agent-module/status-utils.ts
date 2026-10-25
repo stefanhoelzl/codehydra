@@ -27,6 +27,19 @@ export function convertToAggregatedStatus(status: AgentActivity): AggregatedAgen
 }
 
 /**
+ * Detect the `[bg]` marker on a sub-agent's label.
+ *
+ * A background sub-agent keeps the workspace busy, unless the agent that spawned
+ * it opted it out by starting its description with `[bg]` — the sub-agent
+ * counterpart of `ch bg` for shells. Claude reports the description in the Stop
+ * payload's background_tasks; OpenCode makes it the child session's title.
+ * Prefix only and case-insensitive, so the token never fires on prose.
+ */
+export function isBackgroundAgentLabel(label: string | undefined): boolean {
+  return /^\s*\[bg\]/i.test(label ?? "");
+}
+
+/**
  * Derive an agent status from idle/busy counts.
  */
 export function countsToStatus(counts: { idle: number; busy: number }): AgentActivity {

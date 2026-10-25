@@ -78,6 +78,12 @@ describe("composed agent system prompts", () => {
       expect(get()).toContain("login pages excepted");
     });
 
+    it("tells how to opt a background sub-agent out of keeping the workspace busy", () => {
+      // isBackgroundAgentLabel matches this marker at the start of the
+      // description (Claude's background_tasks, OpenCode's child session title).
+      expect(get()).toContain("start its description with `[bg]`");
+    });
+
     it("stays within the word budget", () => {
       expect(countWords(get())).toBeLessThanOrEqual(MAX_WORDS);
     });

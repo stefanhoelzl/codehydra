@@ -1,6 +1,6 @@
 # Agent system prompt (`resources/prompts/`)
 
-What every agent session is told about its environment: busy/idle, `ch --help` / `ch guide` for help, pages go to `ch ws browser` (logins excepted), worktree ownership, a stale `index.lock` (survives a retry with no git process running: delete it, else give the user its path), operator-driven delegation; background shells via `ch bg` for Claude only.
+What every agent session is told about its environment: busy/idle and `[bg]` for background sub-agents, `ch --help` / `ch guide` for help, pages go to `ch ws browser` (logins excepted), worktree ownership, a stale `index.lock` (survives a retry with no git process running: delete it, else give the user its path), operator-driven delegation; background shells via `ch bg` for Claude only.
 
 ## Build
 
