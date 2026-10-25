@@ -486,6 +486,9 @@ export async function startAgents(options: {
       DISABLE_AUTOUPDATER: "1",
       DISABLE_TELEMETRY: "1",
       DISABLE_ERROR_REPORTING: "1",
+      // Since 2.1.310 Claude defers MCP tools behind ToolSearch, so they never
+      // appear in a request and the MCP wait above never ends. List them up front.
+      ENABLE_TOOL_SEARCH: "false",
     },
     open: (name) => gate(name).open(),
     served: (workspace, turn, step) => {
