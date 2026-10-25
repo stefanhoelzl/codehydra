@@ -12,7 +12,7 @@ import type { BuildInfo } from "./build-info";
  * Get the current git branch name synchronously.
  * Returns "unknown branch" if git command fails (not a repo, git not installed, etc.).
  *
- * A documented exception to the ProcessRunner rule (CLAUDE.md): it runs only
+ * A documented exception to the ProcessRunner rule (AGENTS.md): it runs only
  * unpackaged, at construction — before any ProcessRunner exists — and has to
  * be synchronous because config defaults (the dev IDE server port) derive from
  * the branch when modules register them.

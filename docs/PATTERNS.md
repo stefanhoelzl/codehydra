@@ -11,7 +11,7 @@
 - [Error Classification](#error-classification)
 - [Error Surfacing](#error-surfacing)
 - [Path Handling Patterns](#path-handling-patterns)
-- [OpenCode Integration](#opencode-integration) - See [AGENTS.md](AGENTS.md)
+- [OpenCode Integration](#opencode-integration) - See [AGENT_PROVIDERS.md](AGENT_PROVIDERS.md)
 - [API Server Interface](#api-server-interface)
 
 ---
@@ -731,7 +731,7 @@ const mockPathProvider = createMockPathProvider({
 
 ## OpenCode Integration
 
-OpenCode integration patterns for agent status tracking, server lifecycle management, and SDK usage. For detailed agent system documentation, see [AGENTS.md](AGENTS.md).
+OpenCode integration patterns for agent status tracking, server lifecycle management, and SDK usage. For detailed agent system documentation, see [AGENT_PROVIDERS.md](AGENT_PROVIDERS.md).
 
 ### OpenCode SDK Integration
 

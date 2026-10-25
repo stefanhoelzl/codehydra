@@ -11,7 +11,7 @@ Every operation the Public API exposes comes from one **operation registry**
 (`src/api/`). MCP, the API server wire and the `ch` CLI are generic adapters over it:
 none contains per-operation code, so an operation cannot exist on one surface and
 be missing — or behave differently — on another. See
-[CLAUDE.md](../CLAUDE.md#key-concepts) for the registry's shape.
+[src/api/AGENTS.md](../src/api/AGENTS.md) for the registry's shape.
 
 ## Quick Links
 
@@ -242,7 +242,7 @@ Third-party VS Code extensions running inside VSCodium can access the public API
 import * as vscode from "vscode";
 
 async function getCodehydraApi() {
-  const ext = vscode.extensions.getExtension("codehydra.codehydra");
+  const ext = vscode.extensions.getExtension("codehydra.sidekick");
   const api = ext?.exports?.codehydra;
 
   if (!api) {
@@ -263,7 +263,7 @@ import * as vscode from "vscode";
 
 export async function activate(context: vscode.ExtensionContext) {
   // Get the CodeHydra API
-  const ext = vscode.extensions.getExtension("codehydra.codehydra");
+  const ext = vscode.extensions.getExtension("codehydra.sidekick");
   const api = ext?.exports?.codehydra;
 
   if (!api) {
@@ -395,7 +395,7 @@ External systems can connect directly to CodeHydra's API server via Socket.IO We
 │   └─────────────────────────────────────────────────────┘     │
 │                            ▲                                   │
 └────────────────────────────┼───────────────────────────────────┘
-                             │ localhost:port (WebSocket)
+                             │ 127.0.0.1:port (WebSocket)
                              │
               ┌──────────────┴──────────────┐
               │                             │
@@ -408,7 +408,7 @@ External systems can connect directly to CodeHydra's API server via Socket.IO We
 ### Connection
 
 1. Read port from `_CH_API_PORT` environment variable
-2. Connect via Socket.IO to `http://localhost:${port}`
+2. Connect via Socket.IO to `http://127.0.0.1:${port}`
 3. Authenticate with workspace path
 
 #### Client kinds
@@ -466,7 +466,7 @@ if (!port) {
   throw new Error("Not running inside CodeHydra workspace");
 }
 
-const socket = io(`http://localhost:${port}`, {
+const socket = io(`http://127.0.0.1:${port}`, {
   auth: {
     workspacePath: "/absolute/path/to/workspace",
   },
@@ -655,7 +655,7 @@ class CodehydraClient {
   private connected = false;
 
   constructor(port: number, workspacePath: string) {
-    this.socket = io(`http://localhost:${port}`, {
+    this.socket = io(`http://127.0.0.1:${port}`, {
       auth: { workspacePath },
     });
 

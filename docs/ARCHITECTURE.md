@@ -14,7 +14,7 @@
 **Related Documentation:**
 
 - [INTENTS.md](INTENTS.md) - Intent system implementation, platform abstractions, mock factories
-- [AGENTS.md](AGENTS.md) - Agent provider interface, status tracking, MCP integration
+- [AGENT_PROVIDERS.md](AGENT_PROVIDERS.md) - Agent provider interface, status tracking, MCP integration
 - [PATTERNS.md](PATTERNS.md) - IPC, UI, and CSS implementation patterns
 
 ---
@@ -50,30 +50,66 @@
 
 ### Project vs Workspace
 
-| Concept   | What it is                        | Viewable       | Actions              |
-| --------- | --------------------------------- | -------------- | -------------------- |
-| Project   | Git repository (main directory)   | No             | Close, Add workspace |
-| Workspace | Git worktree (NOT main directory) | Yes (VSCodium) | Select, Remove       |
+| Concept   | What it is                                    | Viewable       | Actions              |
+| --------- | --------------------------------------------- | -------------- | -------------------- |
+| Project   | Git repository (main directory), local or URL | No             | Close, Add workspace |
+| Workspace | Git worktree CodeHydra manages                | Yes (VSCodium) | Select, Remove       |
 
 **Key behavior:**
 
-- Main git directory is the PROJECT (container, not a workspace)
-- Only git worktrees are WORKSPACES (viewable in VSCodium)
-- Fresh clone with no worktrees = 0 workspaces → create dialog auto-opens
+- The main git directory is the PROJECT: a container, never a workspace. It is a local path or a clone CodeHydra made from a git URL (see [Remote Projects](#remote-projects-cloned-from-url)).
+- Only managed git worktrees are WORKSPACES (viewable in the embedded IDE, VSCodium). Which worktrees count as managed: [Worktree Discovery Logic](#worktree-discovery-logic).
+- A project with no managed worktrees (e.g. a fresh clone) has 0 workspaces. With no workspace active, the main view shows the New workspace form (the creation ground state).
+- Workspaces are not separate views: the app has one WebContentsView (the Svelte UI), and each workspace renders as a VSCodium iframe inside its DOM (the `WorkspaceFrames` component). See [View Architecture](#view-architecture).
+
+**Workspace names.** A workspace is named once, after its branch when it is created or adopted, and keeps that name whatever is checked out later: the name is part of its identity (its [ref](#refs)). A detached HEAD falls back to the worktree's directory name (un-sanitized, `%` back to `/`, for a worktree under CodeHydra's own workspaces directory; `:` replaced by `-`). The name is recorded in the protected `name` metadata key (`NAME_METADATA_KEY`, `src/boundaries/platform/git-worktree-provider.ts`). Creation refuses a name a workspace of the project already has, compared case-insensitively, even if that workspace has since switched branches (`src/modules/git-worktree-workspace-module.ts`).
+
+The name is therefore never the path basename: `feature/x` lives in the directory `feature%x` (`sanitizeWorkspaceName`, `src/boundaries/platform/paths.ts`), an adopted directory can be called anything, and `Path` lowercases on Windows. Code that needs a workspace's name looks it up (`workspace:resolve`) or reads it from the ref (`workspaceNameOf`), never derives it from a path.
+
+### Refs
+
+A ref is the one identity a workspace or project has (`src/utils/ref.ts`):
+
+```
+ch::<machine>::<project>            ProjectRef
+ch::<machine>::<project>::<name>    WorkspaceRef
+```
+
+e.g. `ch::local::github.com/org/codehydra::feature/x`.
+
+- **machine**: only `local` exists today.
+- **project**: a project with a remote URL on record (a managed clone) is named by its normalized origin (`normalizeGitUrl`); any other project by its checkout path (`Path`-normalized, so lowercased on Windows). Neither changes when CodeHydra moves a clone or the workspaces root.
+- **name**: the workspace's name, fixed at creation (see Workspace names above), independent of the branch checked out later. It never contains `:`.
+
+A ref is split at its first and its last `::`; the project part between them is kept verbatim and never escaped, since a checkout path may contain anything. A ref therefore cannot say on its own whether it names a project or a workspace: the reader always knows which kind it expects (`parseProjectRef` / `parseWorkspaceRef`).
+
+There is one canonical spelling per workspace, so refs are compared with `===` and used as `Map` keys. Intents, events, IPC payloads and module maps carry refs, typed as the zod-branded `WorkspaceRef` / `ProjectRef` (`src/intents/contract.ts`). Build them only with `makeWorkspaceRef` / `projectRefFor` (or `makeProjectRef`), never by hand.
+
+An operation resolves a ref once (`workspace:resolve` / `project:resolve`); its hook contexts then carry the record's `workspacePath` / `projectPath` beside the ref, for the handlers that touch files or processes.
+
+Short forms (`test-0`, `app::test-0`, a project path or origin) are input only, resolved where the field says which kind it is (`splitWorkspaceReference`). Agents get their workspace's ref as `_CH_WORKSPACE`; plugin hooks get `workspace` / `project` refs in their input beside the paths (`src/modules/plugin-module/hook-map.ts`).
 
 ### Worktree Discovery Logic
 
-| Location                   | Type                                | Discovered as Workspace?    |
-| -------------------------- | ----------------------------------- | --------------------------- |
-| Main git directory         | Original clone                      | ❌ NO - this is the PROJECT |
-| Manually created worktrees | User-created via `git worktree add` | ✅ YES                      |
-| App-managed worktrees      | App-created in managed location     | ✅ YES                      |
+`discover()` (`src/boundaries/platform/git-worktree-provider.ts`) lists a project's worktrees, prunes stale ones (directory deleted outside CodeHydra), and returns only the managed ones. A worktree is managed when either:
+
+- it lives under the project's workspaces directory, or under one the project had before a workspaces-root migration (`paths.workspaces-previous`), whatever is checked out there (detached HEADs included), or
+- the user adopted it in the add-project picker, which records the `external` tag (`tags.external`) in its metadata file, `.git/worktrees/<id>/codehydra.json`. The picker is offered only on an interactive add of a local path, and lists the worktrees that are not yet managed.
+
+Every other worktree of the repository is skipped with a `[worktree] Skipping unmanaged worktree` warning: an agent's `isolation: "worktree"` scratch space, or a worktree the user made by hand and did not adopt. A metadata file alone never makes a worktree managed; only the location or the tag does.
+
+| Location                      | Type                              | Discovered as Workspace?    |
+| ----------------------------- | --------------------------------- | --------------------------- |
+| Main git directory            | Original clone                    | NO, this is the PROJECT     |
+| App-managed worktrees         | Created under the workspaces dir  | YES                         |
+| Adopted worktrees             | Picked in the add-project picker  | YES (`external` tag)        |
+| Other worktrees anywhere else | `git worktree add`, agent scratch | NO (skipped with a warning) |
 
 Example - user opens `~/projects/myrepo`:
 
 ```
 ~/projects/myrepo/                              → PROJECT (not a workspace)
-~/projects/myrepo-feature/                      → WORKSPACE (manual worktree)
+~/projects/myrepo-feature/                      → WORKSPACE only if adopted in the picker
 ~/.local/share/codehydra/.../workspaces/feat/   → WORKSPACE (app worktree)
 ```
 
@@ -84,43 +120,67 @@ New worktrees are created only in the managed location, `<root>/projects/<name>-
 | Platform    | Data root (default workspaces root)        |
 | ----------- | ------------------------------------------ |
 | Linux       | `~/.local/share/codehydra/`                |
-| macOS       | `~/Library/Application Support/codehydra/` |
+| macOS       | `~/Library/Application Support/Codehydra/` |
 | Windows     | `%LOCALAPPDATA%\Codehydra\`                |
 | Development | `./app-data/`                              |
 
-Discovery finds worktrees in ANY location; creation only in managed location.
+New worktrees are created only under the current root. Discovery also counts worktrees under a previous root and adopted ones elsewhere (see [Worktree Discovery Logic](#worktree-discovery-logic)).
 
 **Changing the root.** The settings dialog shows the root read-only (a `SettingsExtraRow` the module contributes); its **Change…** opens the module's dialog, which checks the folder (empty, writable, not inside a project or the data/bundles root), confirms, writes `paths.workspaces-pending` and relaunches. The app:start `migrations` hook runs a pending request on the starting screen before any project opens, without asking; a check problem or a failure offers Retry / Continue with current folder (drops the request) / Quit (keeps it, as a crash does). The migration moves managed clones and nothing else: worktrees stay in place so agents keep their conversations and editors their state, and new worktrees go to the new root. The switch records each old workspaces directory that still holds worktrees (`paths.workspaces-previous`): discovery counts a worktree there as CodeHydra's own on any branch, detached included, the way it counts one under the current root — no tag, so nothing ties ownership to a branch. The switch (`paths.workspaces`, clearing the request) is the commit point: failures before it are undone (copies deleted, `git worktree repair` pointed back); after it they are reported. Earlier versions adopted the worktrees with the `external` tag instead; once (`paths.workspaces-adoptions-converted`), before settling the root, `convert-adoptions.ts` records the directory of every tagged worktree inside a `…/projects/<project>/workspaces/` directory and removes its tag (a picker adoption elsewhere keeps its tag). Path-keyed state (`auto-workspaces`, screenshots) is moved by each owner (`moveProjects`). Earlier releases kept the wanted root in config (`paths.workspaces`) and the one in use in state (`paths.workspaces-current`); the hook carries the latter over, turns a differing former into a request, and resets both. The new folder is recorded with symlinks and junctions resolved, because git reports worktree paths resolved and ownership is a path-prefix test. See `src/modules/workspaces-root/migrate.ts`.
 
 ### Remote Projects (Cloned from URL)
 
-Projects can be created by cloning from a git URL. A "remote" (managed) project is identified by its URL, not by where its clone sits:
+Projects can be created by cloning from a git URL. A "remote" (managed) project is identified by its URL, not by where its clone sits. `<root>` is the workspaces root (the data root by default, see above):
 
 ```
-<dataRoot>/remotes/<repo-name>-<url-hash>/<repo-name>/   # The clone (a normal clone) — the project's path
-<dataRoot>/projects/<repo-name>-<url-hash>/config.json   # The record: {"remoteUrl": "..."} only
-<dataRoot>/projects/<repo-name>-<path-hash>/workspaces/  # Its worktrees, named after the clone path like any project
+<root>/remotes/<repo-name>-<url-hash>/<repo-name>/    # The clone (a normal clone) — the project's path
+<dataRoot>/projects/<repo-name>-<url-hash>/config.json # The record: {"remoteUrl": "..."} only
+<root>/projects/<repo-name>-<path-hash>/workspaces/   # Its worktrees, named after the clone path like any project
 ```
 
 **Key differences from local projects:**
 
-- **URL-named record**: the record holds only `remoteUrl`; the path is derived from it (`managedClonePath` in `paths.ts`), so nothing stored names the clone's location and the clone can move. A record is written this way only when the clone sits exactly where its URL derives — otherwise it keeps `{path, remoteUrl}`
-- **Duplicate detection**: Cloning the same URL returns the existing project (URL normalized for comparison)
+- **URL-named record**: the record holds only `remoteUrl`; the path is derived from it (`managedClonePath` in `src/boundaries/platform/paths.ts`), so nothing stored names the clone's location and the clone can move. A record is written this way only when the clone sits exactly where its URL derives; otherwise it keeps `{path, remoteUrl}` under the path-named directory (`src/modules/local-project-module.ts`)
+- **Ref by origin**: the project's [ref](#refs) uses the normalized origin, not the path
+- **Duplicate detection**: Cloning the same URL returns the existing clone (the clone directory is derived from the normalized URL); a URL that is a path on this machine is refused ("Open the folder instead")
 - **Deletion option**: When closing a remote project, users can optionally delete the clone and its project directories
 
-**URL normalization** for duplicate detection:
+**URL normalization** (`normalizeGitUrl`, `src/utils/url-utils.ts`), used for duplicate detection and refs:
 
+- Protocol removed; SSH form `git@host:path` becomes `host/path`
 - Hostname and path converted to lowercase
 - `.git` suffix removed
 - Credentials stripped
 - Trailing slashes removed
-- Port numbers preserved
+- Non-default port numbers preserved
+
+### Locks
+
+`ch lock take|release|ls` (MCP `lock_take` / `lock_release` / `lock_list`) manages single-holder resources shared across workspaces: one phone, one port. The table is in memory in `src/modules/lock-module.ts`; the `lock.*` registry entries (`src/api/entries/lock.ts`) reach it through `EntryDeps.locks`. There are no lock intents, like `awaitDeletion`; if a second consumer ever needs to react to lock changes, the escape hatch is one event-only `lock:changed` intent dispatched after every table change.
+
+- **Held by the workspace, not a process.** `take` returns once the lock is granted and the hold outlives the call, across agent turns and idle time. It is released by `ch lock release`, by hibernation, or by deletion (project close deletes its workspaces at runtime). Closing the agent terminal does not release it, since the lock may have been taken from a regular terminal.
+- **Queueing.** Waiters queue FIFO and are granted atomically on release. A waiter whose caller disconnects leaves the queue. Re-taking a lock the workspace already holds succeeds immediately and changes nothing (reentrant). `noWait` fails at once as `conflict` instead of queueing; MCP `lock_take` defaults `noWait: true`.
+- **No implicit steal.** A stuck lock is broken with `ch lock release <name> --workspace <holder>`.
+- **Deadlock refusal.** A take that would close a wait-for loop is refused at once as `conflict`, naming the loop. A waiter waits on the holder **and** on everyone queued ahead, since FIFO hands the lock to them first.
+- **Scope.** `--scope global` (default: every workspace of every open project contends) or `project` (only the caller's project).
+- **Sidebar.** Held and awaited locks show as `tags.lock` (🔒) and `tags.lock-wait` (⏳) metadata tags. The tags persist but the table does not, so they are reconciled on `workspace:created`.
+- **`ch lock run <name>[,<name>…] [-- <cmd…>]`** (`src/cli/lock-run.ts`) is a CLI built-in over the hidden `lock.hold`: one call per name, in name order, and a failed take releases the ones already acquired. `lock.hold` releases when the caller's connection closes, via `OperationContext.signal` (aborted per connection by the API server adapter), so a killed run frees its locks. It spawns the command asynchronously (`src/cli/main.ts`) so socket heartbeats keep flowing. With no command it holds until killed.
+
+### Wakeup Scripts
+
+A workspace may carry one wakeup script (`src/modules/wakeup-module.ts`) that decides when it wakes from hibernation, usually set by its own agent before it goes to sleep ("wake me when CI on PR #12 finishes").
+
+- **Set / clear / show.** `ch ws wakeup set` or `ch ws hibernate --wakeup` (MCP `workspace_set_wakeup` / `workspace_hibernate`'s `wakeup`; automation items too) sets it; `ch ws wakeup clear` (MCP `workspace_clear_wakeup`) removes it. It is stored as JSON `{script, shell, env}` in the protected `wakeup` metadata key, so it survives a restart, and a `tags.wakeup` (⏰) tag shows it in the sidebar.
+- **Running.** While the workspace is hibernated, the poll (`poll:tick`) runs the script every tick in the worktree. Stdout `{"action":"wake","message"?}` wakes it in place (no switch) and sends the message, if any, to its agent signed `CodeHydra · wakeup`. Empty output or `{"action":"keep"}` keeps it asleep. A failure (or output that is not that JSON) never wakes it; the poll module reports it.
+- **No delete action, by design.** A script that decides the workspace is done wakes it with a message asking its agent to delete it.
+- **One-shot.** Any `workspace:woken` (the script's, the user's, an automation's) clears the script and its tag.
+- **Status.** The last run is kept in memory and shown by `ch ws wakeup show` and in `ch ws status`.
 
 ## View Architecture
 
 The app owns exactly **one WebContentsView**: the UI layer (Svelte renderer).
 Workspaces render as `<iframe>` elements inside its DOM (`WorkspaceFrames`
-component), derived declaratively from the renderer's projects store:
+component), derived declaratively from the `frames` map of the `UiState` snapshot:
 
 - **Mount**: every non-hibernated workspace with an IDE server URL gets an
   iframe, eagerly (instant switching). URLs arrive on `workspace:created`;
@@ -922,7 +982,7 @@ The logging system provides comprehensive logging across both main and renderer 
 
 Logging is configured through the normal config keys (registered by
 `createLoggingModule`), so each one works as a `config.json` entry, an env var,
-or a CLI flag — see the Configuration section of CLAUDE.md for the precedence
+or a CLI flag — see [CONFIGURATION.md](CONFIGURATION.md) for the precedence
 rules.
 
 | Config key   | Env var          | Values                            | Description              |
@@ -989,7 +1049,7 @@ Each line carries the **log scope** of the dispatch it was written for (see INTE
 | `[extension]` | ApiServer                 | Extension-side logs forwarded to main |
 | `[presenter]` | PresentationModule        | ui:event intake, ui:state pushes      |
 
-(An abridged list — CLAUDE.md carries the full set of `LoggerName` values.)
+(An abridged list — [CONFIGURATION.md](CONFIGURATION.md) carries the full set of `LoggerName` values.)
 
 ### Payload Size
 
@@ -1091,7 +1151,7 @@ The agent abstraction layer (`src/agents/`) defines interfaces for pluggable age
 
 **Agent status types:** `"none"` | `"idle"` | `"busy"`
 
-For detailed agent system documentation including provider interface, status tracking, MCP integration, and implementation guide, see [AGENTS.md](AGENTS.md).
+For detailed agent system documentation including provider interface, status tracking, MCP integration, and implementation guide, see [AGENT_PROVIDERS.md](AGENT_PROVIDERS.md).
 
 ### IPC Channels
 

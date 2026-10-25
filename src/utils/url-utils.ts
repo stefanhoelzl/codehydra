@@ -14,7 +14,7 @@
  * - Remove .git suffix
  * - Remove trailing slashes
  * - Convert SSH format (git@host:path) to standard format (host/path)
- * - Preserve port numbers
+ * - Preserve non-default port numbers
  *
  * @param url Git remote URL (HTTPS, SSH, or git:// format)
  * @returns Normalized URL string
@@ -23,7 +23,7 @@
  * normalizeGitUrl("https://GitHub.com/Org/Repo.git") // "github.com/org/repo"
  * normalizeGitUrl("git@github.com:Org/Repo.git") // "github.com/org/repo"
  * normalizeGitUrl("https://user:pass@github.com/org/repo.git") // "github.com/org/repo"
- * normalizeGitUrl("https://github.com:443/org/repo.git") // "github.com:443/org/repo"
+ * normalizeGitUrl("https://github.com:8443/org/repo.git") // "github.com:8443/org/repo"
  */
 export function normalizeGitUrl(url: string): string {
   let normalized = url.trim();

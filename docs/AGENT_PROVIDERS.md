@@ -537,7 +537,7 @@ const myAgentProvider = createMyAgentModuleProvider({ ... });
 dispatcher.registerModule(createAgentModule(myAgentProvider, { dispatcher, logger, agentConfig }));
 ```
 
-Also extend the `AgentType` union (`src/shared/api-protocol`) — this is an interface change requiring approval (see CLAUDE.md).
+Also extend the `AgentType` union (`src/shared/api-protocol`) — this is an interface change requiring approval (see AGENTS.md, API/IPC Interface Changes).
 
 ---
 
