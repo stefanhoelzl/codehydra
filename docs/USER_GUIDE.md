@@ -389,8 +389,10 @@ Once the agent's turn ends and only `[bg]` sub-agents (and `ch bg` shells) are
 still running, the workspace goes **idle**, so it shows that it needs you; their
 work doesn't flip it back. When one finishes, the agent is woken with its
 result: the workspace reads busy while it handles that, then idle again, with
-the usual chime and notification. In OpenCode, everything a `[bg]` sub-agent
-spawns is opted out with it; OpenCode 1.x runs sub-agents in the background only
+the usual chime and notification. Everything a `[bg]` sub-agent starts is opted
+out with it: in Claude Code, the background shells it runs (no `ch bg` needed),
+even once the sub-agent itself has finished and only its shell is left; in
+OpenCode, the sub-agents it spawns. OpenCode 1.x runs sub-agents in the background only
 when you set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in its
 environment (e.g. from a `before-workspace-opened` plugin hook's `env`). Agents are told about `[bg]` in their system
 prompt, and the description shows in their task list, so you can see which

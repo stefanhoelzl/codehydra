@@ -13,8 +13,10 @@
  */
 
 import type { AgentActivity } from "../types";
+import { isBackgroundAgentLabel } from "../status-utils";
 import {
   getStatusChangeForHook,
+  isOptedOutShell,
   isOptedOutSubagent,
   taskKeepsBusy,
   type ClaudeCodeBridgePayload,
@@ -67,6 +69,99 @@ export const INITIAL_HOOK_FLAGS: HookFlags = {
   terminalOpen: false,
 };
 
+/**
+ * Which background shells `[bg]` sub-agents started, so those shells are opted
+ * out with them. The Stop payload names no shell's owner, and by the time the
+ * main agent's turn ends the sub-agent has often finished already, leaving only
+ * its shell in background_tasks — so ownership is learned as it happens, from
+ * the PostToolUse that launched each.
+ *
+ * Tracked apart from {@link HookFlags} because it learns from sub-agent hooks
+ * {@link deriveStatus} ignores: a sub-agent's shell often starts after the
+ * workspace went idle beside it.
+ */
+export interface BackgroundOwners {
+  /** Agent ids of the background sub-agents launched with a `[bg]` description. */
+  readonly optedOutAgents: ReadonlySet<string>;
+  /** Task ids of the background shells those sub-agents started, still running. */
+  readonly optedOutShells: ReadonlySet<string>;
+}
+
+/** Owners of a session that has started nothing yet. */
+export const INITIAL_BACKGROUND_OWNERS: BackgroundOwners = {
+  optedOutAgents: new Set(),
+  optedOutShells: new Set(),
+};
+
+/**
+ * Learn from a hook who started which background task.
+ *
+ * - The main agent's PostToolUse for an `Agent` call in the background answers
+ *   the sub-agent's `agentId`; a `[bg]` description opts it out. Every
+ *   background_tasks list names running `[bg]` sub-agents too, should that
+ *   PostToolUse arrive late (each hook is a process of its own).
+ * - A `[bg]` sub-agent's PostToolUse for a `Bash` call in the background
+ *   answers the shell's `backgroundTaskId`, its id in background_tasks.
+ * - The main agent's Stop lists every running shell, so a shell it does not
+ *   list has exited and is forgotten. Sub-agent ids are kept for the session:
+ *   a `[bg]` sub-agent waiting on its shell resumes when it exits, and may start
+ *   another.
+ */
+export function trackBackgroundOwners(
+  owners: BackgroundOwners,
+  hookName: ClaudeCodeHookName,
+  payload: ClaudeCodeBridgePayload
+): BackgroundOwners {
+  if (hookName === "SessionEnd" || hookName === "WrapperEnd") {
+    return INITIAL_BACKGROUND_OWNERS;
+  }
+  let { optedOutAgents, optedOutShells } = owners;
+  const tasks = Array.isArray(payload.background_tasks) ? payload.background_tasks : [];
+  for (const task of tasks) {
+    if (task.id !== undefined && isOptedOutSubagent(task) && !optedOutAgents.has(task.id)) {
+      optedOutAgents = new Set([...optedOutAgents, task.id]);
+    }
+  }
+  if (hookName === "PostToolUse") {
+    const response = readRecord(payload.tool_response);
+    const launchedAgent = response?.agentId;
+    if (
+      payload.agent_id === undefined &&
+      typeof launchedAgent === "string" &&
+      isBackgroundAgentLabel(readString(readRecord(payload.tool_input)?.description))
+    ) {
+      optedOutAgents = new Set([...optedOutAgents, launchedAgent]);
+    }
+    const launchedShell = response?.backgroundTaskId;
+    if (
+      payload.agent_id !== undefined &&
+      optedOutAgents.has(payload.agent_id) &&
+      typeof launchedShell === "string"
+    ) {
+      optedOutShells = new Set([...optedOutShells, launchedShell]);
+    }
+  }
+  if (hookName === "Stop" && payload.agent_id === undefined && optedOutShells.size > 0) {
+    const listed = new Set(tasks.map((task) => task.id));
+    optedOutShells = new Set([...optedOutShells].filter((id) => listed.has(id)));
+  }
+  return optedOutAgents === owners.optedOutAgents && optedOutShells === owners.optedOutShells
+    ? owners
+    : { optedOutAgents, optedOutShells };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 /** What the reducer needs to know about the workspace besides the hook. */
 export interface HookStatusInput {
   readonly flags: HookFlags;
@@ -74,6 +169,8 @@ export interface HookStatusInput {
   readonly status: AgentActivity;
   /** Whether the startup timer (initial prompt waiting on its session) is armed. */
   readonly startupTimerArmed: boolean;
+  /** Background shells `[bg]` sub-agents started (see {@link BackgroundOwners}). */
+  readonly optedOutShells: ReadonlySet<string>;
 }
 
 /** Why a status the rules computed was dropped, for the log. */
@@ -285,9 +382,11 @@ export function deriveStatus(
   // of still-running background work (shells and background sub-agents).
   // taskKeepsBusy() decides which keep the workspace busy: sub-agents do unless
   // their description starts with `[bg]`; shells do by default, unless invoked
-  // through the `ch-bg` wrapper (its marker in the command opts the shell out).
-  // When none qualifies but `[bg]` sub-agents run on, the workspace goes idle
-  // and their hooks are ignored until the main agent's next turn
+  // through the `ch-bg` wrapper (its marker in the command opts the shell out)
+  // or started by a `[bg]` sub-agent (input.optedOutShells).
+  // When none qualifies but `[bg]` sub-agents or their shells run on, the
+  // workspace goes idle and sub-agent hooks are ignored until the main agent's
+  // next turn — a `[bg]` sub-agent resumes when its shell exits
   // (idleBesideBackgroundAgents). When any qualifies, the idle
   // transition is suppressed and the decision is stashed so the ~60s-later
   // idle_prompt Notification (handled above) stays suppressed too. When a task
@@ -309,14 +408,16 @@ export function deriveStatus(
   // keep the workspace busy goes busy rather than staying parked idle.
   if (hookName === "Stop") {
     const tasks = Array.isArray(payload.background_tasks) ? payload.background_tasks : [];
-    const busyTasks = tasks.filter((task) => taskKeepsBusy(task));
+    const busyTasks = tasks.filter((task) => taskKeepsBusy(task, input.optedOutShells));
     const wasParked = awaitingUserInputResolution;
     awaitingUserInputResolution = false;
     busyForBackgroundTasks = busyTasks.length > 0;
-    // Idle with `[bg]` sub-agents still at work (a Stop held back by compaction
-    // does not go idle, so it does not count).
+    // Idle with `[bg]` sub-agents or their shells still at work (a Stop held
+    // back by compaction does not go idle, so it does not count).
     idleBesideBackgroundAgents =
-      busyTasks.length === 0 && !ignoreNextSessionStart && tasks.some(isOptedOutSubagent);
+      busyTasks.length === 0 &&
+      !ignoreNextSessionStart &&
+      tasks.some((task) => isOptedOutSubagent(task) || isOptedOutShell(task, input.optedOutShells));
     if (busyTasks.length > 0) {
       status = wasParked ? "busy" : null;
       suppressed.push({

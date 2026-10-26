@@ -151,6 +151,7 @@ export type ScenarioName =
   | "bgcomplete"
   | "chbg"
   | "subagent"
+  | "bgsubagentshell"
   | "maxtokens"
   | "suggestionfork"
   | "message";
@@ -371,6 +372,21 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
     });
   }
 
+  if (scenario === "bgsubagentshell") {
+    // The sub-agent starts a shell in the background and ends its turn at once,
+    // so the main agent's last Stop lists the shell alone, owner unnamed. Long
+    // enough to outlast the run; Claude runs it in a process group of its own,
+    // which outlives the kill.
+    mock.addFixture({
+      match: { systemMessage: SUBAGENT_SYSTEM_PROMPT, hasToolResult: false },
+      response: bashCall("sleep 20", "sub-agent's sleep", true),
+    });
+    mock.addFixture({
+      match: { systemMessage: SUBAGENT_SYSTEM_PROMPT },
+      response: { content: "Sub-agent done." },
+    });
+  }
+
   if (scenario === "suggestionfork") {
     // The fork first: it carries the parent's system prompt and history, so any
     // fixture below would answer it as though it were the agent.
@@ -422,6 +438,33 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
       // a running shell and opts it out on the marker rather than on an empty
       // background_tasks — which would pass for the wrong reason.
       mock.addFixture({ match: {}, response: bashCall("ch-bg sleep 30", "opted-out sleep", true) });
+      break;
+    case "bgsubagentshell":
+      // Only the opening turn delegates: the wake-up Claude sends the main agent
+      // when the sub-agent finishes carries no tool result, and must not spawn
+      // another (see `isFirstAgentTurn`).
+      mock.addFixture({
+        match: { predicate: (req) => !isFirstAgentTurn(req) },
+        response: { content: "Done." },
+      });
+      mock.addFixture({
+        match: { predicate: isFirstAgentTurn },
+        response: {
+          reasoning: "Delegating to a background sub-agent.",
+          toolCalls: [
+            {
+              id: "call_agent",
+              name: "Task",
+              arguments: JSON.stringify({
+                subagent_type: "general-purpose",
+                description: "[bg] measure",
+                prompt: "start a shell",
+                run_in_background: true,
+              }),
+            },
+          ],
+        },
+      });
       break;
     case "suggestionfork":
       // Delegate in the background, then end the turn waiting on it. Two

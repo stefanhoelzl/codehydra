@@ -301,16 +301,25 @@ busy instead of going idle:
   busy. OpenCode reads the same marker from a child session's title (the task
   description) and keeps the workspace busy while an unmarked child runs; a `[bg]`
   child's descendants are opted out with it.
-- A running **shell** (`type: "shell"`, Bash with `run_in_background`) keeps it busy only
-  when `experimental.busy-during-background-shell` selects it: `true` for any shell, or an
-  array of regexes (config.json only) for shells whose command matches (e.g. `["ship-wait"]`
-  for a CI-wait script), so dev servers don't pin the workspace busy.
+- A running **shell** (`type: "shell"`, Bash with `run_in_background`) keeps it busy,
+  unless its command runs through `ch bg`/`ch-bg` (`isBackgroundWrapped`) or a `[bg]`
+  sub-agent started it. The entry names no owner, and the sub-agent has often finished
+  before the main agent's `Stop` (which then lists the shell alone), so ownership is
+  learned as it happens (`trackBackgroundOwners`, `hook-status.ts`, run before the
+  reducer since it learns from sub-agent hooks the reducer ignores): the main agent's
+  `PostToolUse` for a background `Agent` call answers `tool_response.agentId`, a `[bg]`
+  description opting it out; that sub-agent's `PostToolUse` for a background `Bash` call
+  answers `tool_response.backgroundTaskId`, the shell's `background_tasks[].id` (checked
+  on 2.1.310). A shell the main agent's `Stop` no longer lists is forgotten. A Stop that
+  goes idle beside such a shell also sets `idleBesideBackgroundAgents`: the sub-agent
+  resumes when its shell exits.
 
 The decision is stashed to also suppress the `idle_prompt` notification that fires ~60s
 after Stop, and cleared when the agent is re-invoked (`UserPromptSubmit`, which fires
 automatically when a task finishes) or the session ends. Because the snapshot is re-read
-from ground truth on every Stop, no per-sub-agent bookkeeping is needed —
-`SubagentStart`/`SubagentStop` are subscribed for logging only and don't drive status,
+from ground truth on every Stop, no per-sub-agent bookkeeping is needed beyond the shell
+owners above — `SubagentStart`/`SubagentStop` are subscribed for logging only and don't
+drive status,
 and a sub-agent that crashes without reporting completion can't leak (the next empty Stop
 is authoritative). `StopFailure` carries no `background_tasks` (it's an API error — rate
 limit, auth, max-tokens), so it always transitions to idle to surface the stuck main agent
