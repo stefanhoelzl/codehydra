@@ -47,6 +47,13 @@ export interface ClaudeCodeHookPayload {
   readonly tool_input?: unknown;
   /** Tool result for PostToolUse hook */
   readonly tool_result?: unknown;
+  /**
+   * What the tool returned, for PostToolUse. Checked on 2.1.310: an `Agent`
+   * call in the background answers `{agentId, description, …}`, a `Bash` call
+   * in the background `{backgroundTaskId, …}` — that task's id in
+   * background_tasks.
+   */
+  readonly tool_response?: unknown;
   /** Notification type for Notification hook */
   readonly notification_type?: string;
   /** Sub-agent ID for SubagentStart/SubagentStop hooks */
@@ -229,10 +236,14 @@ export function isBackgroundWrapped(command: string): boolean {
  * A background sub-agent (type "subagent") keeps the workspace busy unless its
  * description starts with `[bg]` (see isBackgroundAgentLabel). A background
  * shell (type "shell") keeps it busy by default — the exception is a shell
- * invoked through the `ch-bg` wrapper, which opts out (see isBackgroundWrapped).
- * Non-running tasks and other types never qualify.
+ * invoked through the `ch-bg` wrapper, or started by a `[bg]` sub-agent (its id
+ * in `optedOutShells`), which opt out. Non-running tasks and other types never
+ * qualify.
  */
-export function taskKeepsBusy(task: ClaudeCodeBackgroundTask): boolean {
+export function taskKeepsBusy(
+  task: ClaudeCodeBackgroundTask,
+  optedOutShells: ReadonlySet<string> = new Set()
+): boolean {
   if (!isRunning(task)) {
     return false;
   }
@@ -242,7 +253,7 @@ export function taskKeepsBusy(task: ClaudeCodeBackgroundTask): boolean {
   if (task.type !== "shell") {
     return false;
   }
-  return !isBackgroundWrapped(task.command ?? "");
+  return !isBackgroundWrapped(task.command ?? "") && !isOptedOutShell(task, optedOutShells);
 }
 
 /**
@@ -251,6 +262,20 @@ export function taskKeepsBusy(task: ClaudeCodeBackgroundTask): boolean {
  */
 export function isOptedOutSubagent(task: ClaudeCodeBackgroundTask): boolean {
   return isRunning(task) && task.type === "subagent" && isBackgroundAgentLabel(task.description);
+}
+
+/**
+ * A running background shell a `[bg]` sub-agent started (its id in
+ * `optedOutShells`): opted out with the sub-agent, and like it may wake that
+ * sub-agent when it exits.
+ */
+export function isOptedOutShell(
+  task: ClaudeCodeBackgroundTask,
+  optedOutShells: ReadonlySet<string>
+): boolean {
+  return (
+    isRunning(task) && task.type === "shell" && task.id !== undefined && optedOutShells.has(task.id)
+  );
 }
 
 function isRunning(task: ClaudeCodeBackgroundTask): boolean {

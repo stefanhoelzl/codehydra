@@ -7,7 +7,10 @@
 import { describe, it, expect } from "vitest";
 import {
   deriveStatus,
+  INITIAL_BACKGROUND_OWNERS,
   INITIAL_HOOK_FLAGS,
+  trackBackgroundOwners,
+  type BackgroundOwners,
   type DerivedStatus,
   type HookFlags,
   type HookStatusInput,
@@ -18,9 +21,10 @@ import type { AgentActivity } from "../types";
 function input(
   status: AgentActivity,
   flags: Partial<HookFlags> = {},
-  startupTimerArmed = false
+  startupTimerArmed = false,
+  optedOutShells: ReadonlySet<string> = new Set()
 ): HookStatusInput {
-  return { status, flags: { ...INITIAL_HOOK_FLAGS, ...flags }, startupTimerArmed };
+  return { status, flags: { ...INITIAL_HOOK_FLAGS, ...flags }, startupTimerArmed, optedOutShells };
 }
 
 function derive(
@@ -362,6 +366,25 @@ describe("deriveStatus", () => {
       expect(result.flags.idleBesideBackgroundAgents).toBe(false);
     });
 
+    it("goes idle when the only shell left was started by a [bg] sub-agent", () => {
+      const shell = { id: "b1", type: "shell", status: "running", command: "sleep 60" };
+      const result = derive(input("busy", {}, false, new Set(["b1"])), "Stop", {
+        background_tasks: [shell],
+      });
+      expect(result).toMatchObject({
+        status: "idle",
+        flags: { busyForBackgroundTasks: false, idleBesideBackgroundAgents: true },
+      });
+    });
+
+    it("stays busy for a shell no [bg] sub-agent started", () => {
+      const shell = { id: "b2", type: "shell", status: "running", command: "sleep 60" };
+      const result = derive(input("busy", {}, false, new Set(["b1"])), "Stop", {
+        background_tasks: [shell],
+      });
+      expect(result).toMatchObject({ status: null, flags: { busyForBackgroundTasks: true } });
+    });
+
     it("decides afresh on the Stop after a wake-up", () => {
       const woken = derive(input("idle", { idleBesideBackgroundAgents: true }), "UserPromptSubmit");
       expect(woken.status).toBe("busy");
@@ -392,5 +415,120 @@ describe("deriveStatus", () => {
       });
       expect(result.untrackedTurn).toBe(false);
     });
+  });
+});
+
+describe("trackBackgroundOwners", () => {
+  /** The main agent's PostToolUse for an Agent call in the background (shape of 2.1.310). */
+  const launchAgent = (description: string, agentId = "a1"): ClaudeCodeBridgePayload => ({
+    tool_name: "Agent",
+    tool_input: { description, prompt: "work", run_in_background: true },
+    tool_response: { isAsync: true, status: "async_launched", agentId, description },
+  });
+  /** A sub-agent's PostToolUse for a Bash call in the background. */
+  const launchShell = (agentId: string, taskId = "b1"): ClaudeCodeBridgePayload => ({
+    agent_id: agentId,
+    tool_name: "Bash",
+    tool_input: { command: "sleep 60", run_in_background: true },
+    tool_response: { stdout: "", stderr: "", backgroundTaskId: taskId },
+  });
+  const shell = { id: "b1", type: "shell", status: "running", command: "sleep 60" };
+
+  function track(
+    owners: BackgroundOwners,
+    ...steps: [ClaudeCodeHookName, ClaudeCodeBridgePayload][]
+  ): BackgroundOwners {
+    return steps.reduce(
+      (acc, [hook, payload]) => trackBackgroundOwners(acc, hook, payload),
+      owners
+    );
+  }
+
+  it("opts out the shells of a sub-agent launched with [bg]", () => {
+    const owners = track(
+      INITIAL_BACKGROUND_OWNERS,
+      ["PostToolUse", launchAgent("[bg] measure")],
+      ["PostToolUse", launchShell("a1")]
+    );
+    expect([...owners.optedOutShells]).toEqual(["b1"]);
+  });
+
+  it("learns a [bg] sub-agent from background_tasks too", () => {
+    const owners = track(
+      INITIAL_BACKGROUND_OWNERS,
+      ["Stop", { background_tasks: [{ id: "a1", type: "subagent", description: "[bg] x" }] }],
+      ["PostToolUse", launchShell("a1")]
+    );
+    expect([...owners.optedOutShells]).toEqual(["b1"]);
+  });
+
+  it("does not opt out the shells of an unmarked sub-agent or the main agent", () => {
+    const owners = track(
+      INITIAL_BACKGROUND_OWNERS,
+      ["PostToolUse", launchAgent("measure")],
+      ["PostToolUse", launchShell("a1")],
+      ["PostToolUse", { tool_name: "Bash", tool_response: { backgroundTaskId: "b2" } }]
+    );
+    expect(owners.optedOutShells.size).toBe(0);
+  });
+
+  it("does not take a sub-agent's own Agent call for the main agent's", () => {
+    const owners = track(INITIAL_BACKGROUND_OWNERS, [
+      "PostToolUse",
+      { ...launchAgent("[bg] nested", "a2"), agent_id: "a1" },
+    ]);
+    expect(owners.optedOutAgents.size).toBe(0);
+  });
+
+  it("forgets a shell the main agent's Stop no longer lists, not on a sub-agent's", () => {
+    const started = track(
+      INITIAL_BACKGROUND_OWNERS,
+      ["PostToolUse", launchAgent("[bg] measure")],
+      ["PostToolUse", launchShell("a1")]
+    );
+    expect(track(started, ["Stop", { background_tasks: [shell] }]).optedOutShells.size).toBe(1);
+    expect(
+      track(started, ["SubagentStop", { agent_id: "a1", background_tasks: [] }]).optedOutShells.size
+    ).toBe(1);
+    expect(track(started, ["Stop", { background_tasks: [] }]).optedOutShells.size).toBe(0);
+  });
+
+  it.each(["SessionEnd", "WrapperEnd"] as const)("forgets everything on %s", (hookName) => {
+    const started = track(
+      INITIAL_BACKGROUND_OWNERS,
+      ["PostToolUse", launchAgent("[bg] measure")],
+      ["PostToolUse", launchShell("a1")]
+    );
+    expect(track(started, [hookName, {}])).toBe(INITIAL_BACKGROUND_OWNERS);
+  });
+
+  it("leaves the main status idle once only a [bg] sub-agent's shell is left", () => {
+    // The hook sequence of a real run (2.1.310): the sub-agent's shell starts
+    // after the workspace went idle beside it, and the sub-agent has finished
+    // by the main agent's last Stop, which lists the shell alone.
+    const bgAgent = { id: "a1", type: "subagent", status: "running", description: "[bg] x" };
+    const steps: [ClaudeCodeHookName, ClaudeCodeBridgePayload][] = [
+      ["UserPromptSubmit", {}],
+      ["PostToolUse", launchAgent("[bg] x")],
+      ["Stop", { background_tasks: [bgAgent] }],
+      ["PostToolUse", launchShell("a1")],
+      ["SubagentStop", { agent_id: "a1", background_tasks: [bgAgent, shell] }],
+      ["UserPromptSubmit", {}],
+      ["Stop", { background_tasks: [shell] }],
+    ];
+    let owners = INITIAL_BACKGROUND_OWNERS;
+    let state = input("idle");
+    for (const [hook, payload] of steps) {
+      owners = trackBackgroundOwners(owners, hook, payload);
+      const result = deriveStatus(
+        { ...state, optedOutShells: owners.optedOutShells },
+        hook,
+        payload
+      );
+      if (result.kind === "derived") {
+        state = { ...state, flags: result.flags, status: result.status ?? state.status };
+      }
+    }
+    expect(state.status).toBe("idle");
   });
 });

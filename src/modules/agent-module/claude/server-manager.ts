@@ -40,7 +40,14 @@ import {
   WRAPPER_HOOK_NAMES,
   registeredHooks,
 } from "./types";
-import { deriveStatus, INITIAL_HOOK_FLAGS, type HookFlags } from "./hook-status";
+import {
+  deriveStatus,
+  INITIAL_BACKGROUND_OWNERS,
+  INITIAL_HOOK_FLAGS,
+  trackBackgroundOwners,
+  type BackgroundOwners,
+  type HookFlags,
+} from "./hook-status";
 
 /** Node reports ERR_SERVER_NOT_RUNNING when close() is called on a server that is already down. */
 function isServerNotRunning(error: Error): boolean {
@@ -212,6 +219,8 @@ export interface WorkspaceState {
    * message sent now waits for SessionStart rather than failing.
    */
   flags: HookFlags;
+  /** Which background shells `[bg]` sub-agents started (see hook-status.ts). */
+  backgroundOwners: BackgroundOwners;
   /** Callbacks for status changes */
   statusCallbacks: Set<(status: AgentActivity) => void>;
   /** Path to the initial prompt file (for getInitialPromptPath) */
@@ -355,6 +364,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.workspaces.set(workspaceRef, {
       status: "none",
       flags: INITIAL_HOOK_FLAGS,
+      backgroundOwners: INITIAL_BACKGROUND_OWNERS,
       statusCallbacks: new Set(),
     });
 
@@ -438,6 +448,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.workspaces.set(workspaceRef, {
       status: "none",
       flags: { ...INITIAL_HOOK_FLAGS, terminalOpen: state.flags.terminalOpen },
+      backgroundOwners: INITIAL_BACKGROUND_OWNERS,
       statusCallbacks: savedCallbacks,
       ...(savedInbox !== undefined && { inbox: savedInbox }),
     });
@@ -899,11 +910,14 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       delete state.onInitialPromptDelivered;
       onDelivered();
     }
+    // Before deriveStatus: ownership is learned from sub-agent hooks it ignores.
+    state.backgroundOwners = trackBackgroundOwners(state.backgroundOwners, hookName, payload);
     const result = deriveStatus(
       {
         flags: state.flags,
         status: state.status,
         startupTimerArmed: state.startupTimer !== undefined,
+        optedOutShells: state.backgroundOwners.optedOutShells,
       },
       hookName,
       payload

@@ -158,6 +158,23 @@ describe("a turn that spawns a sub-agent", () => {
   });
 });
 
+describe("a [bg] sub-agent's background shell", () => {
+  let run: ScenarioRun;
+  beforeAll(async () => {
+    // Two main-agent Stops: one beside the running sub-agent, and one after the
+    // wake-up its end sends, when only its shell is left.
+    run = await runScenario("bgsubagentshell", { until: (r) => seen(r, "Stop", 2) });
+  }, SCENARIO_TIMEOUT_MS);
+
+  it("goes idle beside the [bg] sub-agent", () => {
+    expect(run.statusAfter("Stop", 0)).toBe("idle");
+  });
+
+  it("stays idle once only the sub-agent's shell is left", () => {
+    expect(run.statusAfter("Stop", 1)).toBe("idle");
+  });
+});
+
 describe("a turn that dies on max_tokens", () => {
   let run: ScenarioRun;
   beforeAll(async () => {
