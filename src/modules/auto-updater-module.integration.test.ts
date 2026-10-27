@@ -29,19 +29,22 @@ import {
   type CreateMockConfigOptions,
 } from "../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../boundaries/platform/state.test-utils";
-import type { Config } from "../boundaries/platform/config";
+import { DefaultConfig, type Config, type ConfigDeps } from "../boundaries/platform/config";
+import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
+import { testPath } from "../shared/test-fixtures";
 import {
   createMockNotificationManager,
   type MockNotificationManager,
 } from "./presentation/notification-manager.state-mock";
 
 /**
- * Auto-updater tests expect `update.notification` to default to true unless
+ * Auto-updater tests expect `update` to default to notify unless
  * the test explicitly sets it. Seed it on top of the shared helper.
  */
 function createMockConfig(options?: CreateMockConfigOptions): Config {
   return createBaseMockConfig({
-    defaults: { "update.notification": true, ...(options?.defaults ?? {}) },
+    defaults: { update: "notify", ...(options?.defaults ?? {}) },
     ...(options?.overrides !== undefined && { overrides: options.overrides }),
   });
 }
@@ -213,6 +216,11 @@ async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+const AVAILABLE_ACTIONS = [
+  { id: "install", label: "Install" },
+  { id: "always", label: "Always download" },
+];
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -227,9 +235,9 @@ describe("AutoUpdaterModule Integration", () => {
     expect(autoUpdater.checkForUpdatesCallCount).toBe(1);
   });
 
-  it("app:start with update.notification=false skips check and timer", async () => {
+  it("app:start with update=off skips the check", async () => {
     const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
-      configValues: { "update.notification": false },
+      configValues: { update: "off" },
       checkReturns: true,
     });
 
@@ -252,7 +260,7 @@ describe("AutoUpdaterModule Integration", () => {
     expect(cfg.title).toBe("Update available");
     expect(cfg.message).toContain("2.0.0");
     expect(cfg.dismissible).toBe(true);
-    expect(cfg.actions).toEqual([{ id: "install", label: "Install" }]);
+    expect(cfg.actions).toEqual(AVAILABLE_ACTIONS);
   });
 
   it("clicking Install triggers download and surfaces 'Update ready' on completion", async () => {
@@ -349,9 +357,9 @@ describe("AutoUpdaterModule Integration", () => {
     expect(autoUpdater.checkForUpdatesCallCount).toBe(startupCount + 1);
   });
 
-  it("app:resume with update.notification=false does not check", async () => {
+  it("app:resume with update=off does not check", async () => {
     const { dispatcher, autoUpdater } = createTestSetup({
-      configValues: { "update.notification": false },
+      configValues: { update: "off" },
     });
     await dispatcher.dispatch(startIntent());
 
@@ -418,7 +426,7 @@ describe("AutoUpdaterModule Integration", () => {
     const last = slot.updates[slot.updates.length - 1]!;
     expect(last.title).toBe("Update available");
     expect(last.message).toContain("3.0.0");
-    expect(last.actions).toEqual([{ id: "install", label: "Install" }]);
+    expect(last.actions).toEqual(AVAILABLE_ACTIONS);
   });
 
   it("Install after a version refresh downloads the newer version", async () => {
@@ -544,5 +552,227 @@ describe("AutoUpdaterModule Integration", () => {
     await dispatcher.dispatch(shutdownIntent());
 
     expect(autoUpdater.quitAndInstallCalled).toBe(false);
+  });
+
+  describe("Always download", () => {
+    it("switches update to auto and starts the download", async () => {
+      const { dispatcher, autoUpdater, notificationManager, mockConfig } = createTestSetup({
+        checkReturns: true,
+      });
+      await dispatcher.dispatch(startIntent());
+      await flush();
+
+      notificationManager.emitEvent(0, { actionId: "always" });
+      await flush();
+
+      expect(mockConfig.getEffective()["update"]).toBe("auto");
+      expect(autoUpdater.downloadCalled).toBe(true);
+      expect(notificationManager.notifications[1]!.opened.title).toBe("Downloading update");
+    });
+  });
+
+  describe("update=auto", () => {
+    const auto = { configValues: { update: "auto" }, checkReturns: true };
+
+    it("downloads a detected version without asking, then shows 'Update ready'", async () => {
+      const { dispatcher, autoUpdater, notificationManager } = createTestSetup(auto);
+      await dispatcher.dispatch(startIntent());
+      await flush();
+
+      expect(autoUpdater.downloadCalled).toBe(true);
+      expect(notificationManager.notifications).toHaveLength(1);
+      const slot = notificationManager.notifications[0]!;
+      expect(slot.opened.title).toBe("Downloading update");
+      expect(slot.opened.dismissible).toBe(false);
+
+      autoUpdater.resolveDownload!();
+      await flush();
+
+      const last = slot.updates[slot.updates.length - 1]!;
+      expect(last.title).toBe("Update ready");
+      expect(last.actions).toEqual([{ id: "restart", label: "Restart Now" }]);
+      expect(autoUpdater.quitAndInstallCalled).toBe(false);
+    });
+
+    it("a re-check of the downloaded version leaves 'Update ready' alone", async () => {
+      const { dispatcher, autoUpdater, notificationManager } = createTestSetup(auto);
+      await dispatcher.dispatch(startIntent());
+      await flush();
+      autoUpdater.resolveDownload!();
+      await flush();
+      const slot = notificationManager.notifications[0]!;
+      const updates = slot.updates.length;
+
+      await dispatcher.dispatch(resumeIntent());
+      await flush();
+
+      expect(slot.updates).toHaveLength(updates);
+    });
+
+    it("a newer version replaces 'Update ready' with its download", async () => {
+      const { dispatcher, autoUpdater, notificationManager } = createTestSetup(auto);
+      await dispatcher.dispatch(startIntent());
+      await flush();
+      autoUpdater.resolveDownload!();
+      await flush();
+
+      autoUpdater.setCheckResult(true, "3.0.0");
+      await dispatcher.dispatch(resumeIntent());
+      await flush();
+
+      const slot = notificationManager.notifications[0]!;
+      const last = slot.updates[slot.updates.length - 1]!;
+      expect(last.title).toBe("Downloading update");
+      expect(last.message).toContain("3.0.0");
+    });
+
+    it("downloads a version that was dismissed in notify mode", async () => {
+      const state = createMockState({ values: { "update.dismissed-version": "2.0.0" } });
+      const { dispatcher, autoUpdater } = createTestSetup({ ...auto, state });
+
+      await dispatcher.dispatch(startIntent());
+      await flush();
+
+      expect(autoUpdater.downloadCalled).toBe(true);
+    });
+
+    it("a failed download shows the error card and the next check retries it", async () => {
+      const { dispatcher, autoUpdater, notificationManager } = createTestSetup(auto);
+      await dispatcher.dispatch(startIntent());
+      await flush();
+      autoUpdater.rejectDownload!(new Error("network down"));
+      await flush();
+      const slot = notificationManager.notifications[0]!;
+      expect(slot.updates[slot.updates.length - 1]!.title).toBe("Update failed");
+
+      await dispatcher.dispatch(resumeIntent());
+      await flush();
+
+      expect(slot.updates[slot.updates.length - 1]!.title).toBe("Downloading update");
+    });
+
+    it("dismissing the error card stops retries for that version only", async () => {
+      const { dispatcher, autoUpdater, notificationManager } = createTestSetup(auto);
+      await dispatcher.dispatch(startIntent());
+      await flush();
+      autoUpdater.rejectDownload!(new Error("network down"));
+      await flush();
+      notificationManager.emitEvent(0, { actionId: "dismiss" });
+      await flush();
+
+      await dispatcher.dispatch(resumeIntent());
+      await flush();
+      expect(notificationManager.notifications).toHaveLength(1);
+
+      autoUpdater.setCheckResult(true, "3.0.0");
+      await dispatcher.dispatch(resumeIntent());
+      await flush();
+      expect(notificationManager.notifications).toHaveLength(2);
+      expect(notificationManager.notifications[1]!.opened.title).toBe("Downloading update");
+      expect(notificationManager.notifications[1]!.opened.message).toContain("3.0.0");
+    });
+  });
+
+  describe("mode changed while running", () => {
+    it("notify → auto: the next check downloads the version on the 'available' card", async () => {
+      const { dispatcher, autoUpdater, notificationManager, mockConfig } = createTestSetup({
+        checkReturns: true,
+      });
+      await dispatcher.dispatch(startIntent());
+      await flush();
+      expect(autoUpdater.downloadCalled).toBe(false);
+
+      await mockConfig.set("update", "auto");
+      await dispatcher.dispatch(resumeIntent());
+      await flush();
+
+      expect(autoUpdater.downloadCalled).toBe(true);
+      const slot = notificationManager.notifications[0]!;
+      expect(slot.updates[slot.updates.length - 1]!.title).toBe("Downloading update");
+    });
+
+    it("→ off: the next check closes the 'available' card without dismissing it", async () => {
+      const { dispatcher, notificationManager, mockConfig, mockState } = createTestSetup({
+        checkReturns: true,
+      });
+      await dispatcher.dispatch(startIntent());
+      await flush();
+
+      await mockConfig.set("update", "off");
+      await dispatcher.dispatch(resumeIntent());
+      await flush();
+
+      expect(notificationManager.notifications[0]!.closed).toBe(true);
+      expect(mockState.getEffective()["update.dismissed-version"]).toBeNull();
+
+      // Back on: the version was not dismissed, so it shows again.
+      await mockConfig.set("update", "notify");
+      await dispatcher.dispatch(resumeIntent());
+      await flush();
+      expect(notificationManager.notifications).toHaveLength(2);
+      expect(notificationManager.notifications[1]!.opened.title).toBe("Update available");
+    });
+
+    it("→ off: a 'ready' card stays", async () => {
+      const { dispatcher, autoUpdater, notificationManager, mockConfig } = createTestSetup({
+        configValues: { update: "auto" },
+        checkReturns: true,
+      });
+      await dispatcher.dispatch(startIntent());
+      await flush();
+      autoUpdater.resolveDownload!();
+      await flush();
+
+      await mockConfig.set("update", "off");
+      await dispatcher.dispatch(resumeIntent());
+      await flush();
+
+      expect(notificationManager.notifications[0]!.closed).toBe(false);
+    });
+
+    it("off at startup → notify: the next check runs", async () => {
+      const { dispatcher, autoUpdater, mockConfig } = createTestSetup({
+        configValues: { update: "off" },
+      });
+      await dispatcher.dispatch(startIntent());
+      await flush();
+
+      await mockConfig.set("update", "notify");
+      await dispatcher.dispatch(resumeIntent());
+
+      expect(autoUpdater.checkForUpdatesCallCount).toBe(1);
+    });
+  });
+
+  describe("update.notification migration", () => {
+    function loadMode(deps: Partial<ConfigDeps>): unknown {
+      const config = new DefaultConfig({
+        configPath: testPath("/app/config.json"),
+        fileSystem: createFileSystemMock({ entries: { "/app": directory() } }),
+        logger: SILENT_LOGGER,
+        isDevelopment: false,
+        isPackaged: true,
+        env: {},
+        argv: [],
+        readFileSync: () => {
+          const err = new Error("ENOENT") as NodeJS.ErrnoException;
+          err.code = "ENOENT";
+          throw err;
+        },
+        writeFileSync: () => {},
+        ...deps,
+      });
+      createTestSetup({ config });
+      config.load();
+      return config.getEffective()["update"];
+    }
+
+    it.each([
+      [false, "off"],
+      [true, "notify"],
+    ])("config.json update.notification=%s becomes update=%s", (value, mode) => {
+      const content = JSON.stringify({ "update.notification": value });
+      expect(loadMode({ readFileSync: () => content })).toBe(mode);
+    });
   });
 });

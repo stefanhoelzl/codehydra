@@ -324,11 +324,16 @@ failed panel means Dismiss.
   goes away when the workspace is deleted. Agents, scripts and hooks can raise
   their own with `ch notification show` (see
   [Sidebar notifications](#sidebar-notifications)).
-- **Updates** — checked every 4 hours and on resume. A sidebar card offers
-  **Install**, shows the download, then **Restart Now**; closing CodeHydra
-  instead installs the downloaded update too (it takes a moment after the
-  window closes). Dismissing silences that version (a newer one shows again). Only for DMG, NSIS and AppImage
-  builds. Turn it off with `update.notification`.
+- **Updates** — checked at startup, every 4 hours and on resume. A sidebar
+  card offers **Install**, shows the download, then **Restart Now**; closing
+  CodeHydra instead installs the downloaded update too (it takes a moment after
+  the window closes). Dismissing silences that version (a newer one shows
+  again). **Always download** downloads this one and from then on downloads
+  updates without asking (`update` = `auto`): you only see the download
+  and **Restart Now**, and CodeHydra never restarts by itself. A failed
+  automatic download is retried at the next check until you dismiss its card.
+  `update` = `off` turns update checks off; a changed mode applies at the
+  next check. Only for DMG, NSIS and AppImage builds.
 - **Bug reports** — <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>B</kbd> opens **Report a
   Bug**; your config (secrets redacted) and logs are attached, and it is sent
   even with telemetry off.

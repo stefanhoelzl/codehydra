@@ -2,19 +2,28 @@
  * AutoUpdaterModule - Notification-driven update checking, download, and install.
  *
  * Hooks:
- * - app:start -> "start": register update-detected callback, schedule background +
- *                periodic checks (if update.notification enabled).
+ * - app:start -> "start": register update-detected callback, run a background
+ *                check and schedule periodic ones.
  * - app:resume -> "resume": run a check (same logic as periodic tick).
  * - app:shutdown -> "stop": clear timer, dispose auto-updater.
  * - app:shutdown -> "quit": quitAndInstall if installUpdate flag is set.
  *
- * Behavior:
+ * Behavior (`update`, read by every check — a change applies at the next one):
+ * - off: no checks; a check that finds the mode off closes an open
+ *   "available"/"error" card (a running download and "ready" stay).
+ * - notify: the flow below.
+ * - auto: the flow below with the Install click done for the user — a detected
+ *   version downloads straight away (progress card, then "Update ready"). A
+ *   failed download shows the error card and the next check retries it, until
+ *   the user dismisses that card. Earlier dismissals do not hold back a download.
+ *
  * - All update flow happens via one sidebar card (`notification:show`) that
  *   always reflects the latest pending version (electron-updater only ever
  *   reports feed-latest, so any detected version that differs from the one we
  *   are currently showing is treated as newer).
  * - First detected version surfaces "Update available" notification.
- * - User clicks "Install" → the card is replaced by a progress bar while the
+ * - User clicks "Install" (or "Always download", which also switches
+ *   `update` to auto) → the card is replaced by a progress bar while the
  *   download runs → on completion by "Update ready / Restart Now". A click
  *   closes a card, so each stage that asks something is a fresh question.
  *   Without the click, a clean quit installs the download too (the
@@ -36,7 +45,7 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { APP_RESUME_OPERATION_ID, APP_RESUME_HOOK_RESUME } from "../intents/app-resume";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
-import { storeBoolean, storeString } from "../boundaries/platform/store-definition";
+import { storeEnum, storeString } from "../boundaries/platform/store-definition";
 import type { Config } from "../boundaries/platform/config";
 import type { StateService } from "../boundaries/platform/state-service";
 import type { AutoUpdater } from "./auto-updater";
@@ -56,13 +65,26 @@ interface AutoUpdaterModuleDeps {
   readonly stateService: StateService;
 }
 
+const UPDATE_MODES = ["off", "notify", "auto"] as const;
+type UpdateMode = (typeof UPDATE_MODES)[number];
+
+/** `update.notification` (boolean) in config.json became `update`. */
+function modeFromNotification(value: unknown): UpdateMode | undefined {
+  if (value === true) return "notify";
+  if (value === false) return "off";
+  return undefined;
+}
+
 function availableConfig(version: string): NotificationConfig {
   return {
     type: "info",
     title: "Update available",
     message: `Version ${version} is ready to download.`,
     dismissible: true,
-    actions: [{ id: "install", label: "Install" }],
+    actions: [
+      { id: "install", label: "Install" },
+      { id: "always", label: "Always download" },
+    ],
   };
 }
 
@@ -105,6 +127,9 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
   let targetVersion: string | null = null;
   // The version the user last dismissed; same-version re-checks stay silent.
   let dismissedVersion: string | null = null;
+  // The version whose failed download the user dismissed in auto mode: auto
+  // stops retrying it (until restart); a newer version downloads again.
+  let abandonedVersion: string | null = null;
   let notificationState: NotificationState = "none";
   let checkInProgress = false;
   let downloadInProgress = false;
@@ -119,11 +144,13 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
   let questionSeq = 0;
 
   // Register config keys
-  const updateNotificationConfig = deps.configService.register("update.notification", {
-    default: true,
-    description: "Show a sidebar notification when an update is available",
+  const updateModeConfig = deps.configService.register("update", {
+    default: "notify",
+    description:
+      "Updates: off = never check, notify = ask before downloading, auto = download without asking (installs on quit)",
     applies: "live",
-    ...storeBoolean(),
+    ...storeEnum(UPDATE_MODES),
+    legacyNames: { "update.notification": modeFromNotification },
   });
   // App-written bookkeeping (not user config): persisted in state.json so a
   // dismissed update stays silent across restarts; a genuinely newer version
@@ -135,8 +162,8 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
     ...storeString({ nullable: true }),
   });
 
-  function isEnabled(): boolean {
-    return updateNotificationConfig.get();
+  function mode(): UpdateMode {
+    return updateModeConfig.get();
   }
 
   /** Put a question on the card and act on the answer (unless it is superseded). */
@@ -153,7 +180,10 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
    * and every replaced question is filtered out above.
    */
   function handleChoice(choice: string | null): void {
-    if (choice === "install" || choice === "retry") {
+    if (choice === "always") {
+      void updateModeConfig.set("auto");
+    }
+    if (choice === "install" || choice === "retry" || choice === "always") {
       if (targetVersion !== null) startDownload(targetVersion);
       return;
     }
@@ -166,6 +196,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       return;
     }
     if (choice === null) {
+      if (notificationState === "error" && mode() === "auto") abandonedVersion = targetVersion;
       notificationState = "none";
       dismissedVersion = targetVersion;
       void dismissedVersionState.set(targetVersion);
@@ -219,19 +250,41 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
    * the one on screen (or the one the user dismissed) is necessarily newer.
    */
   function reconcile(version: string): void {
+    // A download is running; the post-download check will reconcile.
+    if (notificationState === "downloading") return;
+
+    if (mode() === "auto") {
+      // Downloaded already, or its failure was dismissed: nothing to do.
+      if (notificationState === "ready" && version === targetVersion) return;
+      if (version === abandonedVersion) return;
+      targetVersion = version;
+      startDownload(version);
+      return;
+    }
+
     // Already showing this exact version — nothing changed.
     if (notificationState !== "none" && version === targetVersion) return;
     // User dismissed this exact version and nothing newer has appeared.
     if (notificationState === "none" && version === dismissedVersion) return;
-    // A download is running; the post-download check will reconcile.
-    if (notificationState === "downloading") return;
 
     targetVersion = version;
     showAvailableNotification(version);
   }
 
+  /** Mode is off: take down a card that still asks about an update. */
+  function closeQuestion(): void {
+    if (notificationState !== "available" && notificationState !== "error") return;
+    notificationState = "none";
+    // Not an answer: the closed question's waiter must not count as a dismiss.
+    questionSeq++;
+    card.close();
+  }
+
   async function runCheck(): Promise<void> {
-    if (!isEnabled()) return;
+    if (mode() === "off") {
+      closeQuestion();
+      return;
+    }
     if (checkInProgress || downloadInProgress) return;
 
     checkInProgress = true;
@@ -265,13 +318,13 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
               lastDetectedVersion = version;
             });
 
-            if (!isEnabled()) return;
-
             // Fire-and-forget background check at startup. Notification appears
             // later if an update is found; startup is never blocked.
             void runCheck();
 
-            // Periodic re-check while the app runs. Cleared on shutdown.
+            // Periodic re-check while the app runs, whatever the mode: each
+            // tick reads it, so a mode changed meanwhile applies there.
+            // Cleared on shutdown.
             periodicTimer = setInterval(() => {
               void runCheck();
             }, PERIODIC_CHECK_INTERVAL_MS);

@@ -205,10 +205,15 @@ async function simulateUpdateNotification(
     title: "Update available",
     message: `Version ${version} is ready to download.`,
     dismissible: true,
-    actions: [{ id: "install", label: "Install" }],
+    actions: [
+      { id: "install", label: "Install" },
+      { id: "always", label: "Always download" },
+    ],
   };
   const card = new NotificationCard(dispatcher);
-  if ((await card.ask(available)) === "install") {
+  // "always" downloads like Install; the simulation leaves update alone.
+  const choice = await card.ask(available);
+  if (choice === "install" || choice === "always") {
     await simulateDownload(card, version);
   }
 }

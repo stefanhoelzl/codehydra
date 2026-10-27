@@ -268,7 +268,10 @@ describe("DebugModule Integration", () => {
 
       expect(notifications).toHaveLength(1);
       expect(notifications[0]!.opened.title).toBe("Update available");
-      expect(notifications[0]!.opened.actions).toEqual([{ id: "install", label: "Install" }]);
+      expect(notifications[0]!.opened.actions).toEqual([
+        { id: "install", label: "Install" },
+        { id: "always", label: "Always download" },
+      ]);
     });
 
     it("bare flag value 'true' behaves like 'pending'", async () => {

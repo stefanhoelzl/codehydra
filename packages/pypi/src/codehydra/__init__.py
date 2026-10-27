@@ -102,7 +102,7 @@ def main() -> None:
 
         print("Done!\n")
 
-    args = ["--update.notification=false"] + sys.argv[1:]
+    args = ["--update=off"] + sys.argv[1:]
     if platform.system() == "Windows":
         sys.exit(subprocess.run([str(binary_path)] + args).returncode)
     else:

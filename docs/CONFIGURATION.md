@@ -68,9 +68,9 @@ Default `first-workspace` · `os-notification-module.ts`. When to raise an OS no
 
 Default `true` · `auto-tagging-module.ts`. Tag every newly created workspace (no `existingWorkspace` — so not wakes or startup re-discovery) with a blue `new` tag, cleared on first switch. A creation the user lands on loses it to that landing switch; what survives is one created and never visited. Gates tagging only: removal always runs, so turning it off never strands a tag. Live.
 
-#### `update.notification`
+#### `update`
 
-Default `true` · `auto-updater-module.ts`. Show a sidebar notification when an update is available (also gates the periodic update check). Live.
+Default `notify` · `auto-updater-module.ts`. How updates are handled: `off` = never check; `notify` = a sidebar card asks before downloading; `auto` = a detected update downloads without asking (progress card, then "Update ready"); it installs on **Restart Now** or the next quit, never by itself. In `auto` a failed download is retried at the next check until its error card is dismissed; versions dismissed in `notify` still download. The card's **Always download** button sets `auto`. Read by every check (startup, every 4 hours, resume), so a change applies at the next one; a check that finds `off` closes an open "available"/"error" card. Replaces `update.notification` (`true` → `notify`, `false` → `off`; migrated in `config.json`). Live.
 
 #### `plugins.enabled`
 
