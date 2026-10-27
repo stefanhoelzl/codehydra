@@ -72,7 +72,7 @@ async function appFlags(options: LaunchAppOptions): Promise<string[]> {
     // dev instance doesn't collide, and so workers could go parallel later.
     `--ide-server.port=${await freePort()}`,
     "--telemetry.enabled=false",
-    "--update.notification=false",
+    "--update=off",
     // The suite always runs hook handlers concurrently, so a dependency that only
     // holds by registration order fails here before the flag becomes the default.
     "--experimental.concurrent-hooks=true",
