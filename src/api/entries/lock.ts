@@ -15,7 +15,7 @@ import { z } from "zod/v4";
 import { ApiError } from "../errors";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
-import type { EntryDeps, LockKey, LockSnapshot } from "./deps";
+import type { EntryDeps, LockKey, LockSnapshot, LockTakeResult } from "./deps";
 import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
 import { formatAge } from "../../utils/age";
 import { projectNameOf, projectRefOf } from "../../utils/ref";
@@ -70,6 +70,31 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       .describe("Fail immediately if it is held, instead of queueing"),
   });
 
+  /**
+   * What a take answers. A re-take also says since when and why the workspace
+   * holds it: whoever re-took it — a sibling sub-agent, typically — learns that
+   * someone in its own workspace already has the resource.
+   */
+  const answerOf = (
+    holder: WorkspaceRef,
+    input: { readonly name: string; readonly scope: Scope },
+    result: LockTakeResult
+  ) => {
+    const answer = {
+      name: input.name,
+      scope: input.scope,
+      acquired: result.acquired,
+      waitedSeconds: Math.round(result.waitedMs / 1000),
+    };
+    if (result.acquired) return answer;
+    const key = keyOf(holder, input.name, input.scope);
+    const held = locks
+      .list()
+      .find((lock) => lock.name === key.name && lock.project === key.project);
+    if (held === undefined) return answer;
+    return { ...answer, held: formatAge(held.acquiredAt), reason: held.reason ?? "" };
+  };
+
   const take = defineEntry({
     name: "lock.take",
     kind: "command",
@@ -81,7 +106,14 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "Waiters are served in arrival order and granted atomically, so there is no gap to lose " +
       "a race in: when this returns, the lock is yours. It prints nothing while it waits — " +
       "run `ch lock ls` to see who holds it and who is queued.\n\n" +
-      "Taking a lock this workspace already holds succeeds immediately and changes nothing.\n\n" +
+      "Taking a lock this workspace already holds succeeds immediately and changes nothing: " +
+      "the answer says `acquired: false`, with how long it has been `held` and its `reason`.\n\n" +
+      "Every agent of the workspace shares its locks — its sub-agents included, also one " +
+      "running in a worktree of its own (there, `ch` finds no workspace; `--workspace` or MCP " +
+      "names the parent's, and the lock is the parent's). So a lock never keeps sub-agents of " +
+      "one workspace apart: the agent that starts them decides which one uses the resource " +
+      "when. As a sub-agent, leave the lock to the agent that started you rather than taking " +
+      "it yourself; `acquired: false` means someone in your workspace already has it.\n\n" +
       "A workspace can hold several locks. A take that would close a waiting loop — this " +
       "workspace waiting for a lock whose holder (or someone queued ahead) waits, directly or " +
       "through others, for a lock this workspace holds — fails at once as a conflict naming the " +
@@ -102,12 +134,7 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
         signal: ctx.signal,
         releaseOnDisconnect: false,
       });
-      return {
-        name: input.name,
-        scope: input.scope,
-        acquired: result.acquired,
-        waitedSeconds: Math.round(result.waitedMs / 1000),
-      };
+      return answerOf(holder, input, result);
     },
   });
 
@@ -129,12 +156,7 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
         signal: ctx.signal,
         releaseOnDisconnect: true,
       });
-      return {
-        name: input.name,
-        scope: input.scope,
-        acquired: result.acquired,
-        waitedSeconds: Math.round(result.waitedMs / 1000),
-      };
+      return answerOf(holder, input, result);
     },
   });
 

@@ -90,7 +90,7 @@ export class OperationRegistry {
       throw new ApiError(
         "no-workspace",
         `"${entry.name}" acts on a workspace, but no workspace was given. ` +
-          `Run it from inside a workspace, or pass an explicit workspace path.`
+          `Run it from inside a workspace, or name one with --workspace (MCP: workspace).`
       );
     }
 

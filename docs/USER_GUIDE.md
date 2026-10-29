@@ -1619,6 +1619,14 @@ ch lock run device,port -- npm run e2e   # several locks for one command
 - The **workspace** holds the lock, not the process: it stays held after
   `take` returns, until `release`, or the workspace hibernates, is deleted or
   its project is closed. Closing the agent terminal does not release it.
+- Taking a lock the workspace already holds succeeds at once and changes
+  nothing; the answer says `acquired: false`, with how long it has been `held`
+  and its `reason`.
+- Every agent of a workspace shares its locks, sub-agents included, so a lock
+  never keeps two sub-agents of one workspace apart: the agent that started them
+  decides which one uses the resource when. A sub-agent in a worktree of its
+  own is in no workspace, so a plain `ch lock take` there fails (exit 4); with
+  `--workspace <parent>`, or through MCP, it takes the parent's lock.
 - `--scope global` (the default) is shared by every project; `--scope project`
   only by the workspaces of this project.
 - The sidebar shows the holder with a `🔒 name` tag and waiters with `⏳ name`.

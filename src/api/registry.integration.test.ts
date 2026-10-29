@@ -121,6 +121,16 @@ describe("OperationRegistry", () => {
       expect((error as ApiError).category).toBe("no-workspace");
     });
 
+    it("tells a caller outside every workspace to name one, not pass a path", async () => {
+      const entry = strictEntry();
+      const registry = new OperationRegistry([entry]);
+
+      // `--workspace` takes a name; a path is rejected, so the hint must not offer one.
+      await expect(registry.invoke(entry, NO_WORKSPACE, {})).rejects.toThrow(
+        "Run it from inside a workspace, or name one with --workspace (MCP: workspace)."
+      );
+    });
+
     it("lets a caller outside every workspace name the one to act on", async () => {
       const entry = strictEntry();
       const registry = new OperationRegistry([entry]);
