@@ -11,6 +11,8 @@
  * renderer displays it.
  */
 
+import type { AgentStatus, WorkspaceTag } from "./api/types";
+
 // ---- Sections ----
 
 /**
@@ -124,8 +126,11 @@ interface RadioSection extends FieldSection {
  *
  * Suggestions are supplied in groups; a group's optional header renders as a
  * non-selectable divider, shown only while the group has at least one match.
- * Filtering is purely client-side/presentational (case-insensitive substring
- * on the label) and never emits events. The list opens on focus.
+ * Filtering is purely client-side/presentational and never emits events: the
+ * typed text is split on whitespace and every word must be a case-insensitive
+ * substring of an option's label or keywords. In strict mode the first match
+ * is highlighted as soon as there is text, so Enter picks it. The list opens
+ * on focus.
  *
  * - freeText false (default): select-like. The field always reports a valid
  *   option value: it starts at the option matching initialValue (else the
@@ -145,6 +150,10 @@ interface RadioSection extends FieldSection {
  *   loading: false. Renders a spinner overlaid at the control's right edge;
  *   the control stays interactive and reports its current value as usual.
  *   Independent of any error state (both may be shown at once).
+ * - inline (strict mode only): a search list. The suggestion list is always
+ *   shown, in the dialog's flow below the input instead of as a popup; the
+ *   input only filters and never shows the chosen label; Escape is left to the
+ *   form (so it closes the dialog). Pair it with changeEvent to act on a pick.
  * - value: controlled value push. When a config update carries a value the
  *   renderer has not adopted yet, the field adopts it (strict mode falls back
  *   to the first suggestion when the value names no suggestion). Re-sending
@@ -168,6 +177,7 @@ interface DropdownSection extends FieldSection {
   readonly value?: string;
   readonly changeEvent?: FieldChangeConfig;
   readonly loading?: boolean;
+  readonly inline?: boolean;
 }
 
 /**
@@ -351,9 +361,29 @@ export interface RadioOption {
 
 // ---- Dropdown Options ----
 
+/**
+ * A dropdown suggestion.
+ *
+ * - keywords: extra text the filter matches but never shows (e.g. a
+ *   workspace's project and tag descriptions).
+ * - row: render the option as a sidebar workspace row (status icon, title,
+ *   branch line, tags) instead of its plain label. The label stays what the
+ *   filter matches and the input shows.
+ */
 export interface DropdownOption {
   readonly value: string;
   readonly label: string;
+  readonly keywords?: string;
+  readonly row?: DropdownWorkspaceRow;
+}
+
+/** The sidebar-row view of a workspace suggestion; see DropdownOption.row. */
+export interface DropdownWorkspaceRow {
+  readonly name: string;
+  readonly title?: string;
+  readonly hibernated: boolean;
+  readonly agent: AgentStatus;
+  readonly tags: readonly WorkspaceTag[];
 }
 
 /**

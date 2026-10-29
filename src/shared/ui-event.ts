@@ -74,6 +74,10 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // Open the user guide dialog (sidebar question-mark click). The presenter
   // forwards this to the help module.
   z.object({ kind: z.literal("open-help") }),
+  // Open the workspace search dialog (sidebar magnifier click). The presenter
+  // forwards this to the workspace-search module; the Alt+X+F shortcut reaches
+  // the same module via the shortcut-key domain event.
+  z.object({ kind: z.literal("open-workspace-search") }),
   // Toggle whether one project's hibernated workspaces are hidden from the
   // sidebar (the project's hibernated-count button). The presenter flips the
   // project in the `sidebar.hidden-hibernated-projects` state key, persists it,

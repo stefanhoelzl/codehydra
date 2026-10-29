@@ -153,6 +153,37 @@ describe("FilterableDropdown component", () => {
       expect(screen.queryByText("Cherry")).not.toBeInTheDocument();
     });
 
+    it("requires every whitespace-separated word to match", async () => {
+      const options = [createOption("red apple"), createOption("green apple"), createOption("red")];
+      render(FilterableDropdown, { props: { ...defaultProps, options } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "  APP  red " } });
+      await tick();
+
+      expect(screen.getByText("red apple")).toBeInTheDocument();
+      expect(screen.queryByText("green apple")).not.toBeInTheDocument();
+      expect(screen.queryByText("red")).not.toBeInTheDocument();
+    });
+
+    it("matches hidden keywords without showing them", async () => {
+      const options = [
+        { ...createOption("alpha"), keywords: "codehydra\nreview" },
+        { ...createOption("beta"), keywords: "codehydra" },
+      ];
+      render(FilterableDropdown, { props: { ...defaultProps, options } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "codehydra review" } });
+      await tick();
+
+      expect(screen.getByText("alpha")).toBeInTheDocument();
+      expect(screen.queryByText("beta")).not.toBeInTheDocument();
+      expect(screen.queryByText(/review/)).not.toBeInTheDocument();
+    });
+
     it("filters synchronously", async () => {
       render(FilterableDropdown, { props: defaultProps });
 
@@ -618,6 +649,131 @@ describe("FilterableDropdown component", () => {
       // Options should still have option role
       const options = screen.getAllByRole("option");
       expect(options).toHaveLength(2);
+    });
+  });
+
+  describe("first-match highlight", () => {
+    it("highlights the first match once there is text, so Enter picks it", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...defaultProps, onSelect } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      expect(screen.getAllByRole("option").some((o) => o.ariaSelected === "true")).toBe(false);
+
+      await fireEvent.input(input, { target: { value: "an" } });
+      expect(screen.getByRole("option", { name: "Banana" })).toHaveAttribute(
+        "aria-selected",
+        "true"
+      );
+
+      await fireEvent.keyDown(input, { key: "Enter" });
+      expect(onSelect).toHaveBeenCalledWith("Banana");
+    });
+
+    it("drops the highlight when the text is cleared", async () => {
+      render(FilterableDropdown, { props: defaultProps });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "a" } });
+      await fireEvent.input(input, { target: { value: "" } });
+
+      expect(screen.getAllByRole("option").some((o) => o.ariaSelected === "true")).toBe(false);
+    });
+
+    it("does not highlight in free-text mode: Enter keeps the typed text", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...defaultProps, onSelect, allowFreeText: true } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "ban" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelect).toHaveBeenCalledWith("ban");
+    });
+  });
+
+  describe("inline", () => {
+    const inlineProps = { ...defaultProps, value: "Apple", inline: true };
+
+    it("shows the list in the flow without focus, and an empty input", () => {
+      render(FilterableDropdown, { props: inlineProps });
+
+      const input = screen.getByRole("combobox");
+      expect(input).toHaveValue("");
+      expect(input).toHaveAttribute("aria-expanded", "true");
+      const listbox = screen.getByRole("listbox");
+      expect(listbox).toHaveClass("inline");
+      expect(listbox.getAttribute("style")).toBeNull();
+      expect(screen.getAllByRole("option")).toHaveLength(3);
+    });
+
+    it("leaves Escape to the parent and stays open", async () => {
+      const parentKeydown = vi.fn();
+      document.addEventListener("keydown", parentKeydown);
+      render(FilterableDropdown, { props: inlineProps });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.keyDown(input, { key: "Escape" });
+      document.removeEventListener("keydown", parentKeydown);
+
+      expect(parentKeydown).toHaveBeenCalled();
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
+    });
+
+    it("keeps the filter on blur and after a pick", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...inlineProps, onSelect } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "ch" } });
+      await fireEvent.blur(input);
+      expect(input).toHaveValue("ch");
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+
+      await fireEvent.keyDown(input, { key: "Enter" });
+      expect(onSelect).toHaveBeenCalledWith("Cherry");
+      expect(input).toHaveValue("ch");
+    });
+
+    it("Tab moves on without picking", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...inlineProps, onSelect } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "ch" } });
+      await fireEvent.keyDown(input, { key: "Tab" });
+
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("workspace rows", () => {
+    it("renders a row option as a sidebar row: title, branch, tags, status", async () => {
+      const options = [
+        {
+          ...createOption("PR #12 review", "ref-1"),
+          row: {
+            name: "pr-12",
+            title: "PR #12 review",
+            hibernated: true,
+            agent: { type: "none" as const },
+            tags: [{ name: "review", label: "Review", color: "#4b6de8" }],
+          },
+        },
+      ];
+      render(FilterableDropdown, { props: { ...defaultProps, options, inline: true } });
+
+      const option = screen.getByRole("option");
+      expect(option).toHaveTextContent("PR #12 review");
+      expect(option).toHaveTextContent("pr-12");
+      expect(option.querySelector(".ws-tag.colored")).toHaveTextContent("Review");
+      expect(option.querySelector("[aria-label='Hibernated']")).toBeInTheDocument();
     });
   });
 

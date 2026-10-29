@@ -89,6 +89,7 @@ describe("Sidebar component", () => {
     onRemoveWorkspace: vi.fn(),
     onOpenSettings: vi.fn(),
     onOpenHelp: vi.fn(),
+    onOpenWorkspaceSearch: vi.fn(),
     onToggleHideHibernated: vi.fn(),
     onSetSidebarMode: vi.fn(),
   };
@@ -134,15 +135,18 @@ describe("Sidebar component", () => {
 
       await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
       expect(defaultProps.onOpenSettings).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(screen.getByRole("button", { name: "Find workspace" }));
+      expect(defaultProps.onOpenWorkspaceSearch).toHaveBeenCalledTimes(1);
     });
 
-    it("orders the header buttons dock, gear, help", () => {
+    it("orders the header buttons search, dock, gear, help", () => {
       const { container } = render(Sidebar, { props: defaultProps });
 
       const labels = [...container.querySelectorAll(".header-action")].map((button) =>
         button.getAttribute("aria-label")
       );
-      expect(labels).toEqual(["Dock sidebar", "Settings", "Help"]);
+      expect(labels).toEqual(["Find workspace", "Dock sidebar", "Settings", "Help"]);
     });
 
     it("docks an overlay sidebar and undocks a docked one", async () => {

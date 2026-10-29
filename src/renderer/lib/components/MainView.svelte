@@ -197,6 +197,12 @@
     api.emitEvent({ kind: "open-help" });
   }
 
+  // Open the workspace search (sidebar magnifier). Main forwards this to the
+  // workspace-search module, which opens the declarative search dialog.
+  function handleOpenWorkspaceSearch(): void {
+    api.emitEvent({ kind: "open-workspace-search" });
+  }
+
   // Dock / undock the sidebar (header button). Main writes `sidebar.mode` and
   // re-pushes; Alt+X+P toggles the same key main-side.
   function handleSetSidebarMode(sidebarMode: SidebarMode): void {
@@ -241,6 +247,7 @@
     onRemoveWorkspace={handleRemoveWorkspace}
     onOpenSettings={handleOpenSettings}
     onOpenHelp={handleOpenHelp}
+    onOpenWorkspaceSearch={handleOpenWorkspaceSearch}
     onToggleHideHibernated={handleToggleHideHibernated}
   />
 

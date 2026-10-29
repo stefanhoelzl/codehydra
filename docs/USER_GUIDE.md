@@ -115,8 +115,9 @@ The sidebar lists your projects and their workspaces, sorted by name.
 - **Resize** it by dragging its right edge (at least 250 px, at most 75% of the
   window); the width is saved as `sidebar.width`. Docked, the workspace
   follows the drag.
-- The header has, when expanded, the **dock** button, the **gear** (settings)
-  and **?** (this guide). Hover any sidebar icon for what it does.
+- The header has, when expanded, the **magnifier** (find a workspace), the
+  **dock** button, the **gear** (settings) and **?** (this guide). Hover any
+  sidebar icon for what it does.
 - A project with sleeping workspaces shows an **eye** with how many there are.
   Click it (or press <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> for the active
   workspace's project) to hide that project's sleeping workspaces; it shows a
@@ -227,6 +228,14 @@ is easy to spot. Turn this off with `auto-tag.new`.
 ### Switching, hibernating and waking
 
 - **Switch** — click a row, or in shortcut mode use the arrows or a number.
+- **Find** — <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>F</kbd> (or the sidebar's
+  magnifier) opens a search listing every ready workspace of every project,
+  hibernated ones included even in a project whose eye hides them. Typing filters it:
+  each word must appear in the workspace's title, name, project, or a tag's
+  name, label or description. The first match is highlighted, so
+  <kbd>Enter</kbd> picks it; <kbd>↑</kbd>/<kbd>↓</kbd> move the highlight. Picking
+  switches to the workspace and wakes it if it is hibernated.
+  <kbd>Escape</kbd> closes the search.
 - **Hibernate** — hover a ready row and click its pause icon, or press
   <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> on the active workspace (or
   `ch ws hibernate`). Any workspace can hibernate, busy or not, without a
@@ -350,6 +359,7 @@ holding <kbd>Alt</kbd> while you press:
 | <kbd>←</kbd> / <kbd>→</kbd>              | Previous / next idle workspace (a busy one if none is idle)         |
 | <kbd>1</kbd>-<kbd>9</kbd>, <kbd>0</kbd>  | Jump to the numbered workspace (numbers are shown in shortcut mode) |
 | <kbd>Enter</kbd>                         | Open the New workspace form                                         |
+| <kbd>F</kbd>                             | Find a workspace by name, title, project or tag                     |
 | <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the active workspace                                         |
 | <kbd>H</kbd>                             | Hibernate / wake the active workspace                               |
 | <kbd>T</kbd>                             | Hide / show the active project's hibernated workspaces              |
