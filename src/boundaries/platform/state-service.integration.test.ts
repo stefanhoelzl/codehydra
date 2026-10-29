@@ -124,6 +124,40 @@ describe("StateService", () => {
     });
   });
 
+  it("never leaves state.json half-written while it persists", async () => {
+    const { svc, fs } = createService({
+      "/app": directory(),
+      "/app/state.json": file(JSON.stringify({ "update.dismissed-version": "1.0.0" })),
+    });
+    const distinctId = svc.register("telemetry.distinct-id", stringKeyDef());
+    svc.register("update.dismissed-version", stringKeyDef());
+    await svc.load();
+
+    // A real write truncates its target before filling it. Record what another
+    // process (`ch`) reads from state.json in between: written in place, that
+    // is an empty file.
+    const seenMidWrite: string[] = [];
+    const write = fs.writeFile.bind(fs);
+    fs.writeFile = async (path, content, options) => {
+      await write(path, "", options);
+      seenMidWrite.push(await fs.readFile(STATE_PATH));
+      await write(path, content);
+    };
+
+    await distinctId.set("uuid-xyz");
+
+    expect(seenMidWrite.map((raw) => JSON.parse(raw) as unknown)).toEqual([
+      { "update.dismissed-version": "1.0.0" },
+    ]);
+    expect(JSON.parse(await fs.readFile(STATE_PATH))).toEqual({
+      "update.dismissed-version": "1.0.0",
+      "telemetry.distinct-id": "uuid-xyz",
+    });
+    await expect(fs.readFile(testPath("/app/state.json.tmp"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("redacts overrides per key, applying true and custom redactors", async () => {
     const { svc } = createService({
       "/app": directory(),
