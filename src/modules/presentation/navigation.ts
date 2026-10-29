@@ -21,7 +21,7 @@ import {
 } from "../../intents/hibernate-workspace";
 import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../../intents/wake-workspace";
 import type { WorkspaceRef } from "../../intents/contract";
-import type { PresentationModel, RowEntry, WorkspaceModel } from "./view-model";
+import type { PresentationModel, ProjectModel, RowEntry, WorkspaceModel } from "./view-model";
 
 export interface ShortcutNavigationDeps {
   readonly model: PresentationModel;
@@ -34,7 +34,8 @@ export interface ShortcutNavigationDeps {
   ) => void;
   /** The interactive remove flow. */
   readonly deleteWorkspace: (workspaceRef: WorkspaceRef) => void;
-  readonly toggleHideHibernated: () => void;
+  /** Hide/show one project's hibernated workspaces. */
+  readonly toggleHideHibernated: (project: ProjectModel) => void;
   readonly toggleSidebarMode: () => void;
 }
 
@@ -213,9 +214,12 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
       case "h":
         handleHibernateToggle();
         break;
-      case "t":
-        deps.toggleHideHibernated();
+      case "t": {
+        // The active workspace's project; no-op without an active workspace.
+        const project = model.active()?.project;
+        if (project !== undefined) deps.toggleHideHibernated(project);
         break;
+      }
       case "p":
         deps.toggleSidebarMode();
         break;

@@ -184,9 +184,9 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 
 `plugin-module/module.ts` (keys: `trust.ts`). `Record<key, boolean>`, key `<type>:<entry>:<name>` (`local:default:x`, `remote:acme:x`) or `project:<projectRef>:<name>`; `true` = enabled, `false` = disabled; absent = local/remote enabled, project `ask`. Older `local:<name>`, `workspace:…` and project-path keys are converted at app:start `migrations`.
 
-#### `sidebar.hide-hibernated`
+#### `sidebar.hidden-hibernated-projects`
 
-`presentation-module.ts`. Whether hibernated workspaces are hidden from the sidebar list (bottom toggle / Alt+X+T). Default `false`.
+`presentation-module.ts`. Refs of the projects whose hibernated workspaces are hidden from the sidebar list (the project's hibernated-count button / Alt+X+T for the active workspace's project). Default `[]`. A ref stays listed after its project closes, so the choice survives a reopen. Replaces the global boolean `sidebar.hide-hibernated`, which is dropped without migration.
 
 #### `api.port`
 

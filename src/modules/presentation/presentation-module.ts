@@ -118,7 +118,7 @@ import {
   type UiWorkspaceRow,
 } from "../../shared/ui-state";
 import type { Config } from "../../boundaries/platform/config";
-import { storeBoolean, storeEnum } from "../../boundaries/platform/store-definition";
+import { storeBoolean, storeCustom, storeEnum } from "../../boundaries/platform/store-definition";
 import { buildScreenshotPath } from "../hibernation-screenshot-module";
 import {
   DialogManager,
@@ -167,7 +167,7 @@ export interface PresentationModuleDeps {
   readonly configService: Pick<Config, "register">;
   /**
    * Runtime state store (state.json). The presenter registers
-   * `sidebar.hide-hibernated` here — a user-toggled visibility preference, not a
+   * `sidebar.hidden-hibernated-projects` here — a user-toggled visibility preference, not a
    * config setting — and reads/writes it directly (mirrors labelScroll/silent,
    * but persisted to state.json rather than config.json).
    */
@@ -236,6 +236,17 @@ export interface UiPresenter extends IntentModule {
 const VALID_RENDERER_LOGGER_NAMES = new Set<string>(["ui", "api"]);
 function toLoggerName(name: string): LoggerName {
   return VALID_RENDERER_LOGGER_NAMES.has(name) ? (name as LoggerName) : "ui";
+}
+
+/** Validate `sidebar.hidden-hibernated-projects`: a list of project refs. */
+function validateRefList(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const refs: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") return undefined;
+    refs.push(item);
+  }
+  return refs;
 }
 
 // =============================================================================
@@ -494,15 +505,33 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     ...storeBoolean(),
   });
 
-  // Whether hibernated workspaces are hidden from the sidebar. A user-toggled
-  // runtime preference (sidebar header eye / Alt+X+T), so it lives in state.json, not
-  // config. Read at snapshot-build time and when navigating, so flipping it
-  // re-pushes ui:state; the presenter both filters the rows and ships the flag.
-  const hideHibernatedState = deps.stateService.register("sidebar.hide-hibernated", {
-    default: false,
-    description: "Hide hibernated workspaces from the sidebar list",
-    ...storeBoolean(),
-  });
+  // Projects (by ref) whose hibernated workspaces are hidden from the sidebar.
+  // A user-toggled runtime preference (project hibernated-count button /
+  // Alt+X+T), so it lives in state.json, not config. A ref stays listed after
+  // its project closes, so the choice survives reopening it. Read at
+  // snapshot-build time and when navigating, so flipping it re-pushes ui:state;
+  // the presenter both filters the rows and ships the per-project flag.
+  const hiddenHibernatedProjectsState = deps.stateService.register(
+    "sidebar.hidden-hibernated-projects",
+    {
+      default: [] as readonly string[],
+      description: "Projects whose hibernated workspaces are hidden from the sidebar list",
+      ...storeCustom<readonly string[]>({
+        parse: (raw) => {
+          try {
+            return validateRefList(JSON.parse(raw));
+          } catch {
+            return undefined;
+          }
+        },
+        validate: validateRefList,
+      }),
+    }
+  );
+
+  function hidesHibernated(project: ProjectModel): boolean {
+    return hiddenHibernatedProjectsState.get().includes(project.ref);
+  }
 
   // The presenter privately owns the dialog/notification registries. They hold
   // session state and hand out handles; every mutation calls scheduleUpdate so
@@ -706,13 +735,14 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /**
    * All workspace rows in sidebar display order — the authoritative ordering
    * shared by the snapshot (buildSnapshot) and shortcut navigation. When
-   * `sidebar.hide-hibernated` is on, hibernated rows are omitted so keyboard
-   * navigation matches the visible list (up/down can never land on a hidden row).
+   * a project is in `sidebar.hidden-hibernated-projects`, its hibernated rows
+   * are omitted so keyboard navigation matches the visible list (up/down can
+   * never land on a hidden row).
    */
   function currentRows(): RowEntry[] {
-    const hideHibernated = hideHibernatedState.get();
     const entries: RowEntry[] = [];
     for (const [project, workspaces] of sortedProjects()) {
+      const hideHibernated = hidesHibernated(project);
       for (const workspace of workspaces) {
         if (hideHibernated && workspace.hibernated) continue;
         entries.push({ row: buildRow(workspace), project, workspace });
@@ -810,22 +840,22 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   };
 
   function buildSnapshot(): UiState {
-    const hideHibernated = hideHibernatedState.get();
     const projectRows: UiProjectRow[] = sortedProjects().map(([project, workspaces]) => {
       const rows = workspaces.map(buildRow);
-      // Omit hibernated rows when the visibility toggle is on, but report how
-      // many went missing so the sidebar can say so — an all-asleep project
-      // would otherwise look empty. An active hibernated workspace is hidden
-      // too (main still shows its hibernated screen); recover via the bottom
-      // toggle, Alt+X+T, or Alt+X+H.
-      const visible = hideHibernated ? rows.filter((row) => !row.hibernated) : rows;
+      // Omit hibernated rows when the project's visibility toggle is on, but
+      // report how many are hibernated so the sidebar can say so — an
+      // all-asleep project would otherwise look empty. An active hibernated
+      // workspace is hidden too (main still shows its hibernated screen);
+      // recover via the project's count button, Alt+X+T, or Alt+X+H.
+      const hideHibernated = hidesHibernated(project);
       return {
         id: project.id,
         name: project.name,
         title: project.remoteUrl ?? project.path,
         remote: project.remoteUrl !== undefined,
-        workspaces: visible,
-        hiddenHibernatedCount: rows.length - visible.length,
+        workspaces: hideHibernated ? rows.filter((row) => !row.hibernated) : rows,
+        hibernatedCount: rows.filter((row) => row.hibernated).length,
+        hideHibernated,
       };
     });
 
@@ -866,7 +896,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       sidebar: {
         projects: projectRows,
         width: clampSidebarWidthMin(deps.sidebarWidthConfig.get()),
-        hideHibernated,
         mode: sidebarModeConfig.get(),
       },
       frames,
@@ -1088,9 +1117,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       case "open-help":
         deps.onOpenHelp?.();
         return;
-      case "toggle-hide-hibernated":
-        toggleHideHibernated();
+      case "toggle-hide-hibernated": {
+        const project = model.projectById(event.projectId);
+        if (!project) {
+          logger.warn("Dropped toggle-hide-hibernated for unknown project", {
+            projectId: event.projectId,
+          });
+          return;
+        }
+        toggleHideHibernated(project);
         return;
+      }
       case "set-sidebar-mode":
         setSidebarMode(event.mode);
         return;
@@ -1156,14 +1193,18 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   );
 
   /**
-   * Toggle the `sidebar.hide-hibernated` state and re-push. Driven by both the
-   * bottom sidebar toggle (ui:event) and the Alt+X+T shortcut. Persist failures
-   * are logged but not surfaced — the in-memory flip already took effect via the
-   * snapshot; the value simply won't survive a restart.
+   * Flip one project in the `sidebar.hidden-hibernated-projects` state and
+   * re-push. Driven by both the project's count button (ui:event) and the
+   * Alt+X+T shortcut (active workspace's project). Persist failures are logged
+   * but not surfaced — the in-memory flip already took effect via the snapshot;
+   * the value simply won't survive a restart.
    */
-  function toggleHideHibernated(): void {
-    const next = !hideHibernatedState.get();
-    void hideHibernatedState.set(next).catch((error: unknown) => {
+  function toggleHideHibernated(project: ProjectModel): void {
+    const current = hiddenHibernatedProjectsState.get();
+    const next = current.includes(project.ref)
+      ? current.filter((ref) => ref !== project.ref)
+      : [...current, project.ref];
+    void hiddenHibernatedProjectsState.set(next).catch((error: unknown) => {
       logger.warn("Failed to persist hide-hibernated toggle", { error: getErrorMessage(error) });
     });
     scheduleUpdate();

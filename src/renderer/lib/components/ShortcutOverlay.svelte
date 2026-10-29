@@ -6,8 +6,11 @@
     activeHibernated?: boolean;
     activeWorkspaceDeletionInProgress?: boolean;
     idleWorkspaceCount?: number;
-    /** Whether hibernated workspaces are currently hidden (drives the T hint label). */
-    hideHibernated?: boolean;
+    /**
+     * Whether the active workspace's project hides its hibernated workspaces
+     * (drives the T hint label); null hides the hint (no active workspace).
+     */
+    hideHibernated?: boolean | null;
     /** Whether the sidebar is docked (drives the P hint label). */
     sidebarDocked?: boolean;
   }
@@ -19,7 +22,7 @@
     activeHibernated = false,
     activeWorkspaceDeletionInProgress = false,
     idleWorkspaceCount = 0,
-    hideHibernated = false,
+    hideHibernated = null,
     sidebarDocked = false,
   }: Props = $props();
 
@@ -93,6 +96,7 @@
   </span>
   <span
     class="shortcut-hint"
+    class:shortcut-hint--hidden={hideHibernated === null}
     aria-label={hideHibernated
       ? "T key to show hibernated workspaces"
       : "T key to hide hibernated workspaces"}

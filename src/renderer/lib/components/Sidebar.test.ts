@@ -136,13 +136,13 @@ describe("Sidebar component", () => {
       expect(defaultProps.onOpenSettings).toHaveBeenCalledTimes(1);
     });
 
-    it("orders the header buttons dock, eye, gear, help", () => {
+    it("orders the header buttons dock, gear, help", () => {
       const { container } = render(Sidebar, { props: defaultProps });
 
       const labels = [...container.querySelectorAll(".header-action")].map((button) =>
         button.getAttribute("aria-label")
       );
-      expect(labels).toEqual(["Dock sidebar", "Hide hibernated workspaces", "Settings", "Help"]);
+      expect(labels).toEqual(["Dock sidebar", "Settings", "Help"]);
     });
 
     it("docks an overlay sidebar and undocks a docked one", async () => {
@@ -159,38 +159,6 @@ describe("Sidebar component", () => {
       expect(undock).toHaveAttribute("aria-pressed", "true");
       await fireEvent.click(undock);
       expect(onSetSidebarMode).toHaveBeenLastCalledWith("overlay");
-    });
-
-    it("hibernated toggle calls onToggleHideHibernated and reflects the current state", async () => {
-      const onToggleHideHibernated = vi.fn();
-
-      // Showing: open eye, tooltip offers to hide.
-      const { unmount } = render(Sidebar, {
-        props: { ...defaultProps, hideHibernated: false, onToggleHideHibernated },
-      });
-      const hideButton = screen.getByRole("button", { name: "Hide hibernated workspaces" });
-      expect(hideButton).toHaveAttribute("title", "Hide hibernated workspaces");
-      expect(hideButton).toHaveAttribute("aria-pressed", "false");
-      await fireEvent.click(hideButton);
-      expect(onToggleHideHibernated).toHaveBeenCalledWith();
-      unmount();
-
-      // Hidden: closed eye, tooltip offers to show.
-      render(Sidebar, {
-        props: { ...defaultProps, hideHibernated: true, onToggleHideHibernated },
-      });
-      const showButton = screen.getByRole("button", { name: "Show hibernated workspaces" });
-      expect(showButton).toHaveAttribute("title", "Show hibernated workspaces");
-      expect(showButton).toHaveAttribute("aria-pressed", "true");
-    });
-
-    it("hides the hibernated toggle while collapsed", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("feature-1")]);
-
-      const { container } = render(Sidebar, { props: { ...defaultProps, projects: [project] } });
-
-      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
-      expect(screen.queryByRole("button", { name: /hibernated workspaces/i })).toBeNull();
     });
   });
 
@@ -235,41 +203,43 @@ describe("Sidebar component", () => {
     });
   });
 
-  describe("hidden hibernated count", () => {
+  describe("hibernated count toggle", () => {
     // Regression: with hide-hibernated on, a project whose workspaces are all
     // asleep rendered as a bare header, indistinguishable from an empty one.
 
-    it("shows the count in the project header when rows are hidden", () => {
-      const project = makeUiProjectRow([], { hiddenHibernatedCount: 3 });
+    it("shows the count while hidden and offers to show them", async () => {
+      const onToggleHideHibernated = vi.fn();
+      const project = makeUiProjectRow([], { hibernatedCount: 3, hideHibernated: true });
 
       render(Sidebar, {
-        props: { ...defaultProps, projects: [project], hideHibernated: true },
+        props: { ...defaultProps, projects: [project], onToggleHideHibernated },
       });
 
-      expect(screen.getByText("3")).toBeInTheDocument();
-      expect(screen.getByText("3 hibernated workspaces hidden")).toBeInTheDocument();
+      const button = screen.getByRole("button", { name: "Show 3 hibernated workspaces" });
+      expect(button).toHaveAttribute("title", "Show 3 hibernated workspaces");
+      expect(button).toHaveAttribute("aria-pressed", "true");
+      expect(button).toHaveTextContent("3");
+      await fireEvent.click(button);
+      expect(onToggleHideHibernated).toHaveBeenCalledWith(project.id);
     });
 
-    it("uses the singular wording for one hidden workspace", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("awake")], {
-        hiddenHibernatedCount: 1,
+    it("shows the count while shown and offers to hide them", () => {
+      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1", { hibernated: true })], {
+        hibernatedCount: 1,
       });
 
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], hideHibernated: true },
-      });
+      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
 
-      expect(screen.getByText("1 hibernated workspace hidden")).toBeInTheDocument();
+      const button = screen.getByRole("button", { name: "Hide 1 hibernated workspace" });
+      expect(button).toHaveAttribute("aria-pressed", "false");
     });
 
-    it("shows nothing when no rows are hidden", () => {
+    it("shows nothing when the project has no hibernated workspaces", () => {
       const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
 
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
+      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
 
-      expect(screen.queryByText(/hibernated workspaces? hidden/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /hibernated workspace/i })).toBeNull();
     });
   });
 

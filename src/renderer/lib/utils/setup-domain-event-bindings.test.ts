@@ -24,10 +24,17 @@ function makeState(workspaces: UiWorkspaceRow[]): UiState {
   return {
     sidebar: {
       projects: [
-        { id: "p", name: "p", title: "/p", remote: false, workspaces, hiddenHibernatedCount: 0 },
+        {
+          id: "p",
+          name: "p",
+          title: "/p",
+          remote: false,
+          workspaces,
+          hibernatedCount: 0,
+          hideHibernated: false,
+        },
       ],
       width: 250,
-      hideHibernated: false,
       mode: "overlay",
     },
     frames: {},

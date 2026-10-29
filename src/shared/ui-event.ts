@@ -74,11 +74,12 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // Open the user guide dialog (sidebar question-mark click). The presenter
   // forwards this to the help module.
   z.object({ kind: z.literal("open-help") }),
-  // Toggle whether hibernated workspaces are hidden from the sidebar (bottom
-  // toggle click). The presenter flips the `sidebar.hide-hibernated` state key,
-  // persists it, and re-pushes the snapshot. The Alt+X+T shortcut drives the
-  // same presenter toggle via the shortcut-key domain event.
-  z.object({ kind: z.literal("toggle-hide-hibernated") }),
+  // Toggle whether one project's hibernated workspaces are hidden from the
+  // sidebar (the project's hibernated-count button). The presenter flips the
+  // project in the `sidebar.hidden-hibernated-projects` state key, persists it,
+  // and re-pushes the snapshot. The Alt+X+T shortcut drives the same presenter
+  // toggle for the active workspace's project via the shortcut-key domain event.
+  z.object({ kind: z.literal("toggle-hide-hibernated"), projectId: z.string() }),
   // Dialog user interactions. The
   // presenter routes these to the matching open dialog session by `dialogId`
   // (the opaque id echoed from the snapshot's `dialogs`). `data` is the flat

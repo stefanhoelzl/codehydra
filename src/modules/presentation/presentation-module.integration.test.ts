@@ -33,7 +33,7 @@ import type { PersistedAccessor } from "../../boundaries/platform/store-definiti
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import { Path } from "../../utils/path/path";
 import { ApiIpcChannels } from "../../shared/ipc";
-import type { UiState } from "../../shared/ui-state";
+import type { UiProjectRow, UiState } from "../../shared/ui-state";
 import type {
   Project,
   ProjectId,
@@ -144,10 +144,12 @@ function createDeps() {
 /**
  * Minimal StateService mock: register() returns a stateful, store-backed
  * accessor (mirrors createMockConfig for state.json). The presenter registers
- * `sidebar.hide-hibernated` here; tests flip it via the toggle ui:event/shortcut
+ * `sidebar.hidden-hibernated-projects` here; tests flip it via the toggle ui:event/shortcut
  * and read it back through the accessor.
  */
-function createMockStateService(): Pick<StateService, "register"> {
+function createMockStateService(): Pick<StateService, "register"> & {
+  readonly values: ReadonlyMap<string, unknown>;
+} {
   const store = new Map<string, unknown>();
   const register = (<T>(key: string, definition: { default: T }): PersistedAccessor<T> => {
     if (!store.has(key)) store.set(key, definition.default);
@@ -164,9 +166,14 @@ function createMockStateService(): Pick<StateService, "register"> {
       isDefault: () => store.get(key) === definition.default,
     };
   }) as unknown as StateService["register"];
-  return { register };
+  return { register, values: store };
 }
 type Deps = ReturnType<typeof createDeps>;
+
+/** The persisted `sidebar.hidden-hibernated-projects` value. */
+function stateValue(deps: Deps): unknown {
+  return deps.stateService.values.get("sidebar.hidden-hibernated-projects");
+}
 
 /** Drive an inbound ui:event into the presenter (via the view-manager mock). */
 function emitUiEvent(deps: Deps, event: unknown): void {
@@ -320,6 +327,31 @@ function switchedPayload(workspace: Workspace): unknown {
   };
 }
 
+const BETA_ID = "beta-87654321" as ProjectId;
+
+/** Open a second project "beta" with a single workspace "b". */
+async function openBeta(module: IntentModule, options: { hibernated: boolean }): Promise<void> {
+  const betaRef = projectRefFor(projPath("/projects/beta"));
+  await emit(module, EVENT_PROJECT_OPENED, {
+    project: {
+      ref: betaRef,
+      id: BETA_ID,
+      name: "beta",
+      path: testPath("/projects/beta").toNative(),
+      workspaces: [
+        {
+          ref: makeWorkspaceRef(betaRef, "b"),
+          projectId: BETA_ID,
+          name: "b" as WorkspaceName,
+          branch: "b",
+          metadata: options.hibernated ? { hibernated: "true" } : {},
+          path: wsPath("/projects/beta/.worktrees/b"),
+        },
+      ],
+    },
+  });
+}
+
 // =============================================================================
 // Phase A - ui:event intake
 // =============================================================================
@@ -460,7 +492,6 @@ describe("PresentationModule - ui:state snapshots", () => {
         sidebar: {
           projects: [],
           width: SIDEBAR_DEFAULT_WIDTH,
-          hideHibernated: false,
           mode: "overlay",
         },
         frames: {},
@@ -493,7 +524,6 @@ describe("PresentationModule - ui:state snapshots", () => {
       sidebar: {
         projects: [],
         width: SIDEBAR_DEFAULT_WIDTH,
-        hideHibernated: false,
         mode: "overlay",
       },
       frames: {},
@@ -546,11 +576,11 @@ describe("PresentationModule - ui:state snapshots", () => {
                 active: true,
               },
             ],
-            hiddenHibernatedCount: 0,
+            hibernatedCount: 0,
+            hideHibernated: false,
           },
         ],
         width: SIDEBAR_DEFAULT_WIDTH,
-        hideHibernated: false,
         mode: "overlay",
       },
       frames: { [keyOf("main")]: "http://127.0.0.1:1/main" },
@@ -1366,40 +1396,68 @@ describe("PresentationModule - sidebar resize", () => {
     expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
   });
 
-  it("toggle-hide-hibernated flips the flag and omits hibernated rows", async () => {
+  it("toggle-hide-hibernated flips the project's flag and omits its hibernated rows", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const awake = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
     const asleep = makeWorkspace("b", { metadata: { hibernated: "true" } });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake, asleep]) });
 
-    // Default: both rows visible, flag off, nothing withheld.
-    expect(lastSnapshot(deps).sidebar.hideHibernated).toBe(false);
-    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces.map((w) => w.name)).toEqual([
-      "a",
-      "b",
-    ]);
-    expect(lastSnapshot(deps).sidebar.projects[0]!.hiddenHibernatedCount).toBe(0);
+    // Default: both rows visible, flag off; the count is there regardless.
+    const project = (): UiProjectRow => lastSnapshot(deps).sidebar.projects[0]!;
+    expect(project().hideHibernated).toBe(false);
+    expect(project().workspaces.map((w) => w.name)).toEqual(["a", "b"]);
+    expect(project().hibernatedCount).toBe(1);
 
-    emitUiEvent(deps, { kind: "toggle-hide-hibernated" });
+    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: PROJECT_ID });
     await flush();
 
-    // Hidden: the hibernated row is dropped, the flag is on, and the project
-    // reports the row it swallowed.
-    expect(lastSnapshot(deps).sidebar.hideHibernated).toBe(true);
-    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces.map((w) => w.name)).toEqual(["a"]);
-    expect(lastSnapshot(deps).sidebar.projects[0]!.hiddenHibernatedCount).toBe(1);
+    // Hidden: the hibernated row is dropped, the flag is on, the count stays,
+    // and the project's ref is persisted.
+    expect(project().hideHibernated).toBe(true);
+    expect(project().workspaces.map((w) => w.name)).toEqual(["a"]);
+    expect(project().hibernatedCount).toBe(1);
+    expect(stateValue(deps)).toEqual([PROJECT_REF]);
 
-    emitUiEvent(deps, { kind: "toggle-hide-hibernated" });
+    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: PROJECT_ID });
     await flush();
 
     // Shown again.
-    expect(lastSnapshot(deps).sidebar.hideHibernated).toBe(false);
-    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces.map((w) => w.name)).toEqual([
-      "a",
-      "b",
-    ]);
-    expect(lastSnapshot(deps).sidebar.projects[0]!.hiddenHibernatedCount).toBe(0);
+    expect(project().hideHibernated).toBe(false);
+    expect(project().workspaces.map((w) => w.name)).toEqual(["a", "b"]);
+    expect(stateValue(deps)).toEqual([]);
+  });
+
+  it("toggle-hide-hibernated leaves other projects untouched", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, {
+      project: makeProject([makeWorkspace("a", { metadata: { hibernated: "true" } })]),
+    });
+    await openBeta(module, { hibernated: true });
+
+    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: BETA_ID });
+    await flush();
+
+    const [alpha, beta] = lastSnapshot(deps).sidebar.projects;
+    expect(alpha!.hideHibernated).toBe(false);
+    expect(alpha!.workspaces.map((w) => w.name)).toEqual(["a"]);
+    expect(beta!.hideHibernated).toBe(true);
+    expect(beta!.workspaces).toEqual([]);
+  });
+
+  it("toggle-hide-hibernated for an unknown project is dropped", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, {
+      project: makeProject([makeWorkspace("a", { metadata: { hibernated: "true" } })]),
+    });
+
+    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: "nope-00000000" });
+    await flush();
+
+    expect(lastSnapshot(deps).sidebar.projects[0]!.hideHibernated).toBe(false);
+    expect(stateValue(deps)).toEqual([]);
   });
 
   it("an all-hibernated project reports its count instead of looking empty", async () => {
@@ -1412,14 +1470,31 @@ describe("PresentationModule - sidebar resize", () => {
       ]),
     });
 
-    emitUiEvent(deps, { kind: "toggle-hide-hibernated" });
+    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: PROJECT_ID });
     await flush();
 
     // Every row is gone, so `workspaces` alone cannot distinguish this from a
     // project with no workspaces at all — the count is what carries it.
     const project = lastSnapshot(deps).sidebar.projects[0]!;
     expect(project.workspaces).toEqual([]);
-    expect(project.hiddenHibernatedCount).toBe(2);
+    expect(project.hibernatedCount).toBe(2);
+  });
+
+  it("a hidden project stays hidden after it is closed and reopened", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const open = (): Promise<void> =>
+      emit(module, EVENT_PROJECT_OPENED, {
+        project: makeProject([makeWorkspace("a", { metadata: { hibernated: "true" } })]),
+      });
+    await open();
+    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: PROJECT_ID });
+
+    await emit(module, EVENT_PROJECT_CLOSED, { projectId: PROJECT_ID, projectRef: PROJECT_REF });
+    await open();
+    await flush();
+
+    expect(lastSnapshot(deps).sidebar.projects[0]!.hideHibernated).toBe(true);
   });
 });
 
@@ -2610,25 +2685,39 @@ describe("PresentationModule - shortcut navigation", () => {
     expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
   });
 
-  it("t toggles hide-hibernated (hibernated rows leave/return to the snapshot)", async () => {
+  it("t toggles hide-hibernated for the active workspace's project only", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const awake = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
     const asleep = makeWorkspace("b", { metadata: { hibernated: "true" } });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake, asleep]) });
+    await openBeta(module, { hibernated: true });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(awake));
+    const projects = (): readonly UiProjectRow[] => lastSnapshot(deps).sidebar.projects;
 
     await key(module, "t");
     await flush();
-    expect(lastSnapshot(deps).sidebar.hideHibernated).toBe(true);
-    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces.map((w) => w.name)).toEqual(["a"]);
+    expect(projects()[0]!.hideHibernated).toBe(true);
+    expect(projects()[0]!.workspaces.map((w) => w.name)).toEqual(["a"]);
+    expect(projects()[1]!.hideHibernated).toBe(false);
 
     await key(module, "t");
     await flush();
-    expect(lastSnapshot(deps).sidebar.hideHibernated).toBe(false);
-    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces.map((w) => w.name)).toEqual([
-      "a",
-      "b",
-    ]);
+    expect(projects()[0]!.hideHibernated).toBe(false);
+    expect(projects()[0]!.workspaces.map((w) => w.name)).toEqual(["a", "b"]);
+  });
+
+  it("t is a no-op without an active workspace", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, {
+      project: makeProject([makeWorkspace("b", { metadata: { hibernated: "true" } })]),
+    });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, null);
+
+    await key(module, "t");
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.hideHibernated).toBe(false);
   });
 
   it("up/down navigation skips a hidden hibernated row when hide is on", async () => {

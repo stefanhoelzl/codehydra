@@ -90,6 +90,14 @@
   const totalWorkspaces = $derived(allRows.length);
   const idleWorkspaceCount = $derived(allRows.filter((row) => row.agent.type === "idle").length);
   const activeRow = $derived(allRows.find((row) => row.active) ?? null);
+  // Whether the active workspace's project hides its hibernated workspaces
+  // (drives the Alt+X+T hint); null without an active workspace. An active
+  // workspace with no row is a hibernated one its project is hiding.
+  const activeProjectHidesHibernated = $derived.by((): boolean | null => {
+    const project = projectRows.find((p) => p.workspaces.some((row) => row.active));
+    if (project) return project.hideHibernated;
+    return main?.kind === "hibernated" ? true : null;
+  });
 
   // Frames with accessible titles: the snapshot's frames region carries only
   // key → URL; the iframe title (workspace name) is joined from the sidebar
@@ -205,10 +213,11 @@
     ui.sidebar.mode === "docked" ? `--ch-workspace-left: ${sidebarRenderedWidth}px` : undefined
   );
 
-  // Toggle hiding of hibernated workspaces (bottom sidebar toggle / Alt+X+T).
-  // Main flips the persisted `sidebar.hide-hibernated` state and re-pushes.
-  function handleToggleHideHibernated(): void {
-    api.emitEvent({ kind: "toggle-hide-hibernated" });
+  // Toggle hiding of one project's hibernated workspaces (its count button;
+  // Alt+X+T does the same main-side for the active workspace's project). Main
+  // flips the project in the persisted state and re-pushes.
+  function handleToggleHideHibernated(projectId: string): void {
+    api.emitEvent({ kind: "toggle-hide-hibernated", projectId });
   }
 </script>
 
@@ -232,7 +241,6 @@
     onRemoveWorkspace={handleRemoveWorkspace}
     onOpenSettings={handleOpenSettings}
     onOpenHelp={handleOpenHelp}
-    hideHibernated={ui.sidebar.hideHibernated}
     onToggleHideHibernated={handleToggleHideHibernated}
   />
 
@@ -243,7 +251,7 @@
     activeHibernated={main?.kind === "hibernated"}
     activeWorkspaceDeletionInProgress={activeRow !== null && activeRow.status === "deleting"}
     {idleWorkspaceCount}
-    hideHibernated={ui.sidebar.hideHibernated}
+    hideHibernated={activeProjectHidesHibernated}
     sidebarDocked={ui.sidebar.mode === "docked"}
   />
 
