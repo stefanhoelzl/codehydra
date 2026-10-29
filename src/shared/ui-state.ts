@@ -149,13 +149,18 @@ export interface UiProjectRow {
   readonly remote: boolean;
   readonly workspaces: readonly UiWorkspaceRow[];
   /**
-   * How many of this project's workspaces the presenter withheld from
-   * `workspaces` because `UiState.sidebar.hideHibernated` is on; always 0 when
-   * it is off. The renderer cannot derive this — the hidden rows never reach it
-   * — and without it a project whose workspaces are all asleep renders exactly
-   * like one that has none.
+   * How many of this project's workspaces are hibernated, whether or not they
+   * are in `workspaces`. The renderer cannot derive this while they are hidden
+   * — the hidden rows never reach it — and without it a project whose
+   * workspaces are all asleep renders exactly like one that has none.
    */
-  readonly hiddenHibernatedCount: number;
+  readonly hibernatedCount: number;
+  /**
+   * When true, this project's hibernated workspaces are omitted from
+   * `workspaces` (persisted `sidebar.hidden-hibernated-projects` state). Drives
+   * the project's hide/show toggle; the presenter has already filtered the rows.
+   */
+  readonly hideHibernated: boolean;
 }
 
 /**
@@ -183,12 +188,6 @@ export interface UiState {
     readonly projects: readonly UiProjectRow[];
     /** Persisted expanded-sidebar width (px), clamped to the shared minimum. */
     readonly width: number;
-    /**
-     * When true, hibernated workspaces are omitted from `projects[].workspaces`
-     * (persisted `sidebar.hide-hibernated` state). Drives the bottom sidebar
-     * toggle's label/icon; the presenter has already filtered the rows.
-     */
-    readonly hideHibernated: boolean;
     /** How the sidebar shares the window with the workspace (config `sidebar.mode`). */
     readonly mode: SidebarMode;
   };

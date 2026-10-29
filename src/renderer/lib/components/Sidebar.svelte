@@ -64,10 +64,8 @@
     onOpenSettings: () => void;
     /** Open the user guide dialog (question mark in the PROJECTS header). */
     onOpenHelp: () => void;
-    /** Whether hibernated workspaces are currently hidden (from the snapshot). */
-    hideHibernated?: boolean;
-    /** Toggle hiding of hibernated workspaces (eye in the PROJECTS header). */
-    onToggleHideHibernated: () => void;
+    /** Toggle hiding of a project's hibernated workspaces (its count button). */
+    onToggleHideHibernated: (projectId: string) => void;
   }
 
   let {
@@ -88,7 +86,6 @@
     onRemoveWorkspace,
     onOpenSettings,
     onOpenHelp,
-    hideHibernated = false,
     onToggleHideHibernated,
   }: SidebarProps = $props();
 
@@ -367,9 +364,6 @@
       <h2>PROJECTS</h2>
     </div>
     {#if isExpanded}
-      {@const hibernatedLabel = hideHibernated
-        ? "Show hibernated workspaces"
-        : "Hide hibernated workspaces"}
       <div class="header-actions">
         <!-- Dock / undock the sidebar. The icon reflects the current state
              (filled = docked); the tooltip states the action. Mirrors Alt+X+P. -->
@@ -382,19 +376,6 @@
           onclick={() => onSetSidebarMode(docked ? "overlay" : "docked")}
         >
           <Icon name={docked ? "layout-sidebar-left" : "layout-sidebar-left-off"} size={14} />
-        </button>
-        <!-- Hide/show hibernated workspaces. The icon reflects the current
-             state (eye = shown, eye-closed = hidden, like the per-project
-             count); the tooltip states the action. Mirrors Alt+X+T. -->
-        <button
-          type="button"
-          class="ch-icon-button header-action"
-          aria-pressed={hideHibernated}
-          aria-label={hibernatedLabel}
-          title={hibernatedLabel}
-          onclick={() => onToggleHideHibernated()}
-        >
-          <Icon name={hideHibernated ? "eye-closed" : "eye"} size={14} />
         </button>
         <button
           type="button"
@@ -451,19 +432,26 @@
               <Icon name={project.remote ? "source-control" : "folder-opened"} size={14} />
             </span>
             <span class="project-name" title={project.title}>{project.name}</span>
-            <!-- How many of this project's rows the hide-hibernated toggle is
-                 swallowing. Present only while something is actually hidden, so
-                 an empty project stays visibly empty. Indicator only — the
-                 header eye / Alt+X+T is how you get the rows back. -->
-            {#if project.hiddenHibernatedCount > 0}
-              {@const hiddenLabel = `${project.hiddenHibernatedCount} hibernated ${
-                project.hiddenHibernatedCount === 1 ? "workspace" : "workspaces"
-              } hidden`}
-              <span class="hibernated-count" title={hiddenLabel}>
-                <Icon name="eye-closed" size={12} />
-                <span aria-hidden="true">{project.hiddenHibernatedCount}</span>
-                <span class="ch-visually-hidden">{hiddenLabel}</span>
-              </span>
+            <!-- Hide/show this project's hibernated workspaces. Present only
+                 while the project has any, so an empty project stays visibly
+                 empty. The icon reflects the current state (eye = shown,
+                 eye-closed = hidden); the tooltip states the action. Alt+X+T
+                 does the same for the active workspace's project. -->
+            {#if project.hibernatedCount > 0}
+              {@const hibernatedLabel = `${project.hideHibernated ? "Show" : "Hide"} ${
+                project.hibernatedCount
+              } hibernated ${project.hibernatedCount === 1 ? "workspace" : "workspaces"}`}
+              <button
+                type="button"
+                class="hibernated-count"
+                aria-pressed={project.hideHibernated}
+                aria-label={hibernatedLabel}
+                title={hibernatedLabel}
+                onclick={() => onToggleHideHibernated(project.id)}
+              >
+                <Icon name={project.hideHibernated ? "eye-closed" : "eye"} size={12} />
+                <span aria-hidden="true">{project.hibernatedCount}</span>
+              </button>
             {/if}
             <div class="project-actions">
               <button
@@ -805,7 +793,7 @@
     opacity: 1;
   }
 
-  /* Dock, hide-hibernated, gear and help buttons in the (expanded) PROJECTS header. */
+  /* Dock, gear and help buttons in the (expanded) PROJECTS header. */
   .header-actions {
     display: inline-flex;
     align-items: center;
@@ -932,17 +920,30 @@
     white-space: nowrap;
   }
 
-  /* Hidden-row count in the project header. Dimmed and tabular so a column of
-     projects reads as one list rather than competing with the project names. */
+  /* Hibernated count / hide-show toggle in the project header. Dimmed and
+     tabular so a column of projects reads as one list rather than competing
+     with the project names. */
   .hibernated-count {
     display: flex;
     align-items: center;
     gap: 3px;
     flex-shrink: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--ch-radius-sm, 6px);
+    color: var(--ch-foreground);
+    cursor: pointer;
+    font-family: inherit;
     font-size: 11px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
+    padding: 2px 4px;
     opacity: 0.55;
+  }
+
+  .hibernated-count:hover {
+    opacity: 1;
+    background: var(--ch-list-hover-bg);
   }
 
   .project-actions {

@@ -36,7 +36,8 @@ export function makeUiProjectRow(
     id: "test-project-12345678",
     name: "test-project",
     remote: false,
-    hiddenHibernatedCount: 0,
+    hibernatedCount: 0,
+    hideHibernated: false,
     ...overrides,
     title:
       overrides?.title ?? (overrides?.remote ? "https://example.com/repo.git" : "/test/project"),
@@ -50,7 +51,7 @@ export function makeUiState(
   overrides?: Partial<UiState>
 ): UiState {
   return {
-    sidebar: { projects, width: 250, hideHibernated: false, mode: "overlay" },
+    sidebar: { projects, width: 250, mode: "overlay" },
     frames: {},
     main: { kind: "creation" },
     theme: "dark",

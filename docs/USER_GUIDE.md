@@ -115,12 +115,13 @@ The sidebar lists your projects and their workspaces, sorted by name.
 - **Resize** it by dragging its right edge (at least 250 px, at most 75% of the
   window); the width is saved as `sidebar.width`. Docked, the workspace
   follows the drag.
-- The header has, when expanded, the **dock** button, the **eye**, the
-  **gear** (settings) and **?** (this guide). Hover any sidebar icon for what
-  it does.
-- The **eye** (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd>) hides sleeping
-  workspaces; it shows a closed eye while they are hidden, and a project with
-  hidden rows shows how many. The choice is remembered.
+- The header has, when expanded, the **dock** button, the **gear** (settings)
+  and **?** (this guide). Hover any sidebar icon for what it does.
+- A project with sleeping workspaces shows an **eye** with how many there are.
+  Click it (or press <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> for the active
+  workspace's project) to hide that project's sleeping workspaces; it shows a
+  closed eye while they are hidden. Each project remembers its choice, also
+  after it is closed and reopened.
 - Notifications (clone progress, failures, updates) stack at the bottom of the
   sidebar, newest on top; repeats merge into one card with a count. The stack
   takes at most 30% of the sidebar's height and scrolls beyond that.
@@ -351,7 +352,7 @@ holding <kbd>Alt</kbd> while you press:
 | <kbd>Enter</kbd>                         | Open the New workspace form                                         |
 | <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the active workspace                                         |
 | <kbd>H</kbd>                             | Hibernate / wake the active workspace                               |
-| <kbd>T</kbd>                             | Hide / show hibernated workspaces                                   |
+| <kbd>T</kbd>                             | Hide / show the active project's hibernated workspaces              |
 | <kbd>P</kbd>                             | Dock / undock the sidebar                                           |
 | <kbd>S</kbd>                             | Open settings                                                       |
 | <kbd>B</kbd>                             | Report a bug (also works while a dialog is open)                    |
@@ -455,7 +456,7 @@ yourself — settings and your [plugins](#plugins) — the same place on every
 platform, so it can live in your dotfiles.
 
 What the app writes lives in the data directory: `state.json` (what the app
-itself remembers: which plugins are enabled (`plugins.state`), the hide-hibernated toggle, tracked
+itself remembers: which plugins are enabled (`plugins.state`), which projects hide hibernated workspaces, tracked
 automations, a dismissed update, the workspaces folder in use) and
 the `logs/` folder (plugin run logs are in `logs/plugins/`, wakeup script run
 logs in `logs/wakeup/`):
