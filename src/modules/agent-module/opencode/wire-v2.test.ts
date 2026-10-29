@@ -1,5 +1,6 @@
 /**
- * Unit tests for the 2.x wire's event normalization (normalizeV2Event).
+ * Unit tests for the 2.x wire's event normalization (normalizeV2Event), and
+ * for how long it waits for the MCP server's tools (awaitMcpServer).
  *
  * Pins how the /api/event surface maps onto the normalized wire events — most
  * importantly that busy/idle is derived from the execution lifecycle, since
@@ -8,9 +9,10 @@
  * client-v2.boundary.test.ts.
  */
 
-import { describe, it, expect } from "vitest";
-import { normalizeV2Event } from "./wire-v2";
-import type { V2Event } from "@opencode/client";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { awaitMcpServer, normalizeV2Event } from "./wire-v2";
+import type { McpServer, V2Event } from "@opencode/client";
+import { createMockLogger } from "../../../boundaries/platform/logging.test-utils";
 
 function v2Event(type: string, data: unknown): V2Event {
   return { type, data } as unknown as V2Event;
@@ -143,5 +145,52 @@ describe("normalizeV2Event", () => {
     expect(
       normalizeV2Event(v2Event("session.usage.updated", { sessionID: "ses-1" }))
     ).toBeUndefined();
+  });
+});
+
+describe("awaitMcpServer", () => {
+  function mcpStatus(status: McpServer["status"]): { data: McpServer[] } {
+    return { data: [{ name: "codehydra", status }] };
+  }
+
+  /** How long the wait took on the fake clock, given what each `mcp.list` answers. */
+  async function msWaited(...answers: { data: McpServer[] }[]): Promise<number> {
+    const last = answers.at(-1);
+    const listServers = vi.fn(() => Promise.resolve(answers.shift() ?? last ?? { data: [] }));
+    const start = Date.now();
+    const done = awaitMcpServer(listServers, "codehydra", createMockLogger());
+    await vi.runAllTimersAsync();
+    await done;
+    return Date.now() - start;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("gives a server that just connected time for its tools to reach new turns", async () => {
+    // `connected` precedes the tool registry's reload (a 100 ms debounce in
+    // 2.2.1): a session created at once ran its first turn without the tools.
+    // One 250 ms poll, then the settle time.
+    expect(
+      await msWaited(mcpStatus({ status: "pending" }), mcpStatus({ status: "connected" }))
+    ).toBe(750);
+  });
+
+  it("returns at once when the server was already connected", async () => {
+    expect(await msWaited(mcpStatus({ status: "connected" }))).toBe(0);
+  });
+
+  it("adds no settle time for a server that failed", async () => {
+    expect(
+      await msWaited(
+        mcpStatus({ status: "pending" }),
+        mcpStatus({ status: "failed", error: "boom" })
+      )
+    ).toBe(250);
   });
 });
