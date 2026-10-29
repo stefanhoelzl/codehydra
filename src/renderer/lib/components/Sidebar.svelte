@@ -12,6 +12,7 @@
   import ScrollingLabel from "./ScrollingLabel.svelte";
   import Icon from "./Icon.svelte";
   import NotificationStack from "./NotificationStack.svelte";
+  import WorkspaceTags from "./WorkspaceTags.svelte";
   import {
     getWorkspaceGlobalIndex,
     formatIndexDisplay,
@@ -64,6 +65,8 @@
     onOpenSettings: () => void;
     /** Open the user guide dialog (question mark in the PROJECTS header). */
     onOpenHelp: () => void;
+    /** Open the workspace search dialog (magnifier in the PROJECTS header). */
+    onOpenWorkspaceSearch: () => void;
     /** Toggle hiding of a project's hibernated workspaces (its count button). */
     onToggleHideHibernated: (projectId: string) => void;
   }
@@ -86,6 +89,7 @@
     onRemoveWorkspace,
     onOpenSettings,
     onOpenHelp,
+    onOpenWorkspaceSearch,
     onToggleHideHibernated,
   }: SidebarProps = $props();
 
@@ -365,6 +369,16 @@
     </div>
     {#if isExpanded}
       <div class="header-actions">
+        <!-- Find a workspace. Mirrors Alt+X+F. -->
+        <button
+          type="button"
+          class="ch-icon-button header-action"
+          aria-label="Find workspace"
+          title="Find workspace"
+          onclick={() => onOpenWorkspaceSearch()}
+        >
+          <Icon name="search" size={14} />
+        </button>
         <!-- Dock / undock the sidebar. The icon reflects the current state
              (filled = docked); the tooltip states the action. Mirrors Alt+X+P. -->
         <button
@@ -530,16 +544,7 @@
                               <span class="ws-branch">{workspace.name}</span>
                             </ScrollingLabel>
                           {/if}
-                          {#each workspace.tags as tag (tag.name)}
-                            {@const shown = tag.label ?? tag.name}
-                            {@const tip = tag.description ?? tag.name}
-                            <span
-                              class="ws-tag"
-                              class:colored={tag.color !== undefined}
-                              style:--tag-color={tag.color ?? null}
-                              title={tip === shown ? undefined : tip}>{shown}</span
-                            >
-                          {/each}
+                          <WorkspaceTags tags={workspace.tags} />
                         </span>
                       {/if}
                     </button>
@@ -1056,27 +1061,6 @@
   .ws-branch {
     color: var(--ch-foreground);
     opacity: 0.6;
-  }
-
-  /* Inline tag on the row's second line (branch + tags scroll together).
-     Bare by default so a label that is just an emoji wears no chrome; the branch
-     beside it is dimmed to 0.6, and that contrast is what separates them. */
-  .ws-tag {
-    display: inline-block;
-    font-size: 10px;
-    line-height: 1;
-    color: var(--ch-foreground);
-    white-space: nowrap;
-    font-weight: 500;
-  }
-
-  /* A color is what makes a tag a pill. */
-  .ws-tag.colored {
-    --_color: var(--tag-color, var(--ch-foreground));
-    padding: 2px 6px;
-    border-radius: 8px;
-    border: 1px solid var(--_color);
-    background: color-mix(in srgb, var(--_color) 50%, transparent);
   }
 
   /* As tall as the first line's box (.workspace-btn's 4px padding around the

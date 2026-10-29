@@ -183,6 +183,12 @@ export interface PresentationModuleDeps {
    * question mark). Wired in the composition root to the help module.
    */
   readonly onOpenHelp?: () => void;
+  /**
+   * Called when the renderer emits the `open-workspace-search` ui event (the
+   * sidebar magnifier). Wired in the composition root to the
+   * workspace-search module.
+   */
+  readonly onOpenWorkspaceSearch?: () => void;
 }
 
 /** Allowed values for the `sidebar.label-scroll` config key. */
@@ -227,6 +233,23 @@ export interface UiPresenter extends IntentModule {
   trackRunningHook(hook: RunningHook): () => void;
   /** Cancel every running plugin hook of a workspace (the deletion panel's Cancel). */
   cancelRunningHooks(workspaceRef: WorkspaceRef): void;
+  /**
+   * Every workspace row in sidebar order, each with its project's name —
+   * hibernated rows included even while their project hides them.
+   * The workspace search lists these.
+   */
+  workspaceRows(): readonly ProjectWorkspaceRow[];
+  /**
+   * Subscribe to snapshot pushes: the listener runs after every push, i.e.
+   * whenever anything the UI shows has changed. Returns the unsubscribe.
+   */
+  onPush(listener: () => void): () => void;
+}
+
+/** A workspace row with the name of the project it belongs to. */
+export interface ProjectWorkspaceRow {
+  readonly projectName: string;
+  readonly row: UiWorkspaceRow;
 }
 
 /**
@@ -949,6 +972,16 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     // at silly — the projection stays greppable either way).
     logger.debug("ui:state push", { state: projectForLog(snapshot) });
     logger.silly("ui:state push", { snapshot: JSON.stringify(snapshot) });
+    for (const listener of pushListeners) listener();
+  }
+
+  /** Listeners run after every push; see UiPresenter.onPush. */
+  const pushListeners = new Set<() => void>();
+
+  function workspaceRows(): ProjectWorkspaceRow[] {
+    return sortedProjects().flatMap(([project, workspaces]) =>
+      workspaces.map((workspace) => ({ projectName: project.name, row: buildRow(workspace) }))
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1116,6 +1149,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         return;
       case "open-help":
         deps.onOpenHelp?.();
+        return;
+      case "open-workspace-search":
+        deps.onOpenWorkspaceSearch?.();
         return;
       case "toggle-hide-hibernated": {
         const project = model.projectById(event.projectId);
@@ -1576,6 +1612,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     reloadFrame,
     trackRunningHook: (hook) => runningHooks.track(hook),
     cancelRunningHooks: (workspaceRef) => runningHooks.cancelFor(workspaceRef),
+    workspaceRows,
+    onPush: (listener) => {
+      pushListeners.add(listener);
+      return () => {
+        pushListeners.delete(listener);
+      };
+    },
     events,
     interceptors: [suppressBackgroundFocus, startup.interceptor],
     hooks: defineHooks({

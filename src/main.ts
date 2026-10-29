@@ -187,6 +187,7 @@ import { createDebugModule } from "./modules/debug-module";
 import { createPresentationModule } from "./modules/presentation/presentation-module";
 import { createSettingsModule } from "./modules/settings-module";
 import { createHelpModule } from "./modules/help-module";
+import { createWorkspaceSearchModule } from "./modules/workspace-search-module";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createErrorNotificationModule } from "./modules/error-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
@@ -523,6 +524,7 @@ const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}
 // so the presenter closes over mutable refs.
 let openSettings: () => void = () => {};
 let openHelp: () => void = () => {};
+let openWorkspaceSearch: () => void = () => {};
 const presentationModule = createPresentationModule({
   loggingService,
   viewManager,
@@ -535,6 +537,7 @@ const presentationModule = createPresentationModule({
   stateService,
   onOpenSettings: () => openSettings(),
   onOpenHelp: () => openHelp(),
+  onOpenWorkspaceSearch: () => openWorkspaceSearch(),
 });
 const settingsModule = createSettingsModule({
   ui: presentationModule,
@@ -553,6 +556,12 @@ const helpModule = createHelpModule({
   logger: loggingService.createLogger("help"),
 });
 openHelp = helpModule.openHelp;
+const workspaceSearchModule = createWorkspaceSearchModule({
+  ui: presentationModule,
+  dispatcher,
+  logger: loggingService.createLogger("ui"),
+});
+openWorkspaceSearch = workspaceSearchModule.openSearch;
 const cloneNotificationModule = createCloneNotificationModule({ dispatcher });
 const errorNotificationModule = createErrorNotificationModule({ dispatcher });
 
@@ -1104,6 +1113,7 @@ dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(debugModule);
 dispatcher.registerModule(errorReportModule);
 dispatcher.registerModule(settingsModule.module);
+dispatcher.registerModule(workspaceSearchModule.module);
 dispatcher.registerModule(autoTaggingModule);
 dispatcher.registerModule(lockModule);
 dispatcher.registerModule(cloneNotificationModule);

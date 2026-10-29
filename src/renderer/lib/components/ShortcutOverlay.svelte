@@ -70,6 +70,9 @@
   >
     <vscode-badge>1-0</vscode-badge> Jump
   </span>
+  <span class="shortcut-hint" aria-label="F key to find a workspace">
+    <vscode-badge>F</vscode-badge> Find
+  </span>
   <span
     class="shortcut-hint"
     class:shortcut-hint--hidden={!showDelete}

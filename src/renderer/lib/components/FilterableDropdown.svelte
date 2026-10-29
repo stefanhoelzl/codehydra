@@ -1,4 +1,7 @@
 <script lang="ts">
+  import type { DropdownWorkspaceRow } from "@shared/dialog-types";
+  import WorkspaceOptionRow from "./WorkspaceOptionRow.svelte";
+
   /**
    * A dropdown option that can be selected.
    */
@@ -6,6 +9,10 @@
     type: "option" | "header";
     label: string;
     value: string;
+    /** Extra text the filter matches but never shows. */
+    keywords?: string;
+    /** Render the option as a sidebar workspace row instead of its label. */
+    row?: DropdownWorkspaceRow;
   }
 
   interface FilterableDropdownProps {
@@ -40,6 +47,12 @@
      * typing does nothing. Defaults to true (type-to-filter combobox).
      */
     searchable?: boolean;
+    /**
+     * A search list: the options are always shown, in the flow below the
+     * input rather than as a popup; the input only filters and never shows the
+     * chosen label; Escape is left to the parent. Not for free-text use.
+     */
+    inline?: boolean;
   }
 
   let {
@@ -57,6 +70,7 @@
     invalid = false,
     describedBy = undefined,
     searchable = true,
+    inline = false,
   }: FilterableDropdownProps = $props();
 
   // Internal state
@@ -75,8 +89,11 @@
   // displayText: shown in input field (selected value or user's typed text)
   // filterText: used for filtering options (only user's typed text, empty shows all)
   let localFilterOverride = $state<string | null>(null);
-  const displayText = $derived(localFilterOverride ?? value);
+  // An inline search list's input is only its filter: it never shows the value.
+  const displayText = $derived(localFilterOverride ?? (inline ? "" : value));
   const filterText = $derived(localFilterOverride ?? "");
+  // An inline list is always shown; a popup only while open.
+  const listShown = $derived(inline || isOpen);
 
   // Track previous value to detect external changes (e.g., parent clears selection)
   // This allows us to reset localFilterOverride only when value actually changes,
@@ -111,13 +128,20 @@
   // Derived: selectable options only (excludes headers)
   const selectableOptions = $derived(options.filter((opt) => opt.type === "option"));
 
-  // Derived: filtered options. The case-insensitive substring filter on the
-  // label only applies to "option" entries; a header is kept iff its group
-  // (the options that follow it, up to the next header) has at least one match.
+  // Derived: filtered options. The filter applies only to "option" entries:
+  // the text is split on whitespace and every word must be a case-insensitive
+  // substring of the label or the keywords. A header is kept iff its group (the
+  // options that follow it, up to the next header) has at least one match.
   const filteredOptions = $derived.by(() => {
-    if (filterText === "") return options;
-    const lower = filterText.toLowerCase();
-    const matches = (opt: DropdownOption): boolean => opt.label.toLowerCase().includes(lower);
+    const words = filterText
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w !== "");
+    if (words.length === 0) return options;
+    const matches = (opt: DropdownOption): boolean => {
+      const haystack = `${opt.label}\n${opt.keywords ?? ""}`.toLowerCase();
+      return words.every((word) => haystack.includes(word));
+    };
     const result: DropdownOption[] = [];
     let pendingHeader: DropdownOption | null = null;
     for (const opt of options) {
@@ -215,6 +239,9 @@
   }
 
   function handleBlur(event: FocusEvent): void {
+    // An inline list stays as it is: it is not a popup, and leaving the field
+    // (Tab to a button) must not drop what the user filtered.
+    if (inline) return;
     const relatedTarget = event.relatedTarget as HTMLElement | null;
     // Only keep open if focus stays within THIS dropdown (e.g., clicking an option)
     // Use inputRef's parent to identify this specific dropdown instance
@@ -243,7 +270,9 @@
   function handleInput(event: Event): void {
     const target = event.target as HTMLInputElement;
     localFilterOverride = target.value;
-    highlightedIndex = -1;
+    // Strict mode highlights the first match as soon as there is text, so Enter
+    // picks it. Free text does not: there Enter commits what was typed.
+    highlightedIndex = !allowFreeText && target.value.trim() !== "" ? 0 : -1;
     isTyping = true;
     onInputCallback?.(target.value);
   }
@@ -307,7 +336,9 @@
         break;
 
       case "Escape":
-        if (isOpen) {
+        // An inline list never closes: Escape belongs to the parent (the
+        // form's cancel).
+        if (isOpen && !inline) {
           event.preventDefault();
           event.stopPropagation();
           isOpen = false;
@@ -317,6 +348,8 @@
         break;
 
       case "Tab":
+        // In an inline list, Tab only moves focus: a pick there acts at once.
+        if (inline) break;
         if (highlightedIndex >= 0 && highlightedIndex < selectableCount) {
           // User navigated with arrow keys - select highlighted option
           const highlightedOption = filteredSelectableOptions[highlightedIndex];
@@ -338,7 +371,9 @@
   }
 
   function selectOption(optionValue: string): void {
-    localFilterOverride = options.find((o) => o.value === optionValue)?.label ?? optionValue;
+    if (!inline) {
+      localFilterOverride = options.find((o) => o.value === optionValue)?.label ?? optionValue;
+    }
     isOpen = false;
     highlightedIndex = -1;
     isTyping = false;
@@ -380,7 +415,7 @@
     data-autofocus={autofocus || undefined}
     type="text"
     role="combobox"
-    aria-expanded={isOpen}
+    aria-expanded={listShown}
     aria-controls={listboxId}
     aria-activedescendant={highlightedId}
     aria-autocomplete="list"
@@ -400,12 +435,15 @@
     onkeydown={handleKeyDown}
   />
 
-  {#if isOpen && dropdownPosition !== null && (filteredSelectableOptions.length > 0 || !allowFreeText)}
+  {#if listShown && (inline || dropdownPosition !== null) && (filteredSelectableOptions.length > 0 || !allowFreeText)}
     <ul
       id={listboxId}
       class="dropdown-listbox"
+      class:inline
       role="listbox"
-      style="top: {dropdownPosition.top}px; left: {dropdownPosition.left}px; width: {dropdownPosition.width}px;"
+      style={!inline && dropdownPosition !== null
+        ? `top: ${dropdownPosition.top}px; left: ${dropdownPosition.left}px; width: ${dropdownPosition.width}px;`
+        : undefined}
     >
       {#if filteredSelectableOptions.length === 0}
         <li class="no-results">No matches found</li>
@@ -422,11 +460,16 @@
               id={`${baseId}-option-${option.value.replace(/[^a-zA-Z0-9-]/g, "-")}`}
               role="option"
               class="dropdown-option"
+              class:workspace-option={option.row !== undefined}
               class:highlighted={isHighlighted}
               aria-selected={isHighlighted}
               onmousedown={(e: MouseEvent) => handleOptionMouseDown(e, option.value)}
             >
-              {option.label}
+              {#if option.row !== undefined}
+                <WorkspaceOptionRow row={option.row} />
+              {:else}
+                {option.label}
+              {/if}
             </li>
           {/if}
         {/each}
@@ -485,6 +528,17 @@
     margin: 0;
     z-index: 100;
     box-sizing: border-box;
+  }
+
+  /* A search list sits in the dialog's flow under its input, taller than the
+     popup: it is the dialog's main content. */
+  .dropdown-listbox.inline {
+    position: static;
+    max-height: min(60vh, 480px);
+  }
+
+  .dropdown-option.workspace-option {
+    padding: 4px 8px 4px 12px;
   }
 
   .group-header {

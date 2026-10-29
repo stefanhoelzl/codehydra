@@ -304,9 +304,12 @@ Remember to recalculate position on window resize when the dropdown is open.
 **Features:**
 
 - Native `<input type="text">` for filtering (documented exception - `<vscode-textfield>` doesn't support combobox pattern)
-- Built-in filtering: case-insensitive substring on the label; headers are shown only while their group has a match
+- Built-in filtering: the text is split on whitespace and every word must be a case-insensitive substring of the label or the option's hidden `keywords`; headers are shown only while their group has a match
+- Strict mode (no `allowFreeText`) highlights the first match as soon as there is text, so Enter picks it; free-text mode does not, so Enter keeps the typed text
 - Keyboard navigation (↑↓ navigate, Enter selects the highlighted option — with no highlight it commits typed text/exact match and calls `onEnter`, Escape close, Tab select + move focus)
 - Fixed positioning to escape container overflow
+- `inline`: a search list — always shown in the flow below the input, the input only filters (never shows the value), Escape and Tab are left to the parent
+- An option with a `row` renders as a sidebar workspace row (`WorkspaceOptionRow`, sharing `WorkspaceTags` with the sidebar)
 - ARIA combobox accessibility pattern
 - Invalid state (`invalid` + `describedBy`) for validation errors
 - Renders the declarative Form's `dropdown` (combobox) sections (see `src/shared/dialog-types.ts`)

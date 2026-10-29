@@ -43,7 +43,13 @@
         result.push({ type: "header", label: group.header, value: `__header_${groupIndex}__` });
       }
       for (const item of group.items) {
-        result.push({ type: "option", label: item.label, value: item.value });
+        result.push({
+          type: "option",
+          label: item.label,
+          value: item.value,
+          ...(item.keywords !== undefined && { keywords: item.keywords }),
+          ...(item.row !== undefined && { row: item.row }),
+        });
       }
     });
     return result;
@@ -64,6 +70,7 @@
       placeholder={section.placeholder ?? ""}
       allowFreeText={section.freeText ?? false}
       searchable={section.searchable ?? true}
+      inline={section.inline ?? false}
       disabled={section.disabled ?? false}
       autofocus={section.autofocus ?? false}
       selectOnFirstFocus={section.selectInitialValue ?? false}
