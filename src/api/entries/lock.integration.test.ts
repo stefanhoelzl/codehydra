@@ -89,6 +89,22 @@ describe("lock entries", () => {
       expect(locks.list()[0]).toMatchObject({ holder: IOS, project: null, reason: "smoke" });
     });
 
+    it("tells a re-take since when and why its workspace already holds it", async () => {
+      const { call } = setup();
+      await call("lock.take", IOS, { name: "device", reason: "smoke" });
+
+      // A sibling sub-agent naming the same workspace: reentrant, and it is told
+      // someone in its workspace has the resource.
+      await expect(call("lock.take", IOS, { name: "device", reason: "other" })).resolves.toEqual({
+        name: "device",
+        scope: "global",
+        acquired: false,
+        waitedSeconds: 0,
+        held: "0s",
+        reason: "smoke",
+      });
+    });
+
     it("needs a workspace to hold it", async () => {
       const { call } = setup();
 
