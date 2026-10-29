@@ -1442,8 +1442,8 @@ opened on purpose with `xdg-open`, `open` or `ch ws open`.
 
 You don't have to explain CodeHydra to your agent. Every session gets a short
 system prompt: what busy and idle mean (so it ends its turn only when it needs
-you) and how to keep a background sub-agent from holding it busy (`[bg]`, see
-[Background processes](#background-processes-ch-bg)), that the worktree's
+you) and when a background sub-agent may stop holding it busy (`[bg]`: only
+one it isn't waiting on, see [Background processes](#background-processes-ch-bg)), that the worktree's
 lifecycle belongs to CodeHydra, that an `index.lock`
 that survives a retry while no git process is running is stale and can be
 deleted (otherwise it gives you the lock's path), that creating another
