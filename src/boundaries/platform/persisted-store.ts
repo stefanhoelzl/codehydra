@@ -390,8 +390,14 @@ export class PersistedStore {
 
     mutator(fileContent);
 
+    // Written beside the file and renamed over it, never in place: a reader in
+    // another process (`ch`, which finds the API in state.json) then sees the
+    // old file or the new one, never a truncated one — nor does the next start
+    // after a crash mid-write.
+    const tempPath = new Path(filePath.dirname, `${filePath.basename}.tmp`);
     await fileSystem.mkdir(filePath.dirname);
-    await fileSystem.writeFile(filePath, JSON.stringify(fileContent, null, 2));
+    await fileSystem.writeFile(tempPath, JSON.stringify(fileContent, null, 2));
+    await fileSystem.rename(tempPath, filePath);
     logger.scoped({ path: filePath.toString() }).debug("Store persisted");
   }
 
