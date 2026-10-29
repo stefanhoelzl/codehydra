@@ -20,6 +20,7 @@
 
 import {
   OpenCode as OpenCodeClientFactory,
+  type McpServer,
   type SessionInfo,
   type V2Event,
 } from "@opencode/client";
@@ -106,6 +107,53 @@ export function normalizeV2Event(event: V2Event): WireEvent | undefined {
 /** How long a prompt waits for its MCP server to leave `pending`; it then goes without. */
 const MCP_READY_TIMEOUT_MS = 15_000;
 const MCP_READY_POLL_MS = 250;
+/** How long a server that just connected gets for its tools to reach new turns. */
+const MCP_TOOLS_SETTLE_MS = 500;
+
+/**
+ * Wait until an MCP server has left `pending` — connected, or failed, either
+ * way settled. 2.x connects MCP servers asynchronously after it starts, and a
+ * turn begun before then has none of that server's tools (they arrive
+ * mid-conversation as a system update). Capped: a server that never settles
+ * must not hold the prompt back for good.
+ *
+ * `connected` is not yet "turns have its tools": the tool registry reloads
+ * on a 100 ms debounce after it (2.2.1, `packages/core/src/tool/mcp.ts`),
+ * and nothing announces the reload. A server seen unsettled therefore gets
+ * {@link MCP_TOOLS_SETTLE_MS} more; one settled at the first look connected
+ * long enough ago.
+ */
+export async function awaitMcpServer(
+  listServers: () => Promise<{ readonly data: readonly McpServer[] }>,
+  name: string,
+  logger: Logger
+): Promise<void> {
+  const deadline = Date.now() + MCP_READY_TIMEOUT_MS;
+  let sawUnsettled = false;
+  while (Date.now() < deadline) {
+    try {
+      const servers = await listServers();
+      const server = servers.data.find((entry) => entry.name === name);
+      // Absent: not loaded yet, which is as unsettled as pending.
+      if (server !== undefined && server.status.status !== "pending") {
+        logger.debug("MCP server settled", {
+          server: name,
+          status: server.status.status,
+          ...("error" in server.status && { error: server.status.error }),
+        });
+        if (sawUnsettled && server.status.status === "connected") {
+          await new Promise((resolve) => setTimeout(resolve, MCP_TOOLS_SETTLE_MS));
+        }
+        return;
+      }
+    } catch {
+      // Not answering yet; the prompt itself reports a server that never does.
+    }
+    sawUnsettled = true;
+    await new Promise((resolve) => setTimeout(resolve, MCP_READY_POLL_MS));
+  }
+  logger.warn("MCP server still pending; prompting without its tools", { server: name });
+}
 
 /** The 2.x server API, normalized to the {@link WireClient} seam. */
 export class OpenCodeWireV2 implements WireClient {
@@ -154,7 +202,8 @@ export class OpenCodeWireV2 implements WireClient {
       // A session created before the MCP server connects starts its first
       // turn without that server's tools even when the prompt waits for
       // `connected` (measured on 2.1.4: none at 0 ms after it, all from
-      // ~100 ms); one created after it has them at once. So create after.
+      // ~100 ms); one created once its tools reached the registry has them at
+      // once. So create after.
       await this.awaitMcpServer();
       const info = await this.client.session.create({ location: { directory: this.directory } });
       const session = this.mapSession(info);
@@ -286,37 +335,13 @@ export class OpenCodeWireV2 implements WireClient {
     }
   }
 
-  /**
-   * Wait until the configured MCP server has left `pending` — connected, or
-   * failed, either way settled. 2.x connects MCP servers asynchronously after
-   * it starts, and a turn begun before then has none of that server's tools
-   * (they arrive mid-conversation as a system update). Capped: a server that
-   * never settles must not hold the prompt back for good.
-   */
   private async awaitMcpServer(): Promise<void> {
     if (this.mcpServer === undefined) return;
-    const deadline = Date.now() + MCP_READY_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      try {
-        const servers = await this.client.mcp.list({ location: { directory: this.directory } });
-        const server = servers.data.find((entry) => entry.name === this.mcpServer);
-        // Absent: not loaded yet, which is as unsettled as pending.
-        if (server !== undefined && server.status.status !== "pending") {
-          this.logger.debug("MCP server settled", {
-            server: this.mcpServer,
-            status: server.status.status,
-            ...("error" in server.status && { error: server.status.error }),
-          });
-          return;
-        }
-      } catch {
-        // Not answering yet; the prompt itself reports a server that never does.
-      }
-      await new Promise((resolve) => setTimeout(resolve, MCP_READY_POLL_MS));
-    }
-    this.logger.warn("MCP server still pending; prompting without its tools", {
-      server: this.mcpServer,
-    });
+    await awaitMcpServer(
+      () => this.client.mcp.list({ location: { directory: this.directory } }),
+      this.mcpServer,
+      this.logger
+    );
   }
 
   /** Normalize one server event and hand it to the listeners. */
