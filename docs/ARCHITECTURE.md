@@ -469,11 +469,11 @@ Each workspace's metadata (flat string key → value) lives in one JSON file in 
 
 **Tiers** (`src/utils/metadata-tier.ts`) decide what the outside — API/MCP/`ch`, the sidekick extension, plugin actions, automation items — may do with a key; CodeHydra's own modules read and write every key:
 
-| Tier        | Keys                                         | Outside                                   |
-| ----------- | -------------------------------------------- | ----------------------------------------- |
-| `internal`  | `agent.pending-prompt`                       | hidden (`metadata.get` omits it), refused |
-| `protected` | `base`, `agent`, `hibernated`, `source`      | read-only                                 |
-| `public`    | `title`, `tags.*` (incl. `external`), others | read/write                                |
+| Tier        | Keys                                                     | Outside                                   |
+| ----------- | -------------------------------------------------------- | ----------------------------------------- |
+| `internal`  | `agent.pending-prompt`                                   | hidden (`metadata.get` omits it), refused |
+| `protected` | `base`, `agent`, `hibernated`, `hibernated-at`, `source` | read-only                                 |
+| `public`    | `title`, `tags.*` (incl. `external`), others             | read/write                                |
 
 Enforced where outside calls enter: the `metadata.*` registry entries, the sidekick's `api:workspace:getMetadata`/`setMetadata` handlers and the automation item schema. `workspace:set-metadata` itself is unrestricted.
 

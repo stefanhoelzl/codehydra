@@ -139,6 +139,7 @@ import { createShortcutNavigation } from "./navigation";
 import {
   PresentationModel,
   fromMetadata,
+  readHibernatedAt,
   type ProjectModel,
   type RowEntry,
   type WorkspaceEntry,
@@ -730,6 +731,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       ...(workspace.title !== undefined && { title: workspace.title }),
       status: rowStatus(workspace),
       hibernated: workspace.hibernated,
+      ...(workspace.hibernated &&
+        workspace.hibernatedAt !== undefined && { hibernatedAt: workspace.hibernatedAt }),
       // A dialog waiting on the user reads as idle for as long as it waits: the
       // green row (and the chime the renderer derives from these counts) is the
       // signal the user already answers to, and a question nobody notices is
@@ -786,7 +789,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     const active = model.active();
     if (active === undefined) return { kind: "creation" };
     if (active.workspace.hibernated) {
-      return { kind: "hibernated", screenshot: resolveScreenshot(active) };
+      return {
+        kind: "hibernated",
+        screenshot: resolveScreenshot(active),
+        hibernatedAt: active.workspace.hibernatedAt ?? null,
+      };
     }
     // A still-creating active workspace has no mounted frame yet (its key is
     // absent from `frames`), so the workspace area is blank behind the
@@ -1371,6 +1378,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           name: p.workspaceName,
           title: undefined,
           hibernated: false,
+          hibernatedAt: undefined,
           tags: [],
           url: undefined,
           phase: "creating",
@@ -1478,6 +1486,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           workspace.hibernated = p.value === "true";
           // Flag flips invalidate the cached screenshot (deleted on wake).
           screenshots.delete(p.workspaceRef);
+        } else if (p.key === "hibernated-at") {
+          workspace.hibernatedAt = readHibernatedAt(p.value);
         } else if (p.key === "title") {
           // Empty/cleared title reverts the row to the branch name.
           workspace.title = readTitle(p.value);

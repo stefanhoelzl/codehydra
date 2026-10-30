@@ -7,7 +7,7 @@
  *
  * - `internal`: never shown outside (`metadata.get` omits it).
  * - `protected`: shown, but only CodeHydra's own operations change it —
- *   hibernate/wake flip `hibernated`, creation records `base`, `agent` and `name`,
+ *   hibernate/wake flip `hibernated` and `hibernated-at`, creation records `base`, `agent` and `name`,
  *   `ch ws wakeup` writes `wakeup`.
  * - `public`: read and written freely (`title`, `tags.*`, custom keys).
  *
@@ -22,6 +22,7 @@ const RESTRICTED_KEYS: Readonly<Record<string, Exclude<MetadataTier, "public">>>
   agent: "protected",
   base: "protected",
   hibernated: "protected",
+  "hibernated-at": "protected",
   name: "protected",
   source: "protected",
   wakeup: "protected",

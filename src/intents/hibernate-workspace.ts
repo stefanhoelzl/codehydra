@@ -11,7 +11,9 @@
  * 3. "prepare-capture" → "capture" (in a try) → "cleanup-capture" (finally)
  *    hooks — collapse the sidebar out of the shot, take the best-effort
  *    screenshot, then always restore the sidebar
- * 4. Dispatch workspace:set-metadata to persist `hibernated="true"` (this is
+ * 4. Dispatch workspace:set-metadata to persist `hibernated-at` (when it
+ *    happened: the sidebar/overlay age, `ch ws status`), then
+ *    `hibernated="true"` (this is
  *    what makes the renderer show HibernatedOverlay; switch-workspace's
  *    `c.hibernated` filter also begins excluding the workspace immediately)
  * 5. If active, dispatch workspace:switch so the user is moved to an awake
@@ -65,6 +67,14 @@ export const EVENT_WORKSPACE_HIBERNATE_FAILED = "workspace:hibernate-failed" as 
 
 /** Metadata key indicating a workspace is hibernated. */
 export const HIBERNATED_METADATA_KEY = "hibernated";
+
+/**
+ * Metadata key holding when the workspace was hibernated (ISO-8601 UTC). Set
+ * just before `hibernated` and cleared on wake, so it is present exactly while
+ * the workspace sleeps — except for workspaces hibernated before the key
+ * existed, which have the flag but no time.
+ */
+export const HIBERNATED_AT_METADATA_KEY = "hibernated-at";
 
 // =============================================================================
 // Contract schemas (single source of truth)
@@ -241,7 +251,16 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
       // Persist hibernated flag via existing set-metadata pipeline. This is
       // what makes the renderer swap in HibernatedOverlay via the
       // workspace:metadata-changed → WORKSPACE_METADATA_CHANGED IPC, and
-      // makes switch-workspace's `c.hibernated` filter exclude us.
+      // makes switch-workspace's `c.hibernated` filter exclude us. The time
+      // goes first, so the age is known by the time the flag flips the row.
+      await ctx.dispatch<SetMetadataIntent>({
+        type: INTENT_SET_METADATA,
+        payload: {
+          workspaceRef: payload.workspaceRef,
+          key: HIBERNATED_AT_METADATA_KEY,
+          value: new Date().toISOString(),
+        },
+      });
       await ctx.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
         payload: {

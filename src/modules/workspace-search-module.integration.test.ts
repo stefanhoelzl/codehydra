@@ -107,6 +107,7 @@ describe("WorkspaceSearchModule", () => {
         row: row(APP, "pr-12", {
           title: "PR #12 review",
           hibernated: true,
+          hibernatedAt: "2026-10-27T14:02:11.000Z",
           agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
           tags: [{ name: "review", color: "#4b6de8", label: "Review", description: "needs eyes" }],
         }),
@@ -128,6 +129,7 @@ describe("WorkspaceSearchModule", () => {
       name: "pr-12",
       title: "PR #12 review",
       hibernated: true,
+      hibernatedAt: "2026-10-27T14:02:11.000Z",
       agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
       tags: [{ name: "review", color: "#4b6de8", label: "Review", description: "needs eyes" }],
     });

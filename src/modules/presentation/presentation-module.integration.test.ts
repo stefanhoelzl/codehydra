@@ -1079,7 +1079,7 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     // First push after the flip: screenshot still loading.
     const loading = snapshots(deps).find((s) => s.main.kind === "hibernated");
-    expect(loading?.main).toEqual({ kind: "hibernated", screenshot: null });
+    expect(loading?.main).toEqual({ kind: "hibernated", screenshot: null, hibernatedAt: null });
     expect(loading?.frames).toEqual({});
     expect(loading?.sidebar.projects[0]!.workspaces[0]!.hibernated).toBe(true);
 
@@ -1088,10 +1088,66 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).main).toEqual({
       kind: "hibernated",
       screenshot: `data:image/png;base64,${Buffer.from("PNG").toString("base64")}`,
+      hibernatedAt: null,
     });
     expect(deps.fileSystem.readFileBuffer).toHaveBeenCalledWith(
       new Path(`/data/screenshots/${PROJECT_ID}/feat.png`)
     );
+  });
+
+  it("carries the hibernation time on the row and the hibernated screen while asleep", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const at = "2026-10-27T14:02:11.000Z";
+    const workspace = makeWorkspace("feat", {
+      url: "http://127.0.0.1:1/feat",
+      metadata: { hibernated: "true", "hibernated-at": at },
+    });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.hibernatedAt).toBe(at);
+    expect(lastSnapshot(deps).main).toMatchObject({ kind: "hibernated", hibernatedAt: at });
+
+    // Wake clears the flag, then the time: the row drops it with the flag.
+    const change = (key: string) => ({
+      projectId: PROJECT_ID,
+      workspaceName: workspace.name,
+      workspaceRef: workspace.ref,
+      key,
+      value: null,
+    });
+    await emit(module, EVENT_METADATA_CHANGED, change("hibernated"));
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]).not.toHaveProperty(
+      "hibernatedAt"
+    );
+    await emit(module, EVENT_METADATA_CHANGED, change("hibernated-at"));
+    await flush();
+
+    // Hibernating again records a fresh time before the flag flips.
+    const later = "2026-10-30T09:00:00.000Z";
+    await emit(module, EVENT_METADATA_CHANGED, { ...change("hibernated-at"), value: later });
+    await emit(module, EVENT_METADATA_CHANGED, { ...change("hibernated"), value: "true" });
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.hibernatedAt).toBe(later);
+  });
+
+  it("omits the hibernation time when it is unrecorded or unparsable", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const legacy = makeWorkspace("legacy", { metadata: { hibernated: "true" } });
+    const garbled = makeWorkspace("garbled", {
+      metadata: { hibernated: "true", "hibernated-at": "yesterday-ish" },
+    });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([legacy, garbled]) });
+    await flush();
+
+    for (const row of lastSnapshot(deps).sidebar.projects[0]!.workspaces) {
+      expect(row.hibernated).toBe(true);
+      expect(row).not.toHaveProperty("hibernatedAt");
+    }
   });
 
   it("falls back to a null screenshot when the PNG is missing", async () => {
@@ -1106,7 +1162,11 @@ describe("PresentationModule - ui:state snapshots", () => {
     await flush();
     await flush();
 
-    expect(lastSnapshot(deps).main).toEqual({ kind: "hibernated", screenshot: null });
+    expect(lastSnapshot(deps).main).toEqual({
+      kind: "hibernated",
+      screenshot: null,
+      hibernatedAt: null,
+    });
   });
 
   it("tag metadata changes update the row tags (add, recolor, remove)", async () => {
@@ -3038,6 +3098,7 @@ describe("PresentationModule - push logging", () => {
     expect(loggedProjection(deps).main).toEqual({
       kind: "hibernated",
       screenshot: main.screenshot.length,
+      hibernatedAt: null,
     });
     expect(JSON.stringify(loggedProjection(deps))).not.toContain("data:image");
   });
@@ -3051,8 +3112,16 @@ describe("PresentationModule - push logging", () => {
     await flush();
     await flush();
 
-    expect(lastSnapshot(deps).main).toEqual({ kind: "hibernated", screenshot: null });
-    expect(loggedProjection(deps).main).toEqual({ kind: "hibernated", screenshot: null });
+    expect(lastSnapshot(deps).main).toEqual({
+      kind: "hibernated",
+      screenshot: null,
+      hibernatedAt: null,
+    });
+    expect(loggedProjection(deps).main).toEqual({
+      kind: "hibernated",
+      screenshot: null,
+      hibernatedAt: null,
+    });
   });
 
   it("keeps rows, notifications and flags verbatim", async () => {

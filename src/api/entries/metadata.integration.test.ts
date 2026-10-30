@@ -111,16 +111,21 @@ describe("metadata entries", () => {
     expect(await provider.getMetadata(FEATURE)).toEqual({ name: "feature-x", note: "WIP" });
   });
 
-  it.each(["hibernated", "agent", "base", "name", "source", "agent.pending-prompt"])(
-    "refuses to write %s, a key CodeHydra manages",
-    async (key) => {
-      const { call, provider } = await setup();
+  it.each([
+    "hibernated",
+    "hibernated-at",
+    "agent",
+    "base",
+    "name",
+    "source",
+    "agent.pending-prompt",
+  ])("refuses to write %s, a key CodeHydra manages", async (key) => {
+    const { call, provider } = await setup();
 
-      await expect(call("metadata.set", { key, value: "x" })).rejects.toSatisfy(
-        (error: unknown) => error instanceof ApiError && error.category === "usage"
-      );
-      await expect(call("metadata.set", { key, value: null })).rejects.toThrow(ApiError);
-      expect(await provider.getMetadata(FEATURE)).toEqual({ name: "feature-x" });
-    }
-  );
+    await expect(call("metadata.set", { key, value: "x" })).rejects.toSatisfy(
+      (error: unknown) => error instanceof ApiError && error.category === "usage"
+    );
+    await expect(call("metadata.set", { key, value: null })).rejects.toThrow(ApiError);
+    expect(await provider.getMetadata(FEATURE)).toEqual({ name: "feature-x" });
+  });
 });

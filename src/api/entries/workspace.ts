@@ -18,7 +18,13 @@ import type { DeletionProgress, Workspace } from "../../shared/api/types";
 
 import { INTENT_GET_WORKSPACE_STATUS } from "../../intents/get-workspace-status";
 import type { GetWorkspaceStatusIntent } from "../../intents/get-workspace-status";
-import { INTENT_HIBERNATE_WORKSPACE } from "../../intents/hibernate-workspace";
+import { INTENT_GET_METADATA } from "../../intents/get-metadata";
+import type { GetMetadataIntent } from "../../intents/get-metadata";
+import {
+  HIBERNATED_AT_METADATA_KEY,
+  HIBERNATED_METADATA_KEY,
+  INTENT_HIBERNATE_WORKSPACE,
+} from "../../intents/hibernate-workspace";
 import type { HibernateWorkspaceIntent } from "../../intents/hibernate-workspace";
 import { INTENT_WAKE_WORKSPACE } from "../../intents/wake-workspace";
 import type { WakeWorkspaceIntent } from "../../intents/wake-workspace";
@@ -148,7 +154,11 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
   const status = defineEntry({
     name: "workspace.status",
     kind: "command",
-    description: "Get workspace status, including the dirty flag, agent status and wakeup script.",
+    description:
+      "Get workspace status, including the dirty flag, agent status, hibernation and wakeup script.",
+    instructions:
+      "hibernatedAt is when the workspace was hibernated (ISO-8601 UTC); null while it is " +
+      "awake, and for a workspace hibernated before CodeHydra recorded the time.",
     input: z.object({
       ...targetFields,
       refresh: z
@@ -167,7 +177,17 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
         },
       });
       if (!result) throw new Error("Get workspace status returned no result");
-      return { ...result, wakeup: await deps.wakeups.show(workspaceRef) };
+      const metadata = await dispatcher.dispatch<GetMetadataIntent>({
+        type: INTENT_GET_METADATA,
+        payload: { workspaceRef },
+      });
+      const hibernated = metadata?.[HIBERNATED_METADATA_KEY] === "true";
+      return {
+        ...result,
+        hibernated,
+        hibernatedAt: (hibernated && metadata?.[HIBERNATED_AT_METADATA_KEY]) || null,
+        wakeup: await deps.wakeups.show(workspaceRef),
+      };
     },
   });
 

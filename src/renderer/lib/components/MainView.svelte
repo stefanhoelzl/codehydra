@@ -290,7 +290,11 @@
   {/if}
 
   {#if main?.kind === "hibernated"}
-    <HibernatedOverlay screenshot={main.screenshot} onWake={handleWakeActiveWorkspace} />
+    <HibernatedOverlay
+      screenshot={main.screenshot}
+      hibernatedAt={main.hibernatedAt}
+      onWake={handleWakeActiveWorkspace}
+    />
   {/if}
 </div>
 

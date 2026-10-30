@@ -21,7 +21,14 @@
   } from "$lib/utils/sidebar-utils.js";
   import { createLogger } from "$lib/logging";
   import { arrivalFlash } from "$lib/utils/arrival-flash.js";
+  import { describeHibernation, type HibernationAge } from "$lib/utils/hibernation-age.js";
+  import { minuteNow } from "$lib/utils/minute-clock.svelte.js";
   import { clampSidebarWidthMin } from "@shared/ui-state";
+
+  /** A hibernated row's age labels; reading the clock re-renders them each minute. */
+  function hibernationAge(hibernatedAt: string | undefined): HibernationAge | null {
+    return hibernatedAt === undefined ? null : describeHibernation(hibernatedAt, minuteNow());
+  }
 
   const logger = createLogger("ui");
 
@@ -492,6 +499,11 @@
               {@const status = workspace.status}
               {@const hasTags = workspace.tags.length > 0}
               {@const hibernated = workspace.hibernated}
+              {@const age = hibernated ? hibernationAge(workspace.hibernatedAt) : null}
+              {@const hibernatedTitle =
+                age === null
+                  ? "Hibernated - click to wake"
+                  : `Hibernated ${age.relative} (${age.date}) - click to wake`}
               {@const hasTitle = workspace.title !== undefined}
               {@const primaryLabel = workspace.title ?? workspace.name}
               <!-- Second line: the branch (only when a title took line 1) plus
@@ -536,6 +548,9 @@
                         <ScrollingLabel mode={labelScroll} hovered={rowHovered}>
                           <span class="ws-primary-text">{primaryLabel}</span>
                         </ScrollingLabel>
+                        {#if age !== null}
+                          <span class="hibernation-age" aria-hidden="true">{age.short}</span>
+                        {/if}
                       </span>
                       {#if showSecondLine}
                         <span class="ws-line ws-secondary-line">
@@ -603,7 +618,7 @@
                   <button
                     type="button"
                     class="ch-icon-cell status-cell"
-                    aria-label={`${workspace.name} in ${project.name} - ${status === "creating" ? "Creating" : status === "loading" ? "Loading" : status === "open-failed" ? "Failed to open" : status === "deleting" ? "Deleting" : status === "delete-failed" ? "Deletion failed" : hibernated ? "Hibernated - click to wake" : statusText}`}
+                    aria-label={`${workspace.name} in ${project.name} - ${status === "creating" ? "Creating" : status === "loading" ? "Loading" : status === "open-failed" ? "Failed to open" : status === "deleting" ? "Deleting" : status === "delete-failed" ? "Deletion failed" : hibernated ? hibernatedTitle : statusText}`}
                     aria-current={isActive ? "true" : undefined}
                     onclick={() => {
                       if (hibernated) handleWakeWorkspace(workspace.key);
@@ -634,7 +649,7 @@
                         class="hibernation-indicator"
                         role="img"
                         aria-label="Hibernated"
-                        title="Hibernated - click to wake"
+                        title={hibernatedTitle}
                       >
                         <span class="icon-pause"><Icon name="debug-pause" size={14} /></span>
                         <span class="icon-play"><Icon name="debug-start" size={14} /></span>
@@ -1198,5 +1213,19 @@
   .workspace-item.hibernated .workspace-btn {
     opacity: 0.55;
     font-style: italic;
+  }
+
+  /* How long it has slept: dim, after the label (already dimmed with the row).
+     Gives way to the hover actions, which take the same spot. */
+  .hibernation-age {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .workspace-item:hover .hibernation-age,
+  .workspace-item:focus-within .hibernation-age {
+    display: none;
   }
 </style>

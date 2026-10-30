@@ -22,6 +22,7 @@ import {
   EVENT_WORKSPACE_HIBERNATED,
   EVENT_WORKSPACE_HIBERNATE_FAILED,
   HIBERNATED_METADATA_KEY,
+  HIBERNATED_AT_METADATA_KEY,
   type HibernateWorkspaceIntent,
   type PrepareCaptureHookResult,
   type CaptureHookResult,
@@ -65,6 +66,19 @@ const WORKSPACE_NAME = "feature-a" as WorkspaceName;
 const WORKSPACE_REF = workspaceRefIn(PROJECT_PATH, WORKSPACE_NAME);
 const BRANCH = "feature-a-branch";
 const CLEAN_METADATA: Readonly<Record<string, string>> = { base: "main" };
+/** Hibernate records when (an ISO time), then flips the flag. */
+const HIBERNATE_WRITES = [
+  {
+    key: HIBERNATED_AT_METADATA_KEY,
+    value: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+  },
+  { key: HIBERNATED_METADATA_KEY, value: "true" },
+];
+/** Wake clears the flag, then the time. */
+const WAKE_WRITES = [
+  { key: HIBERNATED_METADATA_KEY, value: null },
+  { key: HIBERNATED_AT_METADATA_KEY, value: null },
+];
 const REOPENED_WORKSPACE: Workspace = {
   ref: WORKSPACE_REF,
   projectId: PROJECT_ID,
@@ -124,7 +138,10 @@ function createMetadataModule(recorder: Recorder): IntentModule {
               key: intent.payload.key,
               value: intent.payload.value,
             });
-            recorder.callOrder.push(`set-metadata:${intent.payload.value ?? "null"}`);
+            // Ordering is asserted on the flag; metadataWrites holds every key.
+            if (intent.payload.key === HIBERNATED_METADATA_KEY) {
+              recorder.callOrder.push(`set-metadata:${intent.payload.value ?? "null"}`);
+            }
           },
         },
       },
@@ -347,7 +364,7 @@ describe("workspace:hibernate", () => {
     expect(recorder.switchCalled).toBe(false);
     // Foreground: capture → set-metadata. Background: shutdown → release.
     expect(recorder.callOrder).toEqual(["capture", "set-metadata:true", "shutdown", "release"]);
-    expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
+    expect(recorder.metadataWrites).toEqual(HIBERNATE_WRITES);
 
     const hibernated = recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED);
     expect(hibernated).toBeDefined();
@@ -355,10 +372,18 @@ describe("workspace:hibernate", () => {
       WORKSPACE_REF
     );
 
-    const metadataChanged = recorder.events.find((e) => e.type === EVENT_METADATA_CHANGED) as
-      MetadataChangedEvent | undefined;
-    expect(metadataChanged?.payload.key).toBe(HIBERNATED_METADATA_KEY);
-    expect(metadataChanged?.payload.value).toBe("true");
+    // The time is recorded before the flag flips, so the row knows its age
+    // the moment it reads as hibernated.
+    const metadataChanges = recorder.events
+      .filter((e): e is MetadataChangedEvent => e.type === EVENT_METADATA_CHANGED)
+      .map((e) => e.payload.key);
+    expect(metadataChanges).toEqual([HIBERNATED_AT_METADATA_KEY, HIBERNATED_METADATA_KEY]);
+    const flag = recorder.events.find(
+      (e): e is MetadataChangedEvent =>
+        e.type === EVENT_METADATA_CHANGED &&
+        (e as MetadataChangedEvent).payload.key === HIBERNATED_METADATA_KEY
+    );
+    expect(flag?.payload.value).toBe("true");
   });
 
   it("dispatches switch in foreground when the workspace was active", async () => {
@@ -441,7 +466,7 @@ describe("workspace:hibernate", () => {
     expect(
       recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATE_FAILED)
     ).toBeUndefined();
-    expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
+    expect(recorder.metadataWrites).toEqual(HIBERNATE_WRITES);
   });
 
   it("brackets the capture hook: prepare-capture → capture → cleanup-capture", async () => {
@@ -484,7 +509,7 @@ describe("workspace:hibernate", () => {
       "cleanup-capture",
       "set-metadata:true",
     ]);
-    expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
+    expect(recorder.metadataWrites).toEqual(HIBERNATE_WRITES);
     expect(recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED)).toBeDefined();
   });
 
@@ -500,7 +525,7 @@ describe("workspace:hibernate", () => {
     await waitForBackground();
 
     expect(recorder.releaseCalled).toBe(true);
-    expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
+    expect(recorder.metadataWrites).toEqual(HIBERNATE_WRITES);
     // Background failures no longer surface as hibernate-failed — the user
     // already saw the overlay flip in the foreground. workspace:hibernated
     // still fires so the dispatcher's idempotency lock is released.
@@ -522,7 +547,7 @@ describe("workspace:wake", () => {
     const result = await dispatcher.dispatch(intent);
 
     expect(recorder.cleanupCalled).toBe(true);
-    expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: null }]);
+    expect(recorder.metadataWrites).toEqual(WAKE_WRITES);
 
     // Reopen dispatched with the resolved branch and the clean (post-clear)
     // metadata, via the existingWorkspace branch of workspace:open.

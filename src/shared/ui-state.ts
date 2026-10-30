@@ -131,6 +131,12 @@ export interface UiWorkspaceRow {
    * shortcut numbering (hibernated rows are unnumbered).
    */
   readonly hibernated: boolean;
+  /**
+   * When the workspace was hibernated (ISO-8601). Present only while
+   * `hibernated` and the time is known — a workspace hibernated before the
+   * time was recorded has none. The renderer derives the age it shows.
+   */
+  readonly hibernatedAt?: string;
   readonly agent: AgentStatus;
   readonly tags: readonly WorkspaceTag[];
   readonly active: boolean;
@@ -180,7 +186,12 @@ export interface UiProjectRow {
 export type UiMainView =
   | { readonly kind: "starting" }
   | { readonly kind: "workspace"; readonly frameKey: string }
-  | { readonly kind: "hibernated"; readonly screenshot: string | null }
+  | {
+      readonly kind: "hibernated";
+      readonly screenshot: string | null;
+      /** When it was hibernated (ISO-8601); null when unrecorded. */
+      readonly hibernatedAt: string | null;
+    }
   | { readonly kind: "creation" };
 
 export interface UiState {

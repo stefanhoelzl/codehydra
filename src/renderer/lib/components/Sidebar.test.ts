@@ -207,6 +207,58 @@ describe("Sidebar component", () => {
     });
   });
 
+  describe("hibernation age", () => {
+    const NOW = new Date(2026, 9, 30, 12, 0).getTime();
+
+    beforeEach(() => {
+      vi.useFakeTimers({ now: NOW, toFake: ["Date", "setInterval", "clearInterval"] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function renderAsleep(hibernatedAt: string | undefined): void {
+      const row = makeUiWorkspaceRow("sleeping", {
+        hibernated: true,
+        ...(hibernatedAt !== undefined && { hibernatedAt }),
+      });
+      render(Sidebar, { props: { ...defaultProps, projects: [makeUiProjectRow([row])] } });
+    }
+
+    it("shows the short age on the row and the full time in the tooltip", () => {
+      const at = new Date(2026, 9, 27, 14, 2);
+      renderAsleep(at.toISOString());
+
+      expect(document.querySelector(".hibernation-age")).toHaveTextContent("2d");
+      const title = screen.getByRole("img", { name: "Hibernated" }).getAttribute("title");
+      expect(title).toMatch(/^Hibernated 2 days ago \(.+\) - click to wake$/);
+      expect(title).toContain(at.toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" }));
+      expect(
+        screen.getByRole("button", { name: /sleeping in test-project - Hibernated 2 days ago/ })
+      ).toBeInTheDocument();
+    });
+
+    it("re-renders the age as the minutes pass", async () => {
+      renderAsleep(new Date(NOW - 59 * 60_000).toISOString());
+      expect(document.querySelector(".hibernation-age")).toHaveTextContent("59m");
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(document.querySelector(".hibernation-age")).toHaveTextContent("1h");
+    });
+
+    it("shows no age for a workspace hibernated before the time was recorded", () => {
+      renderAsleep(undefined);
+
+      expect(document.querySelector(".hibernation-age")).not.toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "Hibernated" })).toHaveAttribute(
+        "title",
+        "Hibernated - click to wake"
+      );
+    });
+  });
+
   describe("hibernated count toggle", () => {
     // Regression: with hide-hibernated on, a project whose workspaces are all
     // asleep rendered as a bare header, indistinguishable from an empty one.

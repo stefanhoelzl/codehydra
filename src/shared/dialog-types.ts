@@ -382,6 +382,8 @@ export interface DropdownWorkspaceRow {
   readonly name: string;
   readonly title?: string;
   readonly hibernated: boolean;
+  /** When it was hibernated (ISO-8601); see UiWorkspaceRow.hibernatedAt. */
+  readonly hibernatedAt?: string;
   readonly agent: AgentStatus;
   readonly tags: readonly WorkspaceTag[];
 }

@@ -69,6 +69,7 @@ function toOption({ projectName, row }: ProjectWorkspaceRow): DropdownOption {
       name: row.name,
       ...(row.title !== undefined && { title: row.title }),
       hibernated: row.hibernated,
+      ...(row.hibernatedAt !== undefined && { hibernatedAt: row.hibernatedAt }),
       agent: row.agent,
       tags: row.tags,
     },
