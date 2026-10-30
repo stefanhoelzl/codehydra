@@ -243,6 +243,12 @@ is easy to spot. Turn this off with `auto-tag.new`.
 - **Wake** — select it and click its screenshot, click the pause icon on its
   row, or press <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> again. Selecting a
   hibernated workspace never wakes it by itself.
+- **How long it has slept** — a hibernated row shows its age (`40m`, `5h`,
+  `12d`) at the end of its first line, in the sidebar and in the Find list;
+  hovering the pause icon, and the hibernated screen, add the date and time it
+  was hibernated. `ch ws status` (MCP `workspace_get_status`) reports it as
+  `hibernated` and `hibernatedAt`. Workspaces hibernated before
+  CodeHydra recorded the time show no age until they are hibernated again.
 - **A blank editor** — if the process that draws the editors crashes, every
   open workspace goes grey at once; CodeHydra notices within a few seconds
   and reloads them all. If a single workspace's editor shuts down or navigates

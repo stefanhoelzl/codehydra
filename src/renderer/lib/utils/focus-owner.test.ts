@@ -87,7 +87,9 @@ describe("focusOwnerId", () => {
   it("gives nobody ownership on the hibernated and startup screens", () => {
     const dialogs = [dialog("create-1", "modeless"), dialog("panel-1", "panel")];
 
-    expect(focusOwnerId({ dialogs, main: { kind: "hibernated", screenshot: null } })).toBeNull();
+    expect(
+      focusOwnerId({ dialogs, main: { kind: "hibernated", screenshot: null, hibernatedAt: null } })
+    ).toBeNull();
     expect(focusOwnerId({ dialogs, main: { kind: "starting" } })).toBeNull();
   });
 });

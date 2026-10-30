@@ -39,7 +39,7 @@ import {
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "./get-metadata";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "./open-workspace";
-import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
+import { HIBERNATED_AT_METADATA_KEY, HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { resolveWorkspaceIdentity, workspaceFailurePayload } from "./lib/workspace-identity";
 
 export const INTENT_WAKE_WORKSPACE = "workspace:wake" as const;
@@ -166,16 +166,15 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
       const { workspacePath, projectRef, projectPath, workspaceName, projectId, branch } =
         await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
 
-      // Clear the hibernated metadata flag before re-init so any consumers
-      // observing the metadata-changed event see the workspace as awake.
-      await ctx.dispatch<SetMetadataIntent>({
-        type: INTENT_SET_METADATA,
-        payload: {
-          workspaceRef: payload.workspaceRef,
-          key: HIBERNATED_METADATA_KEY,
-          value: null,
-        },
-      });
+      // Clear the hibernated metadata flag (then its time) before re-init so
+      // any consumers observing the metadata-changed event see the workspace
+      // as awake.
+      for (const key of [HIBERNATED_METADATA_KEY, HIBERNATED_AT_METADATA_KEY]) {
+        await ctx.dispatch<SetMetadataIntent>({
+          type: INTENT_SET_METADATA,
+          payload: { workspaceRef: payload.workspaceRef, key, value: null },
+        });
+      }
 
       const hookCtx: WakePipelineHookInput = {
         intent: ctx.intent,

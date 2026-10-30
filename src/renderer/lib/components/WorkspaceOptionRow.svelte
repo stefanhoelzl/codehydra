@@ -3,14 +3,17 @@
 
   A dropdown option drawn as a sidebar workspace row: the title (else the
   name), a second line with the branch (when titled) and the tags, and the
-  status icon on the right — the agent dot, or a pause icon when hibernated.
-  The sidebar's hover actions and shortcut badges have no place in a list.
+  status icon on the right — the agent dot, or a pause icon when hibernated
+  (with how long it has slept, as in the sidebar). The sidebar's hover actions
+  and shortcut badges have no place in a list.
 -->
 <script lang="ts">
   import type { DropdownWorkspaceRow } from "@shared/dialog-types";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import Icon from "./Icon.svelte";
   import WorkspaceTags from "./WorkspaceTags.svelte";
+  import { describeHibernation } from "$lib/utils/hibernation-age.js";
+  import { minuteNow } from "$lib/utils/minute-clock.svelte.js";
 
   interface Props {
     row: DropdownWorkspaceRow;
@@ -20,11 +23,17 @@
 
   const counts = $derived("counts" in row.agent ? row.agent.counts : { idle: 0, busy: 0 });
   const showSecondLine = $derived(row.title !== undefined || row.tags.length > 0);
+  const age = $derived(row.hibernated ? describeHibernation(row.hibernatedAt, minuteNow()) : null);
 </script>
 
 <span class="workspace-option-row" class:hibernated={row.hibernated}>
   <span class="ws-label">
-    <span class="ws-primary">{row.title ?? row.name}</span>
+    <span class="ws-primary-line">
+      <span class="ws-primary">{row.title ?? row.name}</span>
+      {#if age !== null}
+        <span class="hibernation-age" aria-hidden="true">{age.short}</span>
+      {/if}
+    </span>
     {#if showSecondLine}
       <span class="ws-secondary">
         {#if row.title !== undefined}
@@ -36,7 +45,12 @@
   </span>
   <span class="ws-status">
     {#if row.hibernated}
-      <span class="hibernation-indicator" role="img" aria-label="Hibernated">
+      <span
+        class="hibernation-indicator"
+        role="img"
+        aria-label={age === null ? "Hibernated" : `Hibernated ${age.relative}`}
+        title={age === null ? "Hibernated" : `Hibernated ${age.relative} (${age.date})`}
+      >
         <Icon name="debug-pause" size={14} />
       </span>
     {:else}
@@ -60,7 +74,16 @@
     gap: 2px;
   }
 
+  .ws-primary-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
   .ws-primary {
+    flex: 1 1 0;
+    min-width: 0;
     line-height: 18px;
     white-space: nowrap;
     overflow: hidden;
@@ -96,6 +119,14 @@
   .hibernation-indicator {
     display: flex;
     opacity: 0.55;
+  }
+
+  /* How long it has slept; dimmed with the label, but upright. */
+  .hibernation-age {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
   }
 
   .hibernated .ws-label {

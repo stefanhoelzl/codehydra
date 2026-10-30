@@ -774,6 +774,33 @@ describe("FilterableDropdown component", () => {
       expect(option).toHaveTextContent("pr-12");
       expect(option.querySelector(".ws-tag.colored")).toHaveTextContent("Review");
       expect(option.querySelector("[aria-label='Hibernated']")).toBeInTheDocument();
+      expect(option.querySelector(".hibernation-age")).not.toBeInTheDocument();
+    });
+
+    it("shows how long a hibernated row has slept, as the sidebar does", () => {
+      vi.useFakeTimers({ now: new Date(2026, 9, 30, 12, 0), toFake: ["Date"] });
+      try {
+        const options = [
+          {
+            ...createOption("pr-12", "ref-1"),
+            row: {
+              name: "pr-12",
+              hibernated: true,
+              hibernatedAt: new Date(2026, 9, 27, 14, 2).toISOString(),
+              agent: { type: "none" as const },
+              tags: [],
+            },
+          },
+        ];
+        render(FilterableDropdown, { props: { ...defaultProps, options, inline: true } });
+
+        const option = screen.getByRole("option");
+        expect(option.querySelector(".hibernation-age")).toHaveTextContent("2d");
+        const indicator = option.querySelector("[aria-label='Hibernated 2 days ago']");
+        expect(indicator?.getAttribute("title")).toMatch(/^Hibernated 2 days ago \(.+\)$/);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

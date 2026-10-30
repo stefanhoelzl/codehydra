@@ -537,12 +537,38 @@ describe("wakeup scripts: polling", () => {
 
     await expect(setup.call("workspace.status", ws.ref)).resolves.toEqual({
       isDirty: false,
+      hibernated: false,
+      hibernatedAt: null,
       wakeup: { script: "check", shell: "bash", env: {} },
     });
     await setup.call("workspace.wakeup.clear", ws.ref);
     await expect(setup.call("workspace.status", ws.ref)).resolves.toEqual({
       isDirty: false,
+      hibernated: false,
+      hibernatedAt: null,
       wakeup: null,
+    });
+  });
+
+  it("includes whether and since when the workspace is hibernated in its status", async () => {
+    const setup = createSetup();
+    const at = "2026-10-27T14:02:11.000Z";
+    const timed = setup.add("timed", { hibernated: "true", "hibernated-at": at });
+    const legacy = setup.add("legacy", { hibernated: "true" });
+    // A stray time without the flag is not a hibernation.
+    const awake = setup.add("awake", { "hibernated-at": at });
+
+    await expect(setup.call("workspace.status", timed.ref)).resolves.toMatchObject({
+      hibernated: true,
+      hibernatedAt: at,
+    });
+    await expect(setup.call("workspace.status", legacy.ref)).resolves.toMatchObject({
+      hibernated: true,
+      hibernatedAt: null,
+    });
+    await expect(setup.call("workspace.status", awake.ref)).resolves.toMatchObject({
+      hibernated: false,
+      hibernatedAt: null,
     });
   });
 });

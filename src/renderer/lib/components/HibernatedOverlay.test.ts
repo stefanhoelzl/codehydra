@@ -42,6 +42,28 @@ describe("HibernatedOverlay", () => {
     expect(screen.getByText(/Alt\+X H/)).toBeInTheDocument();
   });
 
+  it("says how long it has slept, relative and absolute", () => {
+    vi.useFakeTimers({ now: new Date(2026, 9, 30, 12, 0), toFake: ["Date"] });
+    try {
+      const at = new Date(2026, 9, 27, 14, 2).toISOString();
+      const { container } = render(HibernatedOverlay, {
+        props: { screenshot: null, hibernatedAt: at, onWake },
+      });
+
+      expect(container.querySelector(".age")?.textContent).toMatch(/^2 days ago · .+/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("omits the age when the time is unrecorded", () => {
+    const { container } = render(HibernatedOverlay, {
+      props: { screenshot: null, hibernatedAt: null, onWake },
+    });
+
+    expect(container.querySelector(".age")).not.toBeInTheDocument();
+  });
+
   it("renders the inline screenshot when provided", () => {
     const dataUrl = "data:image/png;base64,UE5H";
     const { container } = render(HibernatedOverlay, { props: { screenshot: dataUrl, onWake } });

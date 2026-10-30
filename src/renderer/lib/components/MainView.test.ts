@@ -160,7 +160,11 @@ describe("MainView component", () => {
 
       await pushState(
         makeUiState([makeUiProjectRow([{ ...WS1_ACTIVE, hibernated: true }])], {
-          main: { kind: "hibernated", screenshot: "data:image/png;base64,UE5H" },
+          main: {
+            kind: "hibernated",
+            screenshot: "data:image/png;base64,UE5H",
+            hibernatedAt: null,
+          },
         })
       );
 

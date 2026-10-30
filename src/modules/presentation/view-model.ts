@@ -29,6 +29,11 @@ export interface WorkspaceModel {
    */
   title: string | undefined;
   hibernated: boolean;
+  /**
+   * When it was hibernated (metadata `hibernated-at`, ISO-8601); undefined when
+   * unrecorded or unparsable. Only meaningful while `hibernated`.
+   */
+  hibernatedAt: string | undefined;
   tags: WorkspaceTag[];
   url: string | undefined;
   /**
@@ -65,12 +70,19 @@ export interface RowEntry extends WorkspaceEntry {
 /** Interpret a workspace's domain metadata into the semantic model fields. */
 export function fromMetadata(
   metadata: Readonly<Record<string, string>>
-): Pick<WorkspaceModel, "hibernated" | "tags" | "title"> {
+): Pick<WorkspaceModel, "hibernated" | "hibernatedAt" | "tags" | "title"> {
   return {
     hibernated: metadata["hibernated"] === "true",
+    hibernatedAt: readHibernatedAt(metadata["hibernated-at"]),
     tags: extractTags(metadata),
     title: readTitle(metadata["title"]),
   };
+}
+
+/** A `hibernated-at` value as a valid ISO timestamp, or undefined. */
+export function readHibernatedAt(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  return Number.isNaN(Date.parse(value)) ? undefined : value;
 }
 
 export class PresentationModel {
