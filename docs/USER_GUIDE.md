@@ -166,9 +166,13 @@ Open a project from the New workspace form (**Open project folder** or
 - **Clone** accepts `org/repo`, `github.com/org/repo`, and https, ssh and
   `git://` URLs, but not a path or `file://` URL on this machine — open that
   folder instead. Progress shows inline and as a sidebar card; **Continue in
-  background** (or <kbd>Escape</kbd>) lets it finish on its own. For a GitHub
-  repository that does not exist it offers **Create on GitHub** (initialize it
-  with a README so it can be cloned) and **Retry Clone**.
+  background** (or <kbd>Escape</kbd>) lets it finish on its own. A failed clone
+  shows git's reason — except for a GitHub URL: GitHub answers a missing
+  repository and one your git credentials can't read the same way, so there
+  the dialog names both causes instead: if the repository exists, check that git on this machine is signed in
+  with an account or token that can access it; if it doesn't exist yet,
+  **Create on GitHub** (initialize it with a README so it can be cloned) and
+  **Retry Clone**.
 
 A project's workspaces are listed as soon as CodeHydra has found them —
 opening them takes a while (git and an agent start each). Each awake one shows
