@@ -48,7 +48,6 @@
           label: item.label,
           value: item.value,
           ...(item.keywords !== undefined && { keywords: item.keywords }),
-          ...(item.row !== undefined && { row: item.row }),
         });
       }
     });

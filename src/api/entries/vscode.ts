@@ -217,9 +217,10 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Ask the user a question with buttons and wait for the answer.",
     instructions:
-      `${FOR_THE_USER} Shows a dialog in the workspace's editor, or with sidebar a card in ` +
-      "CodeHydra's sidebar, which the user sees from any workspace. A Cancel is always there " +
-      "(the dialog's Cancel button, the card's dismiss X): do not pass one as an option. " +
+      `${FOR_THE_USER} Shows a dialog in the workspace's editor (its sidebar row shows a ` +
+      "question mark meanwhile), or with sidebar a question card in the workspace's row in " +
+      "CodeHydra's sidebar. A Cancel is always there (the dialog's Cancel button, the card's " +
+      "X): do not pass one as an option. " +
       "Returns { answer }: the clicked option, or null if cancelled, timed out or the caller " +
       "went away. The workspace shows as waiting on the user while it is open. For free " +
       "text, more than 5 options or long labels, use select or input.",
@@ -232,11 +233,15 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
         .min(1)
         .max(5)
         .describe("The buttons, 1 to 5; Cancel is added by itself"),
-      level: z.enum(["info", "warning", "error"]).optional().default("info"),
+      level: z
+        .enum(["info", "warning", "error"])
+        .optional()
+        .default("info")
+        .describe("The editor dialog's icon (a sidebar card always looks like a question)"),
       sidebar: z
         .boolean()
         .optional()
-        .describe("Show it as a card in CodeHydra's sidebar instead of the editor"),
+        .describe("Show it as a card in the workspace's sidebar row instead of the editor"),
       timeout: timeoutField,
     }),
     requiresWorkspace: true,
@@ -271,7 +276,7 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
           payload: {
             config: {
               title: input.message,
-              type: input.level,
+              type: "question",
               dismissible: true,
               ...(input.detail !== undefined && { message: input.detail }),
               actions: input.options.map((label) => ({ id: label, label })),

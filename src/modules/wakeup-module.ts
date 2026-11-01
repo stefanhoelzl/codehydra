@@ -16,9 +16,11 @@
  * through someone who can see what would be lost.
  *
  * The script is stored in the protected `wakeup` metadata key (with its shell
- * and variables), so it survives a restart and goes with the worktree. A
- * `tags.wakeup` tag shows it in the sidebar. Any wake — the script's, the
- * user's, an automation's — clears both: a wakeup script is one-shot, so a
+ * and variables), so it survives a restart and goes with the worktree. The
+ * sidebar lists such a workspace as "automated" (the presenter reads the same
+ * key). Older versions also set a `tags.wakeup` tag; it is no longer written,
+ * only cleared. Any wake — the script's, the user's, an automation's — clears
+ * the script (and any such tag): a wakeup script is one-shot, so a
  * condition that is still true cannot wake a workspace the moment it is
  * hibernated again.
  *
@@ -53,7 +55,7 @@ import {
   type SendAgentMessageIntent,
 } from "../intents/send-agent-message";
 import { workspaceRefSchema, type WorkspaceRef } from "../intents/contract";
-import { encodeTag, tagKey } from "../shared/api/types";
+import { tagKey } from "../shared/api/types";
 import { getErrorMessage } from "../shared/error-utils";
 import { Path } from "../utils/path/path";
 import type { WakeupScript, WakeupStatus, Wakeups } from "../api/entries/deps";
@@ -62,12 +64,10 @@ import { SHELL_NAMES } from "./scripts/shells";
 
 /** The metadata key a workspace's wakeup script is stored under (protected). */
 export const WAKEUP_METADATA_KEY = "wakeup";
-/** The sidebar tag that says a workspace has one. */
+/** The legacy sidebar tag older versions set beside a script; only cleared now. */
 export const WAKEUP_TAG_KEY = tagKey("wakeup");
 /** The poll jobs this module collects: one per hibernated workspace with a script. */
 export const WAKEUP_OWNER = "wakeup";
-/** The tag's label: an alarm clock. */
-const WAKEUP_TAG_LABEL = "⏰";
 /** Who a wakeup message is signed by. */
 const MESSAGE_FROM = "CodeHydra · wakeup";
 
@@ -164,11 +164,6 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
       env: { ...script.env },
     };
     await write(workspaceRef, WAKEUP_METADATA_KEY, JSON.stringify(stored));
-    await write(
-      workspaceRef,
-      WAKEUP_TAG_KEY,
-      encodeTag({ label: WAKEUP_TAG_LABEL, description: `Wakeup script: ${script.script}` })
-    );
   }
 
   async function show(workspaceRef: WorkspaceRef): Promise<WakeupStatus | null> {

@@ -19,6 +19,9 @@ import type { DialogButton } from "./dialog-types";
  * - type "info": informational (blue info icon)
  * - type "warning": warning (yellow warning triangle)
  * - type "error": error (red error circle)
+ * - type "question": a question waiting for its answer (`ch ws ask`). Shown in
+ *   its workspace's sidebar row rather than the stack at the bottom; the
+ *   actions are its answers and the dismiss button cancels it.
  *
  * - progress (number 0-1): determinate progress bar
  * - progress (true): indeterminate progress bar
@@ -27,7 +30,7 @@ import type { DialogButton } from "./dialog-types";
 export interface NotificationConfig {
   readonly title: string;
   readonly message?: string;
-  readonly type: "info" | "warning" | "error" | "spinner";
+  readonly type: "info" | "warning" | "error" | "spinner" | "question";
   /** 0-1 for determinate, true for indeterminate, undefined for none */
   readonly progress?: number | true;
   /** When true, a dismiss button is shown */

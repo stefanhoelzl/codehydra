@@ -431,7 +431,7 @@ export async function readLogs(options: ReadLogsOptions = {}): Promise<string> {
 // =============================================================================
 
 /**
- * Expand the sidebar and return once it is clickable. It is 20px wide with its
+ * Expand the sidebar and return once it is clickable. It is a 56px rail with its
  * overflow clipped, and expands on hover — which a headless run, having no
  * cursor, never does on its own.
  */
@@ -466,10 +466,13 @@ export async function expandSidebarOn(ui: Page): Promise<void> {
   try {
     await ui.waitForFunction(
       () => {
+        // The sidebar is a card inside an 8px margin: expanded, it is 16px
+        // narrower than the sidebar width.
         const sidebar = document.querySelector<HTMLElement>("nav.sidebar");
-        if (!sidebar) return false;
-        const target = parseFloat(sidebar.style.getPropertyValue("--ch-sidebar-width"));
-        return Math.abs(sidebar.getBoundingClientRect().width - target) < 0.5;
+        const card = sidebar?.querySelector<HTMLElement>(".sb");
+        if (!sidebar || !card) return false;
+        const target = parseFloat(sidebar.style.getPropertyValue("--ch-sidebar-width")) - 16;
+        return Math.abs(card.getBoundingClientRect().width - target) < 0.5;
       },
       undefined,
       { polling: 100, timeout: 15_000 }
@@ -1529,7 +1532,7 @@ What works:
 For text input, focus the field and \`type\` without \`--selector\`.
 
 ## Sidebar
-The sidebar is 20px when collapsed (overflow clipped) and expands to 250px on hover.
+The sidebar is a 56px rail when collapsed and expands to a 272px card on hover.
 Headless there is no cursor, so it stays collapsed. Run \`expand-sidebar\` before
 clicking anything in it. To collapse it again:
 

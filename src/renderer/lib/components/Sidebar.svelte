@@ -1,34 +1,49 @@
+<!--
+  Sidebar.svelte
+
+  The sidebar: a floating card with the Find field on top, one card per
+  project, the notifications at the bottom and a footer (status summary, +,
+  dock, settings, help). Collapsed (overlay mode, not hovered) it is a rail of
+  status glyphs.
+
+  Main owns what persists or what keys change (collapsed projects, each
+  project's hibernated list, whether Find is open); the Find text, the Find
+  marker and every animation are local. Gestures go to main as ui:events.
+-->
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import * as api from "$lib/api";
   import type {
-    SidebarLabelScroll,
+    HibernatedView,
     SidebarMode,
     UiNotification,
     UiProjectRow,
+    UiSidebarFind,
+    UiWorkspaceRow,
   } from "@shared/ui-state";
   import type { UIMode } from "@shared/ipc";
-  import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
-  import ScrollingLabel from "./ScrollingLabel.svelte";
-  import Icon from "./Icon.svelte";
-  import NotificationStack from "./NotificationStack.svelte";
-  import WorkspaceTags from "./WorkspaceTags.svelte";
-  import {
-    getWorkspaceGlobalIndex,
-    formatIndexDisplay,
-    getShortcutHint,
-    getStatusText,
-  } from "$lib/utils/sidebar-utils.js";
-  import { createLogger } from "$lib/logging";
-  import { arrivalFlash } from "$lib/utils/arrival-flash.js";
-  import { describeHibernation, type HibernationAge } from "$lib/utils/hibernation-age.js";
-  import { minuteNow } from "$lib/utils/minute-clock.svelte.js";
   import { clampSidebarWidthMin } from "@shared/ui-state";
-
-  /** A hibernated row's age labels; reading the clock re-renders them each minute. */
-  function hibernationAge(hibernatedAt: string | undefined): HibernationAge | null {
-    return hibernatedAt === undefined ? null : describeHibernation(hibernatedAt, minuteNow());
-  }
+  import { createLogger } from "$lib/logging";
+  import {
+    hiddenAskingRows,
+    hiddenQuestions,
+    isQuestion,
+    markerRows,
+    normalizedQuery,
+    nothingMatches,
+    projectColor,
+    projectShown,
+    rowGlyph,
+    rowGroup,
+    rowHidden,
+    rowQuestions,
+    type RowAction,
+    type SidebarView,
+  } from "$lib/utils/sidebar-model.js";
+  import ProjectCard from "./sidebar/ProjectCard.svelte";
+  import NoteCard from "./sidebar/NoteCard.svelte";
+  import SidebarIcon from "./sidebar/SidebarIcon.svelte";
+  import { createRowMotion, highlight, noteIn, noteOut } from "./sidebar/motion";
 
   const logger = createLogger("ui");
 
@@ -45,14 +60,12 @@
     onRenderedWidthChange?: (width: number) => void;
     /** Overlay (expands over the workspace) or docked (always expanded). */
     sidebarMode?: SidebarMode;
-    /** Dock / undock the sidebar (header button). */
-    onSetSidebarMode: (mode: SidebarMode) => void;
+    /** Main's Find state (null while the Find field does not have the focus). */
+    find?: UiSidebarFind | null;
     /** Open sidebar notifications from the snapshot. */
     notifications: readonly UiNotification[];
     /** The single UI mode from the snapshot (main-owned). */
     mode?: UIMode;
-    /** How overflowing row labels scroll (config `sidebar.label-scroll`). */
-    labelScroll?: SidebarLabelScroll;
     shortcutModeActive?: boolean;
     /**
      * True while main is capturing the hibernation screenshot: force an
@@ -60,22 +73,6 @@
      * shot. A docked sidebar never covers the workspace, so it ignores this.
      */
     capturing?: boolean;
-    /** When true, the New workspace view is the current tab (highlight it instead of any workspace). */
-    newWorkspaceViewOpen?: boolean;
-    onCloseProject: (projectId: string) => void;
-    /** Switch to a workspace by its opaque snapshot row key. */
-    onSwitchWorkspace: (key: string) => void;
-    onOpenNewWorkspace: () => void;
-    /** Request the remove flow for a workspace by its snapshot row key. */
-    onRemoveWorkspace: (key: string) => void;
-    /** Open the settings dialog (gear in the PROJECTS header). */
-    onOpenSettings: () => void;
-    /** Open the user guide dialog (question mark in the PROJECTS header). */
-    onOpenHelp: () => void;
-    /** Open the workspace search dialog (magnifier in the PROJECTS header). */
-    onOpenWorkspaceSearch: () => void;
-    /** Toggle hiding of a project's hibernated workspaces (its count button). */
-    onToggleHideHibernated: (projectId: string) => void;
   }
 
   let {
@@ -83,86 +80,223 @@
     sidebarWidth,
     onRenderedWidthChange,
     sidebarMode = "overlay",
-    onSetSidebarMode,
+    find = null,
     notifications,
     mode = "workspace",
-    labelScroll = "hover",
     shortcutModeActive = false,
     capturing = false,
-    newWorkspaceViewOpen = false,
-    onCloseProject,
-    onSwitchWorkspace,
-    onOpenNewWorkspace,
-    onRemoveWorkspace,
-    onOpenSettings,
-    onOpenHelp,
-    onOpenWorkspaceSearch,
-    onToggleHideHibernated,
   }: SidebarProps = $props();
 
-  const totalWorkspaces = $derived(
-    projects.reduce((sum, project) => sum + project.workspaces.length, 0)
-  );
+  const reducedMotion =
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      : false;
+  const animate = !reducedMotion;
 
-  // The snapshot key of the currently-active workspace row (or null when the
-  // creation panel is the current tab). Drives the scroll-into-view effect.
-  const activeWorkspaceKey = $derived(
-    projects.flatMap((project) => project.workspaces).find((workspace) => workspace.active)?.key ??
-      null
-  );
+  const allRows = $derived(projects.flatMap((project) => project.workspaces));
+  const totalWorkspaces = $derived(allRows.length);
+  const activeKey = $derived(allRows.find((row) => row.active)?.key ?? null);
 
-  // The scrollable list container. Bound so the effect below can find the
-  // active row within it and scroll it into view.
-  let contentEl = $state<HTMLElement | null>(null);
+  // ============ Find ============
 
-  // Keep the active row visible: when the active workspace changes (e.g. Alt+X
-  // arrow / jump-key navigation switches to a row scrolled out of view), or the
-  // sidebar expands into shortcut mode, scroll the active row into view. Uses
-  // `block: "nearest"`, so it is a no-op when the row is already visible (mouse
-  // clicks, in-view switches). Only runs while expanded — the collapsed gutter
-  // hides its scrollbar, and expanding re-runs this via the `isExpanded` read.
+  let findInput = $state<HTMLInputElement | null>(null);
+  let findFocused = $state(false);
+  let query = $state("");
+  /** The row the Find marker is on (only while Find is focused). */
+  let selectedKey = $state<string | null>(null);
+  /** This render lands at once (typing in Find): no fold animation. */
+  let instant = $state(false);
+  let scrollSelection = false;
+
+  /** Until main echoes the focus, Find shows what main will report: hibernated, not automated. */
+  const FIND_DEFAULT: UiSidebarFind = { hibernatedView: "manual" };
+  const view = $derived<SidebarView>({
+    find: findFocused ? (find ?? FIND_DEFAULT) : null,
+    query,
+  });
+  const ql = $derived(normalizedQuery(view));
+  const marker = $derived(markerRows(projects, view));
+
+  function selectFirst(preferActive: boolean): void {
+    const rows = markerRows(projects, view);
+    if (rows.length === 0) {
+      selectedKey = null;
+      return;
+    }
+    const active = preferActive ? rows.find((row) => row.active) : undefined;
+    selectedKey = (active ?? rows[0])?.key ?? null;
+    scrollSelection = true;
+  }
+
+  function handleFindFocus(): void {
+    if (findFocused) return;
+    findFocused = true;
+    api.emitEvent({ kind: "set-find", active: true });
+    selectFirst(true);
+  }
+
+  function handleFindBlur(): void {
+    if (!findFocused) return;
+    findFocused = false;
+    selectedKey = null;
+    api.emitEvent({ kind: "set-find", active: false });
+  }
+
+  /** Leave Find: clear the text and give the focus up. */
+  function endFind(): void {
+    query = "";
+    if (findInput !== null) findInput.value = "";
+    findInput?.blur();
+    handleFindBlur();
+  }
+
+  function focusWorkspace(): void {
+    const hooks = window as Window & { __chFocusActiveFrame?: () => void };
+    hooks.__chFocusActiveFrame?.();
+  }
+
+  function settleInstant(): void {
+    instant = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => (instant = false)));
+  }
+
+  function handleFindInput(event: Event): void {
+    query = (event.currentTarget as HTMLInputElement).value;
+    settleInstant();
+    selectFirst(false);
+  }
+
+  /** The row a Page Up / Page Down lands on: about a list height away. */
+  function pageTarget(direction: 1 | -1, index: number): number {
+    const elements = marker.map((row) =>
+      listEl?.querySelector(`.ws[data-key="${CSS.escape(row.key)}"]`)
+    );
+    const current = elements[index];
+    if (!current || !listEl) return direction > 0 ? elements.length - 1 : 0;
+    const viewHeight = listEl.clientHeight;
+    let target = index;
+    if (direction > 0) {
+      const top = current.getBoundingClientRect().top;
+      while (
+        target + 1 < elements.length &&
+        (elements[target + 1]?.getBoundingClientRect().bottom ?? Infinity) - top <= viewHeight
+      ) {
+        target++;
+      }
+      if (target === index) target = Math.min(index + 1, elements.length - 1);
+    } else {
+      const bottom = current.getBoundingClientRect().bottom;
+      while (
+        target - 1 >= 0 &&
+        bottom - (elements[target - 1]?.getBoundingClientRect().top ?? -Infinity) <= viewHeight
+      ) {
+        target--;
+      }
+      if (target === index) target = Math.max(index - 1, 0);
+    }
+    return target;
+  }
+
+  function handleFindKeydown(event: KeyboardEvent): void {
+    if (event.altKey) return;
+    const rows = marker;
+    let index = rows.findIndex((row) => row.key === selectedKey);
+    switch (event.key) {
+      case "ArrowDown":
+        index = Math.min(rows.length - 1, index + 1);
+        break;
+      case "ArrowUp":
+        index = Math.max(0, index - 1);
+        break;
+      case "Home":
+        index = 0;
+        break;
+      case "End":
+        index = rows.length - 1;
+        break;
+      case "PageDown":
+        index = pageTarget(1, index);
+        break;
+      case "PageUp":
+        index = pageTarget(-1, index);
+        break;
+      case "Enter": {
+        event.preventDefault();
+        const row = rows.find((candidate) => candidate.key === selectedKey);
+        if (row !== undefined) {
+          endFind();
+          activateRow(row);
+        }
+        return;
+      }
+      case "Escape":
+        event.preventDefault();
+        endFind();
+        focusWorkspace();
+        return;
+      default:
+        return;
+    }
+    event.preventDefault();
+    const row = rows[Math.max(0, index)];
+    if (row !== undefined) {
+      selectedKey = row.key;
+      scrollSelection = true;
+    }
+  }
+
+  // Alt+X, F: main opens Find; the field takes the focus.
   $effect(() => {
-    void activeWorkspaceKey;
-    if (!isExpanded) return;
-    contentEl?.querySelector(".workspace-item.active")?.scrollIntoView({ block: "nearest" });
+    if (find !== null && !untrack(() => findFocused)) findInput?.focus();
   });
 
-  // ============ Expansion State ============
+  // The marker stays on its row while it is listed (Alt+X, T in Find), else moves to the first.
+  $effect(() => {
+    const rows = marker;
+    if (!untrack(() => findFocused)) return;
+    const current = untrack(() => selectedKey);
+    if (current !== null && rows.some((row) => row.key === current)) return;
+    untrack(() => selectFirst(false));
+  });
 
-  /** Debounce for both arming expansion (deliberate-hover filter) and collapsing. */
+  // Bring the marker into view once it has moved (again once the folds have settled).
+  $effect(() => {
+    void selectedKey;
+    void marker;
+    if (!scrollSelection) return;
+    scrollSelection = false;
+    const go = (): void => listEl?.querySelector(".ws.sel")?.scrollIntoView({ block: "nearest" });
+    void tick().then(go);
+    if (animate && !instant) setTimeout(go, 330);
+  });
+
+  /** "/" anywhere outside a text field opens Find. */
+  function handleWindowKeydown(event: KeyboardEvent): void {
+    if (event.key !== "/" || event.altKey || event.ctrlKey || event.metaKey) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    event.preventDefault();
+    findInput?.focus();
+  }
+
+  // ============ Expansion ============
+
+  /** Debounce for both arming expansion and collapsing. */
   const HOVER_DELAY_MS = 150;
-  /**
-   * Hover only arms expansion once the cursor has penetrated the collapsed
-   * gutter past the outer quarter; shallow grazes along its outer edge are
-   * ignored.
-   */
-  const HOVER_TRIGGER_DEPTH_PX = 15;
 
   let isHovering = false;
   let openTimeout: ReturnType<typeof setTimeout> | null = null;
   let collapseTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  // The workspace row currently under the cursor (its snapshot key), so the
-  // `hover` label-scroll mode can animate only that row's overflowing lines.
-  let hoveredRowKey = $state<string | null>(null);
-
   const docked = $derived(sidebarMode === "docked");
 
-  // Sidebar is expanded when it is docked (always), or when:
-  // - the snapshot mode is anything but "workspace" (hover, shortcut, dialog —
-  //   the creation panel maps to hover), OR
-  // - there are no workspaces (so user can open a project)
-  // ...unless main is capturing the hibernation screenshot, which forces an
-  // overlay sidebar collapsed so it is not baked into the shot.
+  // Expanded when docked (always), or when the snapshot mode is anything but
+  // "workspace" (hover, shortcut, dialog, Find — the creation panel maps to
+  // hover), or when there are no workspaces — unless main is capturing the
+  // hibernation screenshot, which forces an overlay sidebar collapsed.
   const isExpanded = $derived(
     docked || (!capturing && (mode !== "workspace" || totalWorkspaces === 0))
   );
-
-  // Hover may only initiate expansion when nothing else forces the UI on top
-  // (i.e. the snapshot mode is "workspace"); otherwise the sidebar expanding
-  // into a parked cursor would latch hover and keep it open after that mode
-  // exits.
-  const hoverExpansionEligible = $derived(mode === "workspace");
 
   function clearOpenTimeout(): void {
     if (openTimeout) {
@@ -178,73 +312,26 @@
     }
   }
 
-  function maybeArmExpansion(clientX: number): void {
-    if (isHovering) return;
-    // Docked, the sidebar is already expanded: the pointer over it is not a
-    // hover (so background opens still take the view, as in "workspace" mode).
-    // A hover left over from before docking still collapses on leave.
-    if (docked) return;
-    if (!hoverExpansionEligible) {
-      logger.debug("sidebar hover: not eligible", { clientX });
-      return;
-    }
-    if (clientX > HOVER_TRIGGER_DEPTH_PX) {
-      if (openTimeout) logger.debug("sidebar hover: disarm (shallow)", { clientX });
-      clearOpenTimeout();
-      return;
-    }
-    if (!openTimeout) {
-      logger.debug("sidebar hover: arm", { clientX });
-      openTimeout = setTimeout(() => {
-        openTimeout = null;
-        if (!hoverExpansionEligible) return;
-        logger.debug("sidebar hover: expand");
-        isHovering = true;
-        // Main consumes the settled hover and folds it into the snapshot mode
-        // (which drives isExpanded). No local expansion state.
-        api.emitEvent({ kind: "hover", region: "sidebar" });
-      }, HOVER_DELAY_MS);
-    }
+  function armExpansion(): void {
+    if (isHovering || docked || mode !== "workspace") return;
+    if (openTimeout) return;
+    openTimeout = setTimeout(() => {
+      openTimeout = null;
+      if (mode !== "workspace") return;
+      logger.debug("sidebar hover: expand");
+      isHovering = true;
+      api.emitEvent({ kind: "hover", region: "sidebar" });
+    }, HOVER_DELAY_MS);
   }
 
-  function handleMouseEnter(event: MouseEvent): void {
-    logger.debug("sidebar hover: enter", { clientX: event.clientX, isHovering });
+  function handleMouseEnter(): void {
     clearCollapseTimeout();
-    // A cursor slammed against the window edge can come to rest in the same
-    // frame it enters — no mousemove ever fires, so arm from the enter too.
-    maybeArmExpansion(event.clientX);
+    armExpansion();
   }
 
-  function handleMouseMove(event: MouseEvent): void {
-    maybeArmExpansion(event.clientX);
-  }
-
-  function pinnedAgainstScreenEdge(): boolean {
-    // An exit through our left boundary can only be a "pin" when the
-    // window's left edge sits at the screen's left edge; otherwise the
-    // cursor genuinely left the window (windowed mode) and a normal leave
-    // applies. (Under native Wayland window positions report 0, degrading
-    // to treating every left exit as a pin.)
-    const availLeft = (window.screen as Screen & { availLeft?: number }).availLeft ?? 0;
-    return window.screenX <= availLeft;
-  }
-
-  function handleMouseLeave(event: MouseEvent): void {
-    // Mid-resize the drag overlay sits on top and the nav emits a spurious
-    // mouseleave as the pointer "enters" it; never collapse while dragging.
+  function handleMouseLeave(): void {
+    // Mid-resize the drag overlay sits on top: never collapse while dragging.
     if (dragging) return;
-    // A leave through the left boundary while the window sits at the screen
-    // edge means the cursor is pinned: the OS keeps the pointer there but
-    // reports it just outside, and NO further events arrive while it rests
-    // (a fast slam delivers only a shallow enter + this leave). Treat it as
-    // the deepest possible hover — arm expansion / keep the sidebar open —
-    // not as a leave.
-    if (event.clientX <= 0 && pinnedAgainstScreenEdge()) {
-      logger.debug("sidebar hover: edge pin", { clientX: event.clientX, isHovering });
-      maybeArmExpansion(0);
-      return;
-    }
-    logger.debug("sidebar hover: leave", { clientX: event.clientX, isHovering });
     clearOpenTimeout();
     if (!isHovering) return;
     collapseTimeout ??= setTimeout(() => {
@@ -255,7 +342,6 @@
     }, HOVER_DELAY_MS);
   }
 
-  // Clean up timeouts on component destroy
   onDestroy(() => {
     clearOpenTimeout();
     clearCollapseTimeout();
@@ -263,23 +349,16 @@
 
   // ============ Resize ============
   // The expanded sidebar's right edge is a drag handle. Dragging sets a local
-  // `liveWidth` override applied to --ch-sidebar-width; on release we persist
-  // it (resize-sidebar ui:event) and the presenter echoes the canonical value
-  // back in the next snapshot. The override lingers until the snapshot's
-  // `sidebarWidth` prop catches up, so there is no flash back to the old width.
+  // `liveWidth` override; on release it is persisted (resize-sidebar) and the
+  // snapshot echoes it back. The override lingers until that echo arrives.
 
   let dragging = $state(false);
-  /** Live width while dragging / awaiting the snapshot echo; null = use prop. */
   let liveWidth = $state<number | null>(null);
   let dragStartX = 0;
   let dragStartWidth = 0;
-  // Window inner width, tracked reactively so the max clamp follows resizes.
   let winWidth = $state(typeof window !== "undefined" ? window.innerWidth : 0);
 
   function clampWidth(width: number): number {
-    // Both bounds run through the shared floor helper: the max is 75% of the
-    // window width but never below the grow-only minimum (tiny windows), so the
-    // result is always >= the floor.
     const floored = clampSidebarWidthMin(width);
     const max = clampSidebarWidthMin(winWidth * 0.75);
     return Math.min(floored, max);
@@ -291,12 +370,6 @@
     onRenderedWidthChange?.(effectiveWidth);
   });
 
-  // Drop the local override once the snapshot's width prop changes — i.e. it
-  // has caught up to (or overridden) the drag result — so there is no flash
-  // back to the old width while the resize round-trips. `dragging` is read via
-  // untrack so this fires only on a genuine prop change, never when a drag ends
-  // (which would otherwise clear the override before the echo arrives). While a
-  // drag is in flight the override wins.
   $effect(() => {
     void sidebarWidth;
     if (!untrack(() => dragging)) liveWidth = null;
@@ -309,10 +382,8 @@
     dragStartX = event.clientX;
     dragStartWidth = effectiveWidth;
     liveWidth = dragStartWidth;
-    // Cancel any pending hover arm/collapse so the drawer stays put mid-drag.
     clearOpenTimeout();
     clearCollapseTimeout();
-    logger.debug("sidebar resize: start", { startX: dragStartX, startWidth: dragStartWidth });
   }
 
   function handleResizeMove(event: MouseEvent): void {
@@ -325,355 +396,391 @@
     const finalWidth = clampWidth(dragStartWidth + (event.clientX - dragStartX));
     dragging = false;
     liveWidth = finalWidth;
-    logger.debug("sidebar resize: end", { finalWidth });
     api.emitEvent({ kind: "resize-sidebar", width: finalWidth });
-    // If the cursor came to rest past the sidebar's new right edge — over the
-    // workspace, not the drawer — release the hover so it can collapse. The
-    // mouseleave suppressed during the drag would otherwise latch it open.
     if (!docked && event.clientX > finalWidth) {
       isHovering = false;
       api.emitEvent({ kind: "hover", region: null });
     }
   }
 
-  function handleWindowResize(): void {
-    winWidth = window.innerWidth;
+  // ============ Motion ============
+
+  let listEl = $state<HTMLElement | null>(null);
+  const motion = createRowMotion({
+    enabled: () => animate && !instant,
+    row: (key) => allRows.find((row) => row.key === key),
+    moonTarget: (projectId) => {
+      const card = listEl?.querySelector(`.proj[data-project-id="${CSS.escape(projectId)}"]`);
+      return (card?.querySelector(".sleepers") ??
+        card?.querySelector(".proj-h .name")) as HTMLElement | null;
+    },
+  });
+
+  // Where every row was before this update: a row that hibernates or wakes flies from there.
+  $effect.pre(() => {
+    void projects;
+    untrack(() => motion.capture(listEl));
+  });
+  $effect(() => {
+    const keys = allRows.map((row) => row.key);
+    motion.settle(keys);
+  });
+
+  // Keep the active row in view (keyboard navigation, a collapse moving you on).
+  $effect(() => {
+    void activeKey;
+    if (!isExpanded) return;
+    void tick().then(() =>
+      listEl?.querySelector(".ws.active")?.scrollIntoView({ block: "nearest" })
+    );
+  });
+
+  // A question arriving while its row is out of sight: its project's header
+  // bar flashes in the question color three times.
+  /** Question ids already seen (not reactive: only this effect reads it). */
+  const seenQuestions: Record<string, true> = {};
+  let questionsPrimed = false;
+  $effect(() => {
+    const questions = notifications.filter(isQuestion);
+    const fresh = questions.filter((note) => seenQuestions[note.id] !== true);
+    for (const note of questions) seenQuestions[note.id] = true;
+    if (!questionsPrimed) {
+      questionsPrimed = true;
+      return;
+    }
+    if (!animate) return;
+    for (const note of fresh) {
+      const project = projects.find((candidate) =>
+        candidate.workspaces.some((row) => row.key === note.workspace?.key)
+      );
+      if (project === undefined) continue;
+      const row = project.workspaces.find((candidate) => candidate.key === note.workspace?.key);
+      if (row === undefined || !untrack(() => rowHidden(project, row, view))) continue;
+      void tick().then(() => signal(project.id));
+    }
+  });
+
+  // Likewise when a question opens in the editor of a workspace whose row is out of sight.
+  let askingBefore: readonly string[] | null = null;
+  $effect(() => {
+    const asking = allRows.filter((row) => row.editorQuestion === true).map((row) => row.key);
+    const before = askingBefore;
+    askingBefore = asking;
+    if (before === null || !animate) return;
+    for (const key of asking) {
+      if (before.includes(key)) continue;
+      const project = projects.find((candidate) =>
+        candidate.workspaces.some((row) => row.key === key)
+      );
+      const row = project?.workspaces.find((candidate) => candidate.key === key);
+      if (project === undefined || row === undefined) continue;
+      if (!untrack(() => rowHidden(project, row, view))) continue;
+      void tick().then(() => signal(project.id));
+    }
+  });
+
+  function signal(projectId: string): void {
+    const header = listEl?.querySelector<HTMLElement>(
+      `.proj[data-project-id="${CSS.escape(projectId)}"] .proj-h`
+    );
+    if (!header) return;
+    const base = getComputedStyle(header).backgroundColor;
+    const ask = getComputedStyle(document.documentElement).getPropertyValue("--ch-sb-ask").trim();
+    const on = `color-mix(in srgb, ${ask} 45%, ${base})`;
+    const options = { duration: 1600, easing: "ease-in-out" };
+    header.animate(
+      [base, on, base, on, base, on, base].map((color) => ({ backgroundColor: color })),
+      options
+    );
+    header.querySelector(".hdr-note")?.animate(
+      [1, 1.35, 1, 1.35, 1, 1.35, 1].map((k) => ({ transform: `scale(${k})` })),
+      options
+    );
   }
 
-  // ============ Actions ============
+  // ============ Gestures ============
 
-  function handleWakeWorkspace(key: string): void {
-    api.emitEvent({ kind: "wake-workspace", key });
+  function switchTo(row: UiWorkspaceRow): void {
+    if (row.hibernated || row.status === "open-failed") {
+      // A hibernated row wakes; a failed one opens again. Either way you go there.
+      api.emitEvent({ kind: "wake-workspace", key: row.key });
+    }
+    api.emitEvent({ kind: "switch-workspace", key: row.key });
   }
 
-  function handleHibernateWorkspace(key: string): void {
-    api.emitEvent({ kind: "hibernate-workspace", key });
+  function activateRow(row: UiWorkspaceRow): void {
+    if (view.find !== null) endFind();
+    switchTo(row);
   }
+
+  function handleRowAction(action: RowAction, row: UiWorkspaceRow): void {
+    switch (action) {
+      case "hibernate":
+        api.emitEvent({ kind: "hibernate-workspace", key: row.key });
+        return;
+      case "remove":
+        api.emitEvent({ kind: "remove-workspace", key: row.key });
+        return;
+      case "retry":
+        api.emitEvent({ kind: "wake-workspace", key: row.key });
+        return;
+    }
+  }
+
+  function setHibernatedView(project: UiProjectRow, next: HibernatedView): void {
+    if (project.hibernatedView === next) return;
+    api.emitEvent({ kind: "set-hibernated-view", projectId: project.id, view: next });
+  }
+
+  function toggleCollapsed(project: UiProjectRow): void {
+    api.emitEvent({ kind: "toggle-project-collapsed", projectId: project.id });
+  }
+
+  /**
+   * Bring an out-of-sight question into view — the newest card, else a row whose
+   * editor asks: expand, open the hibernated list.
+   */
+  function revealQuestion(project: UiProjectRow): void {
+    const note = hiddenQuestions(project, notifications, view).at(-1);
+    const row =
+      note === undefined
+        ? hiddenAskingRows(project, view)[0]
+        : project.workspaces.find((candidate) => candidate.key === note.workspace?.key);
+    if (row === undefined) return;
+    if (view.find !== null) endFind();
+    if (project.collapsed) toggleCollapsed(project);
+    const group = rowGroup(row);
+    if (group === "automated") setHibernatedView(project, "all");
+    else if (group === "hibernated" && project.hibernatedView === "hidden") {
+      setHibernatedView(project, "manual");
+    }
+    setTimeout(
+      () => {
+        const el = listEl?.querySelector(`.ws[data-key="${CSS.escape(row.key)}"]`);
+        el?.scrollIntoView({ block: "nearest", behavior: animate ? "smooth" : "auto" });
+        if (animate && el) highlight(el.querySelector(".note") ?? el);
+        // A row that only asks in its editor: going there is what answers it.
+      },
+      animate ? 330 : 0
+    );
+  }
+
+  // ============ Derived display ============
+
+  /** Shortcut-mode numbers: the awake rows of expanded projects, 1–9 then 0. */
+  const shortcutNumbers = $derived.by((): Readonly<Record<string, string>> => {
+    if (!shortcutModeActive) return {};
+    const rows = projects
+      .filter((project) => !project.collapsed)
+      .flatMap((project) => project.workspaces.filter((row) => !row.hibernated));
+    return Object.fromEntries(
+      rows.slice(0, 10).map((row, index) => [row.key, String((index + 1) % 10)])
+    );
+  });
+
+  const bottomNotes = $derived([...notifications].filter((note) => !isQuestion(note)).reverse());
+  const summary = $derived({
+    busy: allRows.filter((row) => rowGlyph(row) === "busy").length,
+    idle: allRows.filter((row) => rowGlyph(row) === "idle").length,
+    hibernated: allRows.filter((row) => row.status === "ready" && row.hibernated).length,
+  });
+
+  /** The rail: per expanded project its awake rows (and the active one); a dot per question. */
+  const railGroups = $derived(
+    projects.map((project) => {
+      const shown = project.collapsed
+        ? []
+        : project.workspaces.filter((row) => !row.hibernated || row.active);
+      const offRail = notifications.filter(
+        (note) =>
+          isQuestion(note) &&
+          project.workspaces.some((row) => row.key === note.workspace?.key) &&
+          !shown.some((row) => row.key === note.workspace?.key)
+      );
+      const askingOffRail = project.workspaces.some(
+        (row) => row.editorQuestion === true && !shown.includes(row)
+      );
+      return { project, shown, offRail: offRail.length > 0 || askingOffRail };
+    })
+  );
+
+  const NOTE_RAIL_ICON = { info: "info", warning: "warn", error: "xcircle" } as const;
 </script>
 
-<!--
-  Two-column row layout: every row is [flexible label cell | fixed icon cell
-  at the right edge]. Collapsing the sidebar shrinks the label cells to zero
-  width, so the icon column IS the collapsed sidebar.
--->
-<svelte:window onresize={handleWindowResize} />
+<svelte:window onresize={() => (winWidth = window.innerWidth)} onkeydown={handleWindowKeydown} />
 
 <nav
   class="sidebar"
   class:expanded={isExpanded || dragging}
-  class:ch-sidebar-expanded={isExpanded || dragging}
   class:dragging
   class:docked
   style="--ch-sidebar-width: {effectiveWidth}px"
   aria-label="Projects"
   onmouseenter={handleMouseEnter}
-  onmousemove={handleMouseMove}
   onmouseleave={handleMouseLeave}
 >
-  <header class="sidebar-header">
-    <div class="ch-label-cell header-label">
-      <h2>PROJECTS</h2>
-    </div>
-    {#if isExpanded}
-      <div class="header-actions">
-        <!-- Find a workspace. Mirrors Alt+X+F. -->
-        <button
-          type="button"
-          class="ch-icon-button header-action"
+  <aside
+    class="sb"
+    class:collapsed={!(isExpanded || dragging)}
+    class:peek={!docked && isExpanded}
+    class:searching={view.find !== null}
+    class:instant={instant || !animate}
+  >
+    <div class="sb-head">
+      <div class="search">
+        <SidebarIcon name="search" />
+        <input
+          bind:this={findInput}
+          placeholder="Find workspace…"
+          autocomplete="off"
+          spellcheck="false"
           aria-label="Find workspace"
-          title="Find workspace"
-          onclick={() => onOpenWorkspaceSearch()}
-        >
-          <Icon name="search" size={14} />
-        </button>
-        <!-- Dock / undock the sidebar. The icon reflects the current state
-             (filled = docked); the tooltip states the action. Mirrors Alt+X+P. -->
-        <button
-          type="button"
-          class="ch-icon-button header-action"
-          aria-label={docked ? "Undock sidebar" : "Dock sidebar"}
-          aria-pressed={docked}
-          title={docked ? "Undock sidebar" : "Dock sidebar"}
-          onclick={() => onSetSidebarMode(docked ? "overlay" : "docked")}
-        >
-          <Icon name={docked ? "layout-sidebar-left" : "layout-sidebar-left-off"} size={14} />
-        </button>
-        <button
-          type="button"
-          class="ch-icon-button header-action"
-          aria-label="Settings"
-          title="Settings"
-          onclick={() => onOpenSettings()}
-        >
-          <Icon name="gear" size={14} />
-        </button>
-        <button
-          type="button"
-          class="ch-icon-button header-action"
-          aria-label="Help"
-          title="Help"
-          onclick={() => onOpenHelp()}
-        >
-          <Icon name="question" size={14} />
-        </button>
+          data-no-autofocus
+          onfocus={handleFindFocus}
+          onblur={handleFindBlur}
+          oninput={handleFindInput}
+          onkeydown={handleFindKeydown}
+        />
+        <span class="hint"><kbd>Alt X</kbd><kbd>F</kbd></span>
       </div>
-    {:else}
-      <span class="ch-icon-cell expand-hint" aria-hidden="true">
-        <Icon name="chevron-right" size={12} />
-      </span>
-    {/if}
-  </header>
+    </div>
 
-  <div class="sidebar-content" bind:this={contentEl}>
-    <!-- Global "New workspace" entry, pinned above the projects. -->
-    <button
-      type="button"
-      class="new-workspace-entry"
-      class:active={newWorkspaceViewOpen}
-      aria-label="New workspace"
-      aria-current={newWorkspaceViewOpen ? "true" : undefined}
-      onclick={() => onOpenNewWorkspace()}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="sb-body"
+      bind:this={listEl}
+      onmousedown={(event) => {
+        // Keep the focus in Find while clicking a row, a header or a card.
+        if (
+          findFocused &&
+          (event.target as Element).closest(".ws, .proj-h, .auto-menu, .note") !== null
+        ) {
+          event.preventDefault();
+        }
+      }}
     >
-      <span class="ch-label-cell new-workspace-label-cell">
-        <span class="new-workspace-label">New workspace</span>
-      </span>
-      <span class="ch-icon-cell new-workspace-icon" title="New workspace"
-        ><Icon name="add" size={14} /></span
-      >
-    </button>
-
-    <ul class="project-list">
-      {#each projects as project, projectIndex (project.id)}
-        {#if projectIndex > 0}
-          <vscode-divider></vscode-divider>
-        {/if}
-        <li class="project-item">
-          <div class="project-header ch-label-cell">
-            <span class="project-icon" title={project.title}>
-              <Icon name={project.remote ? "source-control" : "folder-opened"} size={14} />
-            </span>
-            <span class="project-name" title={project.title}>{project.name}</span>
-            <!-- Hide/show this project's hibernated workspaces. Present only
-                 while the project has any, so an empty project stays visibly
-                 empty. The icon reflects the current state (eye = shown,
-                 eye-closed = hidden); the tooltip states the action. Alt+X+T
-                 does the same for the active workspace's project. -->
-            {#if project.hibernatedCount > 0}
-              {@const hibernatedLabel = `${project.hideHibernated ? "Show" : "Hide"} ${
-                project.hibernatedCount
-              } hibernated ${project.hibernatedCount === 1 ? "workspace" : "workspaces"}`}
-              <button
-                type="button"
-                class="hibernated-count"
-                aria-pressed={project.hideHibernated}
-                aria-label={hibernatedLabel}
-                title={hibernatedLabel}
-                onclick={() => onToggleHideHibernated(project.id)}
-              >
-                <Icon name={project.hideHibernated ? "eye-closed" : "eye"} size={12} />
-                <span aria-hidden="true">{project.hibernatedCount}</span>
-              </button>
-            {/if}
-            <div class="project-actions">
-              <button
-                type="button"
-                class="action-btn"
-                id={`close-project-${project.id}`}
-                aria-label="Close project"
-                title="Close project"
-                onclick={() => onCloseProject(project.id)}
-              >
-                <Icon name="trash" size={14} />
-              </button>
-            </div>
+      {#each projects as project (project.id)}
+        <div class="cl projf" class:open={projectShown(project, view)}>
+          <div class="clin">
+            <ProjectCard
+              {project}
+              {view}
+              query={ql}
+              {notifications}
+              {selectedKey}
+              shortcuts={shortcutNumbers}
+              {animate}
+              {motion}
+              onToggleCollapsed={toggleCollapsed}
+              onSetHibernatedView={setHibernatedView}
+              onRevealQuestion={revealQuestion}
+              onCloseProject={(p) => api.emitEvent({ kind: "close-project", projectId: p.id })}
+              onNewWorkspace={(p) => {
+                if (view.find !== null) endFind();
+                api.emitEvent({ kind: "open-new-workspace", projectId: p.id });
+              }}
+              onRowClick={activateRow}
+              onRowAction={handleRowAction}
+            />
           </div>
-          <ul class="workspace-list">
-            {#each project.workspaces as workspace, workspaceIndex (workspace.key)}
-              {@const globalIndex = getWorkspaceGlobalIndex(projects, projectIndex, workspaceIndex)}
-              {@const displayIndex = formatIndexDisplay(globalIndex)}
-              {@const shortcutHint = getShortcutHint(globalIndex)}
-              {@const agentCounts =
-                "counts" in workspace.agent ? workspace.agent.counts : { idle: 0, busy: 0 }}
-              {@const statusText = getStatusText(agentCounts.idle, agentCounts.busy)}
-              {@const isActive = workspace.active}
-              {@const status = workspace.status}
-              {@const hasTags = workspace.tags.length > 0}
-              {@const hibernated = workspace.hibernated}
-              {@const age = hibernated ? hibernationAge(workspace.hibernatedAt) : null}
-              {@const hibernatedTitle =
-                age === null
-                  ? "Hibernated - click to wake"
-                  : `Hibernated ${age.relative} (${age.date}) - click to wake`}
-              {@const hasTitle = workspace.title !== undefined}
-              {@const primaryLabel = workspace.title ?? workspace.name}
-              <!-- Second line: the branch (only when a title took line 1) plus
-                   any tags, wrapping onto further lines when they don't fit. -->
-              {@const showSecondLine = hasTitle || hasTags}
-              {@const rowHovered = hoveredRowKey === workspace.key}
-              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-              <!-- in:arrivalFlash — pulse a row that just entered the list, so
-                   a workspace an agent created in the background announces
-                   itself instead of stealing the view. Keyed each ⇒ fires once
-                   per introduction; see arrival-flash.ts. -->
-              <li
-                class="workspace-item"
-                class:active={isActive}
-                class:has-second-line={showSecondLine}
-                class:hibernated
-                aria-current={isActive ? "true" : undefined}
-                in:arrivalFlash
-                onclick={() => onSwitchWorkspace(workspace.key)}
-                onmouseenter={() => (hoveredRowKey = workspace.key)}
-                onmouseleave={() => {
-                  if (hoveredRowKey === workspace.key) hoveredRowKey = null;
-                }}
-              >
-                <div class="workspace-row">
-                  <div class="ch-label-cell workspace-label-cell">
-                    <button
-                      type="button"
-                      class="workspace-btn"
-                      aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
-                    >
-                      <span class="ws-line ws-primary-line">
-                        {#if shortcutModeActive && !hibernated}
-                          <vscode-badge
-                            class="shortcut-badge"
-                            class:badge-dimmed={displayIndex === null}
-                            aria-hidden="true"
-                          >
-                            {displayIndex ?? "·"}
-                          </vscode-badge>
-                        {/if}
-                        <ScrollingLabel mode={labelScroll} hovered={rowHovered}>
-                          <span class="ws-primary-text">{primaryLabel}</span>
-                        </ScrollingLabel>
-                        {#if age !== null}
-                          <span class="hibernation-age" aria-hidden="true">{age.short}</span>
-                        {/if}
-                      </span>
-                      {#if showSecondLine}
-                        <span class="ws-line ws-secondary-line">
-                          {#if hasTitle}
-                            <ScrollingLabel mode={labelScroll} hovered={rowHovered}>
-                              <span class="ws-branch">{workspace.name}</span>
-                            </ScrollingLabel>
-                          {/if}
-                          <WorkspaceTags tags={workspace.tags} />
-                        </span>
-                      {/if}
-                    </button>
-                    <!-- Hover actions float over the end of the first line, so at
-                         rest the labels and tags get the cell's full width. -->
-                    {#if status === "ready" || status === "open-failed"}
-                      <div class="row-actions">
-                        {#if status === "ready" && !hibernated}
-                          <button
-                            type="button"
-                            class="action-btn hibernate-btn"
-                            aria-label="Hibernate workspace"
-                            title="Hibernate workspace"
-                            onclick={(e) => {
-                              e.stopPropagation();
-                              handleHibernateWorkspace(workspace.key);
-                            }}
-                          >
-                            <Icon name="debug-pause" size={14} />
-                          </button>
-                        {/if}
-                        {#if status === "open-failed"}
-                          <button
-                            type="button"
-                            class="action-btn retry-btn"
-                            aria-label="Retry opening workspace"
-                            title="Retry opening workspace"
-                            onclick={(e) => {
-                              e.stopPropagation();
-                              handleWakeWorkspace(workspace.key);
-                            }}
-                          >
-                            <Icon name="refresh" size={14} />
-                          </button>
-                        {/if}
-                        <button
-                          type="button"
-                          class="action-btn remove-btn"
-                          id={`remove-ws-${workspace.key}`}
-                          aria-label="Remove workspace"
-                          title="Remove workspace"
-                          onclick={(e) => {
-                            e.stopPropagation();
-                            onRemoveWorkspace(workspace.key);
-                          }}
-                        >
-                          <Icon name="trash" size={14} />
-                        </button>
-                      </div>
-                    {/if}
-                  </div>
-                  <!-- Status cell: a button in both modes (clicks bubble to the
-                       row's switch handler); the collapsed sidebar shows only
-                       this cell. For hibernated workspaces it also wakes —
-                       the click bubbles on, so the row switches too. -->
-                  <button
-                    type="button"
-                    class="ch-icon-cell status-cell"
-                    aria-label={`${workspace.name} in ${project.name} - ${status === "creating" ? "Creating" : status === "loading" ? "Loading" : status === "open-failed" ? "Failed to open" : status === "deleting" ? "Deleting" : status === "delete-failed" ? "Deletion failed" : hibernated ? hibernatedTitle : statusText}`}
-                    aria-current={isActive ? "true" : undefined}
-                    onclick={() => {
-                      if (hibernated) handleWakeWorkspace(workspace.key);
-                    }}
-                  >
-                    {#if status === "creating" || status === "loading" || status === "deleting"}
-                      <vscode-progress-ring class="row-spinner"></vscode-progress-ring>
-                    {:else if status === "open-failed"}
-                      <span
-                        class="row-error"
-                        role="img"
-                        aria-label="Failed to open"
-                        title={workspace.openError ?? "Failed to open"}
-                      >
-                        <Icon name="warning" size={14} />
-                      </span>
-                    {:else if status === "delete-failed"}
-                      <span
-                        class="row-error"
-                        role="img"
-                        aria-label="Deletion failed"
-                        title="Deletion failed"
-                      >
-                        <Icon name="warning" size={14} />
-                      </span>
-                    {:else if hibernated}
-                      <span
-                        class="hibernation-indicator"
-                        role="img"
-                        aria-label="Hibernated"
-                        title={hibernatedTitle}
-                      >
-                        <span class="icon-pause"><Icon name="debug-pause" size={14} /></span>
-                        <span class="icon-play"><Icon name="debug-start" size={14} /></span>
-                      </span>
-                    {:else}
-                      <AgentStatusIndicator
-                        idleCount={agentCounts.idle}
-                        busyCount={agentCounts.busy}
-                      />
-                    {/if}
-                  </button>
-                </div>
-              </li>
-            {/each}
-          </ul>
-        </li>
+        </div>
       {/each}
-    </ul>
-  </div>
+      {#if nothingMatches(projects, view)}
+        <div class="empty">No workspace matches “{query}”</div>
+      {/if}
+    </div>
 
-  <NotificationStack {notifications} {isExpanded} />
+    <div class="notes" class:empty={bottomNotes.length === 0}>
+      {#each bottomNotes as note (note.id)}
+        <div in:noteIn={{ enabled: animate }} out:noteOut={{ enabled: animate }}>
+          <NoteCard {note} {animate} />
+        </div>
+      {/each}
+    </div>
 
-  <!-- Drag handle on the expanded sidebar's right edge. Mouse-only (no keyboard
-       resize by design), so it is hidden from assistive tech. -->
+    <div class="sb-foot">
+      <div class="sum" title="working · waiting for you · hibernated">
+        <i><span class="ring"></span>{summary.busy}</i>
+        <i><span class="d"></span>{summary.idle}</i>
+        <i><SidebarIcon name="moon" size={10} />{summary.hibernated}</i>
+      </div>
+      <button
+        type="button"
+        class="ib newb"
+        title="New workspace (Alt+X, Enter)"
+        aria-label="New workspace"
+        onclick={() => {
+          if (view.find !== null) endFind();
+          api.emitEvent({ kind: "open-new-workspace", projectId: null });
+        }}><SidebarIcon name="plus" /></button
+      >
+      <span class="vsep"></span>
+      <button
+        type="button"
+        class="ib"
+        class:on={docked}
+        title={`${docked ? "Undock" : "Dock"} sidebar (Alt+X, P)`}
+        aria-label={docked ? "Undock sidebar" : "Dock sidebar"}
+        aria-pressed={docked}
+        onclick={() =>
+          api.emitEvent({ kind: "set-sidebar-mode", mode: docked ? "overlay" : "docked" })}
+        ><SidebarIcon name={docked ? "docked" : "undocked"} /></button
+      >
+      <button
+        type="button"
+        class="ib"
+        title="Settings (Alt+X, S)"
+        aria-label="Settings"
+        onclick={() => api.emitEvent({ kind: "open-settings" })}><SidebarIcon name="gear" /></button
+      >
+      <button
+        type="button"
+        class="ib"
+        title="Help"
+        aria-label="Help"
+        onclick={() => api.emitEvent({ kind: "open-help" })}><SidebarIcon name="help" /></button
+      >
+    </div>
+
+    <div class="rail" aria-hidden="true">
+      {#each railGroups as group (group.project.id)}
+        <div class="rgrp">
+          <span class="r-ws"
+            ><span
+              class="mono-av"
+              style:--pc={projectColor(group.project.name)}
+              title={group.project.name}>{group.project.name.slice(0, 1).toUpperCase()}</span
+            >{#if group.offRail}<span class="rn"></span>{/if}</span
+          >
+          {#each group.shown as row (row.key)}
+            {@const glyph = rowGlyph(row)}
+            <div class="r-ws" class:active={row.active}>
+              {#if glyph === "busy"}<span class="ring"></span>
+              {:else if glyph === "idle"}<span class="dot idle"></span>
+              {:else if glyph === "none"}<span class="dot none"></span>
+              {:else if glyph === "pending"}<span class="ring pending"></span>
+              {:else if glyph === "failed"}<span class="failed-icon"
+                  ><SidebarIcon name="warn" /></span
+                >
+              {:else}<span class="moon"><SidebarIcon name="moon" /></span>{/if}
+              {#if rowQuestions(notifications, row.key).length > 0 || row.editorQuestion === true}<span
+                  class="rn"
+                ></span>{/if}
+            </div>
+          {/each}
+        </div>
+      {/each}
+      <div class="rspacer"></div>
+      {#each bottomNotes as note (note.id)}
+        {@const type = note.config.type}
+        <div class="rnote {type === 'spinner' ? 'info' : type}" title={note.config.title}>
+          {#if type === "spinner" || type === "question"}<span class="ring"></span>
+          {:else}<SidebarIcon name={NOTE_RAIL_ICON[type]} />{/if}
+        </div>
+      {/each}
+    </div>
+  </aside>
+
   {#if isExpanded || dragging}
     <div
       class="resize-handle"
@@ -685,9 +792,6 @@
   {/if}
 </nav>
 
-<!-- Full-window capture layer active only while dragging: it sits above the
-     workspace iframes (which would otherwise swallow mousemove) so the drag
-     tracks smoothly, and ends the drag on release or when the pointer leaves. -->
 {#if dragging}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
@@ -699,54 +803,361 @@
 {/if}
 
 <style>
+  /* The sidebar's strip of the window: the card floats in it with an 8px margin. */
   .sidebar {
     position: absolute;
     left: 0;
     top: 0;
-    /* Minimized: show only the icon column, expanded: full width */
-    width: var(--ch-sidebar-minimized-width, 20px);
+    width: var(--ch-sidebar-minimized-width, 56px);
     height: 100%;
-    background: var(--ch-surface-1, var(--ch-background));
-    color: var(--ch-foreground);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    transition:
-      width var(--ch-sidebar-transition, 150ms ease-out),
-      box-shadow var(--ch-sidebar-transition, 150ms ease-out);
+    background: var(--ch-sb-s1);
     z-index: var(--ch-z-sidebar-minimized, 1);
     pointer-events: auto;
     user-select: none;
+    font:
+      13px/1.4 "Segoe UI Variable Text",
+      "Segoe UI",
+      Inter,
+      system-ui,
+      sans-serif;
+    color: var(--ch-sb-fg);
   }
-
-  /* Collapse snaps instead of animating: collapsing also drops the UI view
-     below the workspace views (native z-order, instant), which covers
-     everything beyond the gutter — an animated slide would only be visible
-     as the icons popping in at the end. */
-  .sidebar:not(.expanded) {
-    transition: none;
+  .sidebar :global(*) {
+    box-sizing: border-box;
   }
-
+  /* Zero specificity, so every component's own button rules win. */
+  :global(:where(.sidebar button)) {
+    font: inherit;
+    color: inherit;
+  }
   .sidebar.expanded {
-    width: var(--ch-sidebar-width, 250px);
     z-index: var(--ch-z-sidebar-expanded, 50);
-    box-shadow: var(--ch-shadow);
+  }
+  .sidebar.docked.expanded {
+    width: var(--ch-sidebar-width, 288px);
+  }
+  /* Overlay: the strip stays a rail wide; the expanded card floats over the workspace. */
+  .sidebar:not(.docked).expanded {
+    width: calc(var(--ch-sidebar-width, 288px) - 8px);
+    background: linear-gradient(
+      to right,
+      var(--ch-sb-s1) var(--ch-sidebar-minimized-width, 56px),
+      transparent var(--ch-sidebar-minimized-width, 56px)
+    );
   }
 
-  /* Docked it sits beside the workspace rather than over it: no drop shadow,
-     just an edge. */
-  .sidebar.docked {
-    box-shadow: none;
-    border-right: 1px solid var(--ch-border);
+  .sb {
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    bottom: 8px;
+    width: calc(var(--ch-sidebar-width, 288px) - 16px);
+    border-radius: 12px;
+    background: var(--ch-sb-shell);
+    border: 1px solid var(--ch-sb-line);
+    box-shadow: var(--ch-sb-shadow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 5;
   }
-
-  /* While dragging the width follows the cursor every frame; the transition
-     would only add lag. */
-  .sidebar.dragging {
+  .sb.collapsed {
+    width: calc(var(--ch-sidebar-minimized-width, 56px) - 12px);
+  }
+  .sb.peek {
+    z-index: 30;
+    box-shadow: var(--ch-sb-peek-shadow);
+  }
+  .sb.collapsed > :not(.rail) {
+    display: none;
+  }
+  .sb:not(.collapsed) > .rail {
+    display: none;
+  }
+  .sb-head {
+    padding: 10px 10px 4px;
+  }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 6px 0 10px;
+    border-radius: 8px;
+    background: var(--ch-sb-s2);
+    border: 1px solid var(--ch-sb-line);
+    color: var(--ch-sb-fg-3);
+  }
+  .search:focus-within {
+    border-color: var(--ch-sb-accent);
+    box-shadow: 0 0 0 3px var(--ch-sb-accent-soft);
+  }
+  .search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--ch-sb-fg);
+    font: inherit;
+  }
+  .search input::placeholder {
+    color: var(--ch-sb-fg-3);
+  }
+  .search .hint {
+    display: flex;
+    gap: 3px;
+  }
+  .search:focus-within .hint {
+    display: none;
+  }
+  kbd {
+    font:
+      500 10px/1 "Segoe UI",
+      system-ui;
+    color: var(--ch-sb-fg-3);
+    border: 1px solid var(--ch-sb-line-2);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 2px 4px;
+    background: var(--ch-sb-s2);
+    white-space: nowrap;
+  }
+  .sb-body {
+    flex: 1;
+    overflow: auto;
+    padding: 2px 6px 8px;
+  }
+  .sb-body,
+  .notes {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ch-sb-line-2) transparent;
+  }
+  .empty {
+    padding: 24px 12px;
+    text-align: center;
+    color: var(--ch-sb-fg-3);
+  }
+  .cl {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.22s;
+  }
+  .cl.open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  .clin {
+    overflow: hidden;
+    min-height: 0;
+    overflow-clip-margin: 5px;
+  }
+  .cl:not(.open) {
+    pointer-events: none;
+  }
+  .sb.instant .cl {
     transition: none;
   }
 
-  /* ============ Resize handle ============ */
+  .ib {
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 7px;
+    color: var(--ch-sb-fg-2);
+    border: 0;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+    flex: none;
+  }
+  .ib:hover {
+    background: var(--ch-sb-s3);
+    color: var(--ch-sb-fg);
+  }
+  .ib.on {
+    color: var(--ch-sb-accent);
+  }
+
+  .notes {
+    flex-shrink: 0;
+    max-height: 34%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-top: 1px solid var(--ch-sb-line);
+  }
+  .notes.empty {
+    display: none;
+  }
+
+  .sb-foot {
+    border-top: 1px solid var(--ch-sb-line);
+    padding: 5px 6px;
+    display: flex;
+    align-items: center;
+    gap: 1px;
+  }
+  .sum {
+    flex: 1;
+    font-size: 11px;
+    color: var(--ch-sb-fg-3);
+    padding-left: 6px;
+    display: flex;
+    gap: 10px;
+  }
+  .sum i {
+    font-style: normal;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .sum .ring {
+    width: 9px;
+    height: 9px;
+    border-width: 1.5px;
+    animation: none;
+  }
+  .sum .d {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ch-sb-idle);
+  }
+  .vsep {
+    width: 1px;
+    height: 16px;
+    background: var(--ch-sb-line-2);
+    margin: 0 3px;
+  }
+  .newb {
+    color: var(--ch-sb-fg);
+  }
+  .newb:hover {
+    background: var(--ch-sb-accent);
+    color: #fff;
+  }
+
+  .rail {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 6px 0;
+    gap: 2px;
+    overflow: hidden;
+  }
+  .rgrp {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 5px 0 4px;
+    width: 34px;
+    background: var(--ch-sb-s2);
+    border: 1px solid var(--ch-sb-line);
+    border-radius: 9px;
+    margin: 3px 0;
+  }
+  .r-ws {
+    position: relative;
+    width: 28px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 7px;
+  }
+  .r-ws .rn {
+    position: absolute;
+    right: 1px;
+    top: 1px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ch-sb-ask);
+    box-shadow: 0 0 0 1.5px var(--ch-sb-s2);
+  }
+  .r-ws.active {
+    background: var(--ch-sb-accent-soft);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ch-sb-accent) 35%, transparent);
+  }
+  .rspacer {
+    flex: 1;
+  }
+  .rnote {
+    width: 28px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 7px;
+  }
+  .rnote.error {
+    color: var(--ch-sb-danger);
+  }
+  .rnote.warning {
+    color: var(--ch-sb-warn);
+  }
+  .rnote.info {
+    color: var(--ch-sb-accent);
+  }
+  .mono-av {
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    font-size: 10px;
+    color: #fff;
+    flex: none;
+    background: var(--pc);
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: block;
+  }
+  .dot.idle {
+    background: var(--ch-sb-idle);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ch-sb-idle) 20%, transparent);
+  }
+  .dot.none {
+    border: 1.5px solid var(--ch-sb-fg-3);
+  }
+  .ring {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 2px solid var(--ch-sb-spin-track);
+    border-top-color: var(--ch-sb-spin-head);
+    animation: spin 0.9s linear infinite;
+    display: block;
+  }
+  .ring.pending {
+    border: 2px dotted var(--ch-sb-fg-3);
+    animation-duration: 2.4s;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .moon {
+    color: var(--ch-sb-fg-3);
+    display: grid;
+  }
+  .failed-icon {
+    color: var(--ch-sb-danger);
+    display: grid;
+  }
 
   .resize-handle {
     position: absolute;
@@ -755,19 +1166,14 @@
     bottom: 0;
     width: 6px;
     cursor: ew-resize;
-    z-index: 1;
-    /* A thin accent line, revealed on hover / while dragging. */
+    z-index: 40;
     background: transparent;
     transition: background-color 120ms ease-out;
   }
-
   .resize-handle:hover,
   .resize-handle.dragging {
-    background: var(--ch-focus-border);
+    background: var(--ch-sb-accent);
   }
-
-  /* Full-window pointer capture during a drag: transparent, above every UI
-     layer and the workspace iframes, keeping the ew-resize cursor throughout. */
   .resize-overlay {
     position: fixed;
     inset: 0;
@@ -775,457 +1181,9 @@
     cursor: ew-resize;
   }
 
-  /* Two-column row cells: .ch-icon-cell / .ch-label-cell come from global.css. */
-
-  /* Shrink-to-zero zones inside two-column rows. Inner content keeps its own
-     spacing and is clipped while the width animates. */
-  .header-label,
-  .new-workspace-label-cell,
-  .workspace-label-cell {
-    flex: 1 1 0;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    overflow: hidden;
-  }
-
   @media (prefers-reduced-motion: reduce) {
-    .sidebar {
-      transition: none;
+    .ring {
+      animation: none;
     }
-  }
-
-  /* ============ Header ============ */
-
-  .sidebar-header {
-    display: flex;
-    align-items: center;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--ch-input-border);
-  }
-
-  .expand-hint {
-    opacity: 0.5;
-    align-self: stretch;
-  }
-
-  .expand-hint:hover {
-    opacity: 1;
-  }
-
-  /* Dock, gear and help buttons in the (expanded) PROJECTS header. */
-  .header-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    margin-right: 12px;
-  }
-
-  .sidebar-header h2 {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin: 0 0 0 20px;
-    opacity: 0.7;
-    white-space: nowrap;
-  }
-
-  .sidebar-content {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
-
-  /* Collapsed, the gutter is only ~20px wide, so the native scrollbar would
-     sit on top of the status-indicator icon column and hide it. Hide the
-     scrollbar in collapsed mode (wheel scrolling still works); the real
-     scrollbar returns when the sidebar expands and has room for it. */
-  .sidebar:not(.expanded) .sidebar-content {
-    scrollbar-width: none;
-  }
-
-  .sidebar:not(.expanded) .sidebar-content::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* ============ New workspace entry ============ */
-
-  .new-workspace-entry {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    min-height: 36px;
-    padding: 4px 0;
-    background: transparent;
-    border: none;
-    color: var(--ch-foreground);
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
-    text-align: left;
-  }
-
-  .new-workspace-entry:hover {
-    background: var(--ch-list-hover-bg);
-  }
-
-  .new-workspace-entry:focus-visible {
-    outline: 1px solid var(--ch-focus-border);
-    outline-offset: -1px;
-  }
-
-  .new-workspace-entry.active {
-    background: var(--ch-accent-muted, var(--ch-list-active-bg));
-    color: var(--ch-list-active-fg);
-    position: relative;
-  }
-
-  .new-workspace-entry.active::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 8px;
-    bottom: 8px;
-    width: 3px;
-    border-radius: 0 2px 2px 0;
-    background: var(--ch-focus-border);
-  }
-
-  .new-workspace-label {
-    margin-left: 28px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .new-workspace-icon {
-    opacity: 0.8;
-  }
-
-  .new-workspace-entry:hover .new-workspace-icon,
-  .new-workspace-entry.active .new-workspace-icon {
-    opacity: 1;
-  }
-
-  /* ============ Projects ============ */
-
-  .project-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  .project-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 4px 12px 4px 28px;
-    gap: 8px;
-  }
-
-  .project-icon {
-    opacity: 0.7;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-  }
-
-  .project-name {
-    flex: 1;
-    font-weight: 600;
-    font-size: 13px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* Hibernated count / hide-show toggle in the project header. Dimmed and
-     tabular so a column of projects reads as one list rather than competing
-     with the project names. */
-  .hibernated-count {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    flex-shrink: 0;
-    background: transparent;
-    border: none;
-    border-radius: var(--ch-radius-sm, 6px);
-    color: var(--ch-foreground);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    padding: 2px 4px;
-    opacity: 0.55;
-  }
-
-  .hibernated-count:hover {
-    opacity: 1;
-    background: var(--ch-list-hover-bg);
-  }
-
-  .project-actions {
-    display: flex;
-    gap: 4px;
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-
-  .project-header:hover .project-actions,
-  .project-header:focus-within .project-actions {
-    opacity: 1;
-  }
-
-  .action-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    color: var(--ch-foreground);
-    cursor: pointer;
-    padding: 2px 6px;
-    opacity: 0.7;
-    border-radius: var(--ch-radius-sm, 6px);
-  }
-
-  .action-btn:hover {
-    opacity: 1;
-    background: var(--ch-list-hover-bg);
-  }
-
-  /* ============ Workspaces ============ */
-
-  .workspace-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  .workspace-item {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding: 4px 0;
-    min-height: 44px; /* Accessible click target */
-    cursor: pointer;
-    border-radius: var(--ch-radius-sm, 6px);
-    position: relative;
-  }
-
-  .sidebar.expanded .workspace-item.has-second-line {
-    padding-bottom: 6px;
-  }
-
-  /* Cells align to the top, so the status icon stays on the first line beside
-     the hover actions, however many lines the labels wrap onto. */
-  .workspace-row {
-    display: flex;
-    align-items: flex-start;
-  }
-
-  .workspace-btn {
-    flex: 1 1 0;
-    min-width: 0;
-    background: transparent;
-    border: none;
-    color: var(--ch-foreground);
-    cursor: pointer;
-    text-align: left;
-    padding: 4px 8px 4px 20px;
-    font-size: 13px;
-    border-radius: var(--ch-radius-sm, 6px);
-    /* Stack the primary label over the branch/tags line. */
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow: hidden;
-  }
-
-  .ws-line {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-  }
-
-  .ws-primary-line {
-    gap: 4px;
-  }
-
-  /* The scrolling label fills the line and clips; the shortcut badge (if any)
-     keeps its intrinsic width beside it. */
-  .ws-line :global(.scroll) {
-    flex: 1 1 0;
-  }
-
-  /* Branch and tags wrap instead of clipping; a branch too long for a line of
-     its own still scrolls. */
-  .ws-secondary-line {
-    font-size: 11px;
-    flex-wrap: wrap;
-    gap: 3px 6px;
-  }
-
-  .ws-secondary-line :global(.scroll) {
-    flex: 0 1 auto;
-    max-width: 100%;
-  }
-
-  .ws-branch {
-    color: var(--ch-foreground);
-    opacity: 0.6;
-  }
-
-  /* As tall as the first line's box (.workspace-btn's 4px padding around the
-     18px line .row-actions also spans), so its icon centers on that line. */
-  .status-cell {
-    height: 26px;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    padding: 4px;
-    border-radius: var(--ch-radius-sm, 6px);
-  }
-
-  .status-cell:hover {
-    background: var(--ch-list-hover-bg);
-  }
-
-  .status-cell:focus-visible {
-    outline: 1px solid var(--ch-focus-border);
-    outline-offset: -1px;
-  }
-
-  .workspace-item.active {
-    background: var(--ch-accent-muted, var(--ch-list-active-bg));
-    color: var(--ch-list-active-fg);
-  }
-
-  .workspace-item.active::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 8px;
-    bottom: 8px;
-    width: 3px;
-    border-radius: 0 2px 2px 0;
-    background: var(--ch-focus-border);
-  }
-
-  .workspace-item.active .workspace-btn {
-    color: inherit;
-  }
-
-  .workspace-item:hover {
-    background: var(--ch-list-hover-bg);
-  }
-
-  .workspace-item.active:hover {
-    background: var(--ch-list-active-bg);
-  }
-
-  /* Keyboard-only: mouse clicks focus the inner buttons too, and the active
-     row highlight already covers that case. */
-  .workspace-item:has(:focus-visible) {
-    outline: 1px solid var(--ch-focus-border);
-    outline-offset: -1px;
-  }
-
-  .workspace-label-cell {
-    position: relative;
-  }
-
-  /* Overlays the end of the first line, so it never takes width from the
-     labels; while shown, the first line makes room. Invisible at rest, but still
-     in the accessibility tree and the tab order (a pointer over it hovers the
-     row, so it is never clicked unseen). */
-  .row-actions {
-    position: absolute;
-    top: 4px;
-    right: 0;
-    display: flex;
-    align-items: center;
-    height: 18px;
-    opacity: 0;
-  }
-
-  .workspace-item:hover .row-actions,
-  .workspace-item:focus-within .row-actions {
-    opacity: 1;
-  }
-
-  .workspace-item:hover .workspace-label-cell:has(.row-actions) .ws-primary-line,
-  .workspace-item:focus-within .workspace-label-cell:has(.row-actions) .ws-primary-line {
-    padding-right: 48px;
-  }
-
-  .shortcut-badge {
-    margin-right: 0.25rem;
-  }
-
-  .badge-dimmed {
-    opacity: 0.4;
-  }
-
-  .row-spinner {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-  }
-
-  .row-error {
-    --vscode-icon-foreground: var(--ch-danger);
-    font-size: 14px;
-    flex-shrink: 0;
-  }
-
-  .hibernation-indicator {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.55;
-    flex-shrink: 0;
-  }
-
-  /* Pause at rest, play while hovering the status cell (= "click to wake"). */
-  .hibernation-indicator .icon-pause {
-    display: flex;
-  }
-
-  .hibernation-indicator .icon-play {
-    display: none;
-  }
-
-  .status-cell:hover .icon-pause {
-    display: none;
-  }
-
-  .status-cell:hover .icon-play {
-    display: flex;
-  }
-
-  .status-cell:hover .hibernation-indicator {
-    opacity: 1;
-  }
-
-  .workspace-item.hibernated .workspace-btn {
-    opacity: 0.55;
-    font-style: italic;
-  }
-
-  /* How long it has slept: dim, after the label (already dimmed with the row).
-     Gives way to the hover actions, which take the same spot. */
-  .hibernation-age {
-    flex-shrink: 0;
-    font-size: 11px;
-    font-style: normal;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .workspace-item:hover .hibernation-age,
-  .workspace-item:focus-within .hibernation-age {
-    display: none;
   }
 </style>

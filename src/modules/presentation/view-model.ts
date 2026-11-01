@@ -13,6 +13,14 @@ import { extractTags, readTitle } from "../../shared/api/types";
 import type { UiWorkspaceRow } from "../../shared/ui-state";
 import type { ProjectPath, ProjectRef, WorkspaceRef } from "../../intents/contract";
 import { asWorkspaceRef } from "../../utils/ref";
+import { decodeWakeup, WAKEUP_METADATA_KEY } from "../wakeup-module";
+
+/**
+ * The tag older versions set beside a wakeup script (an alarm clock). The
+ * sidebar now shows such a workspace as automated instead, so the tag is
+ * never shown even where it is still stored.
+ */
+const LEGACY_WAKEUP_TAG = "wakeup";
 
 /**
  * Semantic workspace view-model. The UI cares about meanings, not metadata:
@@ -34,6 +42,11 @@ export interface WorkspaceModel {
    * unrecorded or unparsable. Only meaningful while `hibernated`.
    */
   hibernatedAt: string | undefined;
+  /**
+   * The wakeup script (metadata `wakeup`, its `script` field); undefined when
+   * there is none or it is unreadable. Only shown while `hibernated`.
+   */
+  wakeupScript: string | undefined;
   tags: WorkspaceTag[];
   url: string | undefined;
   /**
@@ -70,13 +83,47 @@ export interface RowEntry extends WorkspaceEntry {
 /** Interpret a workspace's domain metadata into the semantic model fields. */
 export function fromMetadata(
   metadata: Readonly<Record<string, string>>
-): Pick<WorkspaceModel, "hibernated" | "hibernatedAt" | "tags" | "title"> {
+): Pick<WorkspaceModel, "hibernated" | "hibernatedAt" | "wakeupScript" | "tags" | "title"> {
   return {
     hibernated: metadata["hibernated"] === "true",
     hibernatedAt: readHibernatedAt(metadata["hibernated-at"]),
-    tags: extractTags(metadata),
+    wakeupScript: readWakeupScript(metadata[WAKEUP_METADATA_KEY]),
+    tags: readTags(metadata),
     title: readTitle(metadata["title"]),
   };
+}
+
+/** A stored `wakeup` metadata value's script, or undefined. */
+export function readWakeupScript(value: string | null | undefined): string | undefined {
+  return decodeWakeup(value ?? undefined)?.script;
+}
+
+/** The tags a row shows: every tag but the legacy wakeup one. */
+export function readTags(metadata: Readonly<Record<string, string>>): WorkspaceTag[] {
+  return extractTags(metadata).filter((tag) => tag.name !== LEGACY_WAKEUP_TAG);
+}
+
+/**
+ * Display order of a project's rows: hibernated without a wakeup script, then
+ * hibernated with one (each most recently hibernated first; an unrecorded time
+ * after the known ones), then the awake ones; ties and awake rows by name.
+ */
+export function compareRows(
+  a: WorkspaceModel,
+  b: WorkspaceModel,
+  compareNames: (a: string, b: string) => number
+): number {
+  const group = (w: WorkspaceModel): number =>
+    !w.hibernated ? 2 : w.wakeupScript === undefined ? 0 : 1;
+  const byGroup = group(a) - group(b);
+  if (byGroup !== 0) return byGroup;
+  if (a.hibernated) {
+    const at = (w: WorkspaceModel): number =>
+      w.hibernatedAt === undefined ? -Infinity : Date.parse(w.hibernatedAt);
+    const byTime = at(b) - at(a);
+    if (byTime !== 0 && !Number.isNaN(byTime)) return byTime;
+  }
+  return compareNames(a.name, b.name);
 }
 
 /** A `hibernated-at` value as a valid ISO timestamp, or undefined. */

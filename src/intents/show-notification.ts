@@ -66,7 +66,8 @@ export const notificationConfigSchema = z
   .object({
     title: z.string().min(1),
     message: z.string().optional(),
-    type: z.enum(["info", "warning", "error", "spinner"]),
+    // "question": a `ch ws ask` card (vscode.ask); `ch notification show` does not offer it.
+    type: z.enum(["info", "warning", "error", "spinner", "question"]),
     /** 0-1 for determinate, true for indeterminate, omitted for none. */
     progress: z.union([z.number().min(0).max(1), z.literal(true)]).optional(),
     dismissible: z.boolean().optional(),

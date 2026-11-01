@@ -37,7 +37,7 @@ Everything lands in `./app-data`: `logs/`, `screenshots/`, `appctrl-console.json
 ## Must-know
 
 - `@vscode-elements` components have shadow DOM: CSS selectors cannot reach inside. Use `role=button[name="Create"]` / `text=Create` selectors from `dom`; type into a focused field rather than `type --selector`.
-- The sidebar is 20px and clipped until hovered, and headless has no cursor: `expand-sidebar` before clicking anything in it.
+- The sidebar is a 56px rail until hovered, and headless has no cursor: `expand-sidebar` before clicking anything in it.
 - In workspace views use `key` / `type`; synthetic `KeyboardEvent`s and `acquireVsCodeApi` do not work there.
 - `eval` takes an expression: wrap statements in an IIFE, never a bare `return`.
 - **Never open the user's real projects**: create a temp git repo and `dialog` it before clicking Open Project.

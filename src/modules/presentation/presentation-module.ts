@@ -48,7 +48,7 @@ import type { IViewManager } from "../../boundaries/shell/view-manager.interface
 import type { Theme } from "../../boundaries/shell/window-manager";
 import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { AgentStatus, DeletionProgress } from "../../shared/api/types";
-import { extractTags, readTitle, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
+import { readTitle, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
@@ -94,6 +94,7 @@ import {
   type PrepareCaptureHookResult,
   type CleanupCaptureHookResult,
 } from "../../intents/hibernate-workspace";
+import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../../intents/vscode-modal-changed";
 import {
   INTENT_WAKE_WORKSPACE,
   EVENT_WORKSPACE_WAKE_FAILED,
@@ -108,12 +109,13 @@ import {
   clampSidebarWidthMin,
   compareDisplayNames,
   SIDEBAR_MODES,
-  type SidebarLabelScroll,
+  type HibernatedView,
   type SidebarMode,
   type UiDeletionProgress,
   type UiMainView,
   type UiNotification,
   type UiProjectRow,
+  type UiSidebarFind,
   type UiState,
   type UiWorkspaceRow,
 } from "../../shared/ui-state";
@@ -129,8 +131,9 @@ import {
 } from "./sessions";
 import { createNotificationHooks } from "./notification-hooks";
 import { createModalEdges } from "../modal-edges";
+import { WAKEUP_METADATA_KEY } from "../wakeup-module";
 import { getErrorMessage } from "../../shared/error-utils";
-import type { WorkspaceRef } from "../../intents/contract";
+import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
 import { makeWorkspaceRef, projectNameOf, projectRefOf } from "../../utils/ref";
 import { createWorkspaceStatusCache } from "../workspace-status-cache";
 import { createRunningHooks, type RunningHook } from "./running-hooks";
@@ -138,8 +141,11 @@ import { createStartupSurface } from "./startup-surface";
 import { createShortcutNavigation } from "./navigation";
 import {
   PresentationModel,
+  compareRows,
   fromMetadata,
   readHibernatedAt,
+  readTags,
+  readWakeupScript,
   type ProjectModel,
   type RowEntry,
   type WorkspaceEntry,
@@ -168,8 +174,8 @@ export interface PresentationModuleDeps {
   readonly configService: Pick<Config, "register">;
   /**
    * Runtime state store (state.json). The presenter registers
-   * `sidebar.hidden-hibernated-projects` here — a user-toggled visibility preference, not a
-   * config setting — and reads/writes it directly (mirrors labelScroll/silent,
+   * `sidebar.collapsed-projects` here — a user-toggled view preference, not a
+   * config setting — and reads/writes it directly (mirrors silent,
    * but persisted to state.json rather than config.json).
    */
   readonly stateService: Pick<StateService, "register">;
@@ -185,15 +191,15 @@ export interface PresentationModuleDeps {
    */
   readonly onOpenHelp?: () => void;
   /**
-   * Called when the renderer emits the `open-workspace-search` ui event (the
-   * sidebar magnifier). Wired in the composition root to the
-   * workspace-search module.
+   * Called when the renderer emits the `open-new-workspace` ui event (a
+   * sidebar + button), after the switch to the creation panel is dispatched.
+   * `projectRef` is the project to preset (a project card's +), null to keep
+   * the form's own choice; `deselecting` says a workspace was active, so that
+   * switch is still landing. Wired in the composition root to the creation
+   * module.
    */
-  readonly onOpenWorkspaceSearch?: () => void;
+  readonly onOpenNewWorkspace?: (projectRef: ProjectRef | null, deselecting: boolean) => void;
 }
-
-/** Allowed values for the `sidebar.label-scroll` config key. */
-const LABEL_SCROLL_VALUES = ["always", "hover", "off"] as const;
 
 export type { RunningHook } from "./running-hooks";
 
@@ -234,23 +240,6 @@ export interface UiPresenter extends IntentModule {
   trackRunningHook(hook: RunningHook): () => void;
   /** Cancel every running plugin hook of a workspace (the deletion panel's Cancel). */
   cancelRunningHooks(workspaceRef: WorkspaceRef): void;
-  /**
-   * Every workspace row in sidebar order, each with its project's name —
-   * hibernated rows included even while their project hides them.
-   * The workspace search lists these.
-   */
-  workspaceRows(): readonly ProjectWorkspaceRow[];
-  /**
-   * Subscribe to snapshot pushes: the listener runs after every push, i.e.
-   * whenever anything the UI shows has changed. Returns the unsubscribe.
-   */
-  onPush(listener: () => void): () => void;
-}
-
-/** A workspace row with the name of the project it belongs to. */
-export interface ProjectWorkspaceRow {
-  readonly projectName: string;
-  readonly row: UiWorkspaceRow;
 }
 
 /**
@@ -262,7 +251,7 @@ function toLoggerName(name: string): LoggerName {
   return VALID_RENDERER_LOGGER_NAMES.has(name) ? (name as LoggerName) : "ui";
 }
 
-/** Validate `sidebar.hidden-hibernated-projects`: a list of project refs. */
+/** Validate `sidebar.collapsed-projects`: a list of project refs. */
 function validateRefList(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const refs: string[] = [];
@@ -472,7 +461,6 @@ function projectForLog(state: UiState): string {
         ? { ...state.main, screenshot: state.main.screenshot?.length ?? null }
         : state.main,
     theme: state.theme,
-    labelScroll: state.labelScroll,
     silent: state.silent,
     mode: state.mode,
     capturing: state.capturing,
@@ -494,19 +482,6 @@ function toAgentStatus(status: AggregatedAgentStatus | undefined): AgentStatus {
 export function createPresentationModule(deps: PresentationModuleDeps): UiPresenter {
   const logger = deps.loggingService.createLogger("presenter");
 
-  // Sidebar row labels can overflow the narrow rail; this key picks how the
-  // custom-title / branch lines scroll when they do (tags wrap instead). Read (via the
-  // accessor) at snapshot-build time and shipped in every ui:state push.
-  const labelScrollConfig = deps.configService.register<SidebarLabelScroll>(
-    "sidebar.label-scroll",
-    {
-      default: "hover",
-      description: "How overflowing sidebar row labels scroll: always|hover|off",
-      applies: "live",
-      ...storeEnum(LABEL_SCROLL_VALUES),
-    }
-  );
-
   // Whether the sidebar overlays the workspace (collapsed strip, expands on
   // hover) or is docked beside it (always expanded, the workspace shrinks).
   // Read at snapshot-build time; the header button (set-sidebar-mode ui:event)
@@ -519,7 +494,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     ...storeEnum(SIDEBAR_MODES),
   });
 
-  // Read at snapshot-build time like labelScroll, so flipping it re-pushes
+  // Read at snapshot-build time, so flipping it re-pushes
   // ui:state and the very next chime is suppressed — no restart, and the
   // renderer never caches the value.
   const silentConfig = deps.configService.register("silent", {
@@ -529,32 +504,42 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     ...storeBoolean(),
   });
 
-  // Projects (by ref) whose hibernated workspaces are hidden from the sidebar.
-  // A user-toggled runtime preference (project hibernated-count button /
-  // Alt+X+T), so it lives in state.json, not config. A ref stays listed after
-  // its project closes, so the choice survives reopening it. Read at
-  // snapshot-build time and when navigating, so flipping it re-pushes ui:state;
-  // the presenter both filters the rows and ships the per-project flag.
-  const hiddenHibernatedProjectsState = deps.stateService.register(
-    "sidebar.hidden-hibernated-projects",
-    {
-      default: [] as readonly string[],
-      description: "Projects whose hibernated workspaces are hidden from the sidebar list",
-      ...storeCustom<readonly string[]>({
-        parse: (raw) => {
-          try {
-            return validateRefList(JSON.parse(raw));
-          } catch {
-            return undefined;
-          }
-        },
-        validate: validateRefList,
-      }),
-    }
-  );
+  // Projects (by ref) whose sidebar card is collapsed to its header. A
+  // user-toggled runtime preference (the card's header bar), so it lives in
+  // state.json, not config. A ref stays listed after its project closes, so
+  // the choice survives reopening it. Read at snapshot-build time and when
+  // navigating (the arrows skip collapsed projects), so flipping it re-pushes.
+  const collapsedProjectsState = deps.stateService.register("sidebar.collapsed-projects", {
+    default: [] as readonly string[],
+    description: "Projects whose sidebar card is collapsed",
+    ...storeCustom<readonly string[]>({
+      parse: (raw) => {
+        try {
+          return validateRefList(JSON.parse(raw));
+        } catch {
+          return undefined;
+        }
+      },
+      validate: validateRefList,
+    }),
+  });
 
-  function hidesHibernated(project: ProjectModel): boolean {
-    return hiddenHibernatedProjectsState.get().includes(project.ref);
+  function isCollapsed(project: ProjectModel): boolean {
+    return collapsedProjectsState.get().includes(project.ref);
+  }
+
+  /**
+   * How much of each project's hibernated list is shown, by project ref
+   * (absent = "hidden"). Not persisted: the list folds away again as soon as
+   * the pointer leaves the card, and whenever one of its workspaces hibernates.
+   */
+  const hibernatedViews = new Map<ProjectRef, HibernatedView>();
+  /** The sidebar's Find field has the focus (null: it has not). */
+  let find: UiSidebarFind | null = null;
+
+  /** hidden → manual → all → hidden: what Alt+X, T steps through. */
+  function nextHibernatedView(view: HibernatedView): HibernatedView {
+    return view === "hidden" ? "manual" : view === "manual" ? "all" : "hidden";
   }
 
   // The presenter privately owns the dialog/notification registries. They hold
@@ -593,6 +578,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * exit is still talking over.
    */
   const framesReleased = new Set<WorkspaceRef>();
+  /** Workspaces with a question open in their editor (`vscode:modal-changed`, source editor). */
+  const editorQuestions = new Set<WorkspaceRef>();
   /** Hibernation screenshot data URLs keyed by workspace ref (null = missing). */
   const screenshots = new Map<WorkspaceRef, string | null>();
   const screenshotLoads = new Set<WorkspaceRef>();
@@ -657,7 +644,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     rowStatus,
     dispatch: dispatchDetached,
     deleteWorkspace: dispatchInteractiveDelete,
-    toggleHideHibernated,
+    collapsed: isCollapsed,
+    cycleHibernatedView,
+    openFind: () => setFind(true),
     toggleSidebarMode: () =>
       setSidebarMode(sidebarModeConfig.get() === "docked" ? "overlay" : "docked"),
   });
@@ -720,6 +709,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    */
   function buildRow(workspace: WorkspaceModel): UiWorkspaceRow {
     const progress = deletions.get(workspace.ref);
+    const asking = editorQuestions.has(workspace.ref);
     const agent = toAgentStatus(agents.statuses.get(workspace.ref));
     // A workspace still being created has its ref already, so the first
     // hook-trust question (raised during after-worktree-created) marks its
@@ -733,6 +723,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       hibernated: workspace.hibernated,
       ...(workspace.hibernated &&
         workspace.hibernatedAt !== undefined && { hibernatedAt: workspace.hibernatedAt }),
+      ...(workspace.hibernated &&
+        workspace.wakeupScript !== undefined && { wakeupScript: workspace.wakeupScript }),
       // A dialog waiting on the user reads as idle for as long as it waits: the
       // green row (and the chime the renderer derives from these counts) is the
       // signal the user already answers to, and a question nobody notices is
@@ -743,34 +735,35 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       tags: [...workspace.tags],
       active: workspace.ref === model.activeRef,
       ...(workspace.openError !== undefined && { openError: workspace.openError }),
+      ...(asking && { editorQuestion: true }),
       // Derive the render-ready row view from the full tracked progress.
       ...(progress && { deletionProgress: toUiDeletionProgress(progress) }),
     };
   }
 
-  /** Projects in display order, each with its rows in display order (AaBbCc). */
+  /**
+   * Projects in display order (AaBbCc), each with its rows in display order:
+   * hibernated (most recent first), then automated, then awake by name (see
+   * compareRows).
+   */
   function sortedProjects(): Array<[ProjectModel, WorkspaceModel[]]> {
     return [...model.workspacesByProject()]
       .sort(([a], [b]) => compareDisplayNames(a.name, b.name))
       .map(([project, workspaces]) => [
         project,
-        workspaces.sort((a, b) => compareDisplayNames(a.name, b.name)),
+        workspaces.sort((a, b) => compareRows(a, b, compareDisplayNames)),
       ]);
   }
 
   /**
    * All workspace rows in sidebar display order — the authoritative ordering
-   * shared by the snapshot (buildSnapshot) and shortcut navigation. When
-   * a project is in `sidebar.hidden-hibernated-projects`, its hibernated rows
-   * are omitted so keyboard navigation matches the visible list (up/down can
-   * never land on a hidden row).
+   * shared by the snapshot (buildSnapshot) and shortcut navigation, which
+   * itself skips the rows of collapsed projects.
    */
   function currentRows(): RowEntry[] {
     const entries: RowEntry[] = [];
     for (const [project, workspaces] of sortedProjects()) {
-      const hideHibernated = hidesHibernated(project);
       for (const workspace of workspaces) {
-        if (hideHibernated && workspace.hibernated) continue;
         entries.push({ row: buildRow(workspace), project, workspace });
       }
     }
@@ -818,7 +811,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     // deletion panel.
     if (shortcutActive) return "shortcut";
     if (dialogs.isModalOpen()) return "dialog";
-    if (creationMain || hoverRegion === "sidebar") return "hover";
+    // The Find field keeps the sidebar expanded like a hover: it is typed into.
+    if (creationMain || hoverRegion === "sidebar" || find !== null) return "hover";
     return "workspace";
   }
 
@@ -870,24 +864,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   };
 
   function buildSnapshot(): UiState {
-    const projectRows: UiProjectRow[] = sortedProjects().map(([project, workspaces]) => {
-      const rows = workspaces.map(buildRow);
-      // Omit hibernated rows when the project's visibility toggle is on, but
-      // report how many are hibernated so the sidebar can say so — an
-      // all-asleep project would otherwise look empty. An active hibernated
-      // workspace is hidden too (main still shows its hibernated screen);
-      // recover via the project's count button, Alt+X+T, or Alt+X+H.
-      const hideHibernated = hidesHibernated(project);
-      return {
-        id: project.id,
-        name: project.name,
-        title: project.remoteUrl ?? project.path,
-        remote: project.remoteUrl !== undefined,
-        workspaces: hideHibernated ? rows.filter((row) => !row.hibernated) : rows,
-        hibernatedCount: rows.filter((row) => row.hibernated).length,
-        hideHibernated,
-      };
-    });
+    const projectRows: UiProjectRow[] = sortedProjects().map(([project, workspaces]) => ({
+      id: project.id,
+      name: project.name,
+      title: project.remoteUrl ?? project.path,
+      remote: project.remoteUrl !== undefined,
+      workspaces: workspaces.map(buildRow),
+      collapsed: isCollapsed(project),
+      hibernatedView: hibernatedViews.get(project.ref) ?? "hidden",
+    }));
 
     const frames: Record<string, string> = {};
     for (const { workspace } of model.workspaces.values()) {
@@ -927,11 +912,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         projects: projectRows,
         width: clampSidebarWidthMin(deps.sidebarWidthConfig.get()),
         mode: sidebarModeConfig.get(),
+        find,
       },
       frames,
       main,
       theme,
-      labelScroll: labelScrollConfig.get(),
       silent: silentConfig.get(),
       mode: buildMode(main.kind === "creation"),
       capturing,
@@ -979,16 +964,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     // at silly — the projection stays greppable either way).
     logger.debug("ui:state push", { state: projectForLog(snapshot) });
     logger.silly("ui:state push", { snapshot: JSON.stringify(snapshot) });
-    for (const listener of pushListeners) listener();
-  }
-
-  /** Listeners run after every push; see UiPresenter.onPush. */
-  const pushListeners = new Set<() => void>();
-
-  function workspaceRows(): ProjectWorkspaceRow[] {
-    return sortedProjects().flatMap(([project, workspaces]) =>
-      workspaces.map((workspace) => ({ projectName: project.name, row: buildRow(workspace) }))
-    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1157,18 +1132,26 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       case "open-help":
         deps.onOpenHelp?.();
         return;
-      case "open-workspace-search":
-        deps.onOpenWorkspaceSearch?.();
+      case "toggle-project-collapsed": {
+        const project = knownProject(event.kind, event.projectId);
+        if (project) toggleCollapsed(project);
         return;
-      case "toggle-hide-hibernated": {
-        const project = model.projectById(event.projectId);
-        if (!project) {
-          logger.warn("Dropped toggle-hide-hibernated for unknown project", {
-            projectId: event.projectId,
-          });
-          return;
-        }
-        toggleHideHibernated(project);
+      }
+      case "set-hibernated-view": {
+        const project = knownProject(event.kind, event.projectId);
+        if (project) setHibernatedView(project, event.view);
+        return;
+      }
+      case "set-find":
+        setFind(event.active);
+        return;
+      case "open-new-workspace": {
+        const project =
+          event.projectId === null ? undefined : knownProject(event.kind, event.projectId);
+        if (event.projectId !== null && project === undefined) return;
+        const deselecting = model.activeRef !== null;
+        dispatchDetached({ type: INTENT_SWITCH_WORKSPACE, payload: { workspaceRef: null } });
+        deps.onOpenNewWorkspace?.(project?.ref ?? null, deselecting);
         return;
       }
       case "set-sidebar-mode":
@@ -1235,21 +1218,81 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     deps.dispatcher.withOrigin({ origin: "ui" }, () => listener(...args))
   );
 
+  /** The project an echoed projectId names; a stale one is dropped with a warning. */
+  function knownProject(kind: string, projectId: string): ProjectModel | undefined {
+    const project = model.projectById(projectId);
+    if (!project) logger.warn(`Dropped ${kind} for unknown project`, { projectId });
+    return project;
+  }
+
   /**
-   * Flip one project in the `sidebar.hidden-hibernated-projects` state and
-   * re-push. Driven by both the project's count button (ui:event) and the
-   * Alt+X+T shortcut (active workspace's project). Persist failures are logged
-   * but not surfaced — the in-memory flip already took effect via the snapshot;
-   * the value simply won't survive a restart.
+   * Collapse or expand one project card (the `sidebar.collapsed-projects`
+   * state) and re-push. Persist failures are logged but not surfaced — the
+   * in-memory flip already took effect via the snapshot; the value simply
+   * won't survive a restart.
+   *
+   * Collapsing the project of the active workspace moves on, as Alt+X, Down
+   * would from its last workspace: to the first awake workspace of the next
+   * expanded project, wrapping round. With none, the active workspace stays.
    */
-  function toggleHideHibernated(project: ProjectModel): void {
-    const current = hiddenHibernatedProjectsState.get();
-    const next = current.includes(project.ref)
-      ? current.filter((ref) => ref !== project.ref)
-      : [...current, project.ref];
-    void hiddenHibernatedProjectsState.set(next).catch((error: unknown) => {
-      logger.warn("Failed to persist hide-hibernated toggle", { error: getErrorMessage(error) });
+  function toggleCollapsed(project: ProjectModel): void {
+    const current = collapsedProjectsState.get();
+    const collapsing = !current.includes(project.ref);
+    const next = collapsing
+      ? [...current, project.ref]
+      : current.filter((ref) => ref !== project.ref);
+    void collapsedProjectsState.set(next).catch((error: unknown) => {
+      logger.warn("Failed to persist collapsed project", { error: getErrorMessage(error) });
     });
+    scheduleUpdate();
+    if (!collapsing || model.active()?.project !== project) return;
+    const projects = sortedProjects();
+    const index = projects.findIndex(([candidate]) => candidate === project);
+    const after = [...projects.slice(index + 1), ...projects.slice(0, index)];
+    for (const [candidate, workspaces] of after) {
+      if (isCollapsed(candidate)) continue;
+      const target = workspaces.find((w) => !w.hibernated && w.phase !== "creating");
+      if (target === undefined) continue;
+      dispatchDetached({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspaceRef: target.ref, focus: false },
+      });
+      return;
+    }
+  }
+
+  /** Show part of a project's hibernated list, or fold it away ("hidden"). */
+  function setHibernatedView(project: ProjectModel, view: HibernatedView): void {
+    if ((hibernatedViews.get(project.ref) ?? "hidden") === view) return;
+    if (view === "hidden") hibernatedViews.delete(project.ref);
+    else hibernatedViews.set(project.ref, view);
+    scheduleUpdate();
+  }
+
+  /**
+   * Alt+X, T: while Find is open, step its view (every project at once);
+   * otherwise step the active workspace's project. No-op without either.
+   */
+  function cycleHibernatedView(): void {
+    if (find !== null) {
+      find = { hibernatedView: nextHibernatedView(find.hibernatedView) };
+      scheduleUpdate();
+      return;
+    }
+    const project = model.active()?.project;
+    if (project === undefined) return;
+    setHibernatedView(project, nextHibernatedView(hibernatedViews.get(project.ref) ?? "hidden"));
+  }
+
+  /**
+   * Open or close the Find state. Opening starts at the manual hibernated view
+   * (automated ones hidden); reopening while open keeps the current view. The
+   * renderer focuses the field when it sees `sidebar.find` appear (Alt+X, F)
+   * and reports focus changes back through `set-find`.
+   */
+  function setFind(active: boolean): void {
+    if (active === (find !== null)) return;
+    find = active ? { hibernatedView: "manual" } : null;
     scheduleUpdate();
   }
 
@@ -1379,6 +1422,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           title: undefined,
           hibernated: false,
           hibernatedAt: undefined,
+          wakeupScript: undefined,
           tags: [],
           url: undefined,
           phase: "creating",
@@ -1431,6 +1475,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         const { workspaceRef } = event.payload;
         model.removeWorkspace(workspaceRef);
         deletions.delete(workspaceRef);
+        editorQuestions.delete(workspaceRef);
         framesReleased.delete(workspaceRef);
         screenshots.delete(workspaceRef);
         // A card about a workspace that is gone has nothing left to point at.
@@ -1483,9 +1528,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         // Metadata is interpreted, never stored: only the keys the UI cares
         // about mutate the model (and push); everything else is ignored.
         if (p.key === "hibernated") {
+          const hibernating = p.value === "true" && !workspace.hibernated;
           workspace.hibernated = p.value === "true";
           // Flag flips invalidate the cached screenshot (deleted on wake).
           screenshots.delete(p.workspaceRef);
+          // A workspace going to sleep folds its project's hibernated list away.
+          if (hibernating) {
+            const project = model.find(p.workspaceRef)?.project;
+            if (project) hibernatedViews.delete(project.ref);
+          }
+        } else if (p.key === WAKEUP_METADATA_KEY) {
+          workspace.wakeupScript = readWakeupScript(p.value);
         } else if (p.key === "hibernated-at") {
           workspace.hibernatedAt = readHibernatedAt(p.value);
         } else if (p.key === "title") {
@@ -1495,8 +1548,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           const name = p.key.slice(TAGS_METADATA_KEY_PREFIX.length);
           workspace.tags = workspace.tags.filter((tag) => tag.name !== name);
           if (p.value !== null) {
-            // extractTags owns the parsing (color JSON, empty-name guard).
-            workspace.tags.push(...extractTags({ [p.key]: p.value }));
+            // readTags owns the parsing (color JSON, empty-name guard) and
+            // leaves out the legacy wakeup tag.
+            workspace.tags.push(...readTags({ [p.key]: p.value }));
           }
         } else {
           return;
@@ -1622,13 +1676,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     reloadFrame,
     trackRunningHook: (hook) => runningHooks.track(hook),
     cancelRunningHooks: (workspaceRef) => runningHooks.cancelFor(workspaceRef),
-    workspaceRows,
-    onPush: (listener) => {
-      pushListeners.add(listener);
-      return () => {
-        pushListeners.delete(listener);
-      };
-    },
     events,
     interceptors: [suppressBackgroundFocus, startup.interceptor],
     hooks: defineHooks({
@@ -1676,6 +1723,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             framesReleased.add(workspaceRef);
             scheduleUpdate();
             return { result: {} };
+          },
+        },
+      },
+      [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
+        // A question open in a workspace's editor (ask, select, input,
+        // pick-file — a toast is no modal): its sidebar row shows a question
+        // mark until the last one is answered or dismissed.
+        modal: {
+          handler: async (ctx): Promise<void> => {
+            if (ctx.source !== "editor") return;
+            if (ctx.open) editorQuestions.add(ctx.workspaceRef);
+            else editorQuestions.delete(ctx.workspaceRef);
+            scheduleUpdate();
           },
         },
       },

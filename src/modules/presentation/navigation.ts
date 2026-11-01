@@ -8,7 +8,6 @@
  * keyboard navigation).
  */
 
-import type { AgentStatus } from "../../shared/api/types";
 import type { UiWorkspaceRow } from "../../shared/ui-state";
 import { jumpKeyToIndex, type JumpKey } from "../../shared/shortcuts";
 import {
@@ -25,53 +24,39 @@ import type { PresentationModel, ProjectModel, RowEntry, WorkspaceModel } from "
 
 export interface ShortcutNavigationDeps {
   readonly model: PresentationModel;
-  /** Rows in sidebar display order, hidden hibernated rows left out. */
+  /** Every row in sidebar display order (collapsed projects included). */
   readonly rows: () => readonly RowEntry[];
   readonly rowStatus: (workspace: WorkspaceModel) => UiWorkspaceRow["status"];
+  /** Whether a project's card is collapsed (its rows are skipped). */
+  readonly collapsed: (project: ProjectModel) => boolean;
   /** Dispatch fire-and-forget. */
   readonly dispatch: (
     intent: SwitchWorkspaceIntent | HibernateWorkspaceIntent | WakeWorkspaceIntent
   ) => void;
   /** The interactive remove flow. */
   readonly deleteWorkspace: (workspaceRef: WorkspaceRef) => void;
-  /** Hide/show one project's hibernated workspaces. */
-  readonly toggleHideHibernated: (project: ProjectModel) => void;
+  /**
+   * Cycle the hibernated view (t key): Find's, for every project, while Find is
+   * open; else the active workspace's project's.
+   */
+  readonly cycleHibernatedView: () => void;
+  /** Open the sidebar's Find field (f key). */
+  readonly openFind: () => void;
   readonly toggleSidebarMode: () => void;
 }
 
-/** Wrap an index into [0, length). */
-function wrapIndex(index: number, length: number): number {
-  return ((index % length) + length) % length;
-}
-
-/** Where a walk in `direction` starts: one step from the current row, or an end without one. */
-function startIndex(currentIndex: number, direction: -1 | 1, length: number): number {
-  if (currentIndex === -1) return direction === 1 ? 0 : length - 1;
-  return wrapIndex(currentIndex + direction, length);
+/** Awake and switchable: neither hibernated nor a still-creating placeholder. */
+function isAwake(entry: RowEntry): boolean {
+  return !entry.row.hibernated && entry.workspace.phase !== "creating";
 }
 
 /**
- * Find the next workspace index matching a status type in the given
- * direction. Hibernated workspaces are always skipped — idle nav targets
- * workspaces the user can immediately work in. Returns -1 if none.
+ * An idle agent, or — on an open workspace — none at all: nothing there is
+ * working. (A row still opening has no agent yet either, but is not idle.)
  */
-function findNextByStatusType(
-  entries: readonly RowEntry[],
-  currentIndex: number,
-  direction: -1 | 1,
-  statusType: AgentStatus["type"]
-): number {
-  const count = entries.length;
-  const start = startIndex(currentIndex, direction, count);
-  const iterations = currentIndex === -1 ? count : count - 1;
-  for (let i = 0; i < iterations; i++) {
-    const index = wrapIndex(start + i * direction, count);
-    const entry = entries[index];
-    if (!entry) continue;
-    if (entry.row.hibernated) continue;
-    if (entry.row.agent.type === statusType) return index;
-  }
-  return -1;
+function isIdle(entry: RowEntry): boolean {
+  const agent = entry.row.agent.type;
+  return agent === "idle" || (agent === "none" && entry.row.status === "ready");
 }
 
 /** Create the shortcut-key handler. Takes a normalized shortcut key. */
@@ -87,53 +72,35 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
   }
 
   /**
-   * Up/down navigation. Wraps at boundaries; when nothing is active (creation
-   * panel) Up → last and Down → first. Targets the workspace's real path; a
-   * still-creating placeholder (null path) is not a valid target, so it is
-   * stepped over rather than stopped on — placeholders stay in the list for the
-   * whole creation now, so one can sit anywhere between two navigable rows.
+   * The rows the arrows walk: those of expanded projects in sidebar order, plus
+   * the active row wherever it is as the starting point, rotated to start just
+   * after the active one (reversed for a step backwards). Without an active
+   * row the walk starts at the top (backwards: at the bottom).
    */
+  function rotation(direction: -1 | 1): RowEntry[] {
+    const rows = deps.rows().filter((entry) => entry.row.active || !deps.collapsed(entry.project));
+    const index = rows.findIndex((entry) => entry.row.active);
+    const forward = index === -1 ? rows : [...rows.slice(index + 1), ...rows.slice(0, index)];
+    return direction === 1 ? forward : forward.reverse();
+  }
+
+  /** Up/down: the next awake workspace of an expanded project, wrapping. */
   function handleNavigation(direction: -1 | 1): void {
-    const entries = deps.rows();
-    if (entries.length === 0) return;
-    const currentIndex = entries.findIndex((e) => e.row.active);
-    const start = startIndex(currentIndex, direction, entries.length);
-    for (let i = 0; i < entries.length; i++) {
-      const index = wrapIndex(start + i * direction, entries.length);
-      // Wrapped back to where we started: nothing else is navigable.
-      if (index === currentIndex) return;
-      const target = entries[index];
-      if (target && target.workspace.phase !== "creating") {
-        navigateSwitch(target.workspace.ref);
-        return;
-      }
-    }
+    const target = rotation(direction).find(isAwake);
+    if (target) navigateSwitch(target.workspace.ref);
   }
 
-  /**
-   * Left/right navigation by status: prefer idle workspaces, fall back to busy
-   * only when the current workspace isn't already idle (or there is none).
-   */
+  /** Left/right: the next idle workspace (no agent counts as idle), else the next busy one. */
   function handleStatusNavigation(direction: -1 | 1): void {
-    const entries = deps.rows();
-    if (entries.length === 0) return;
-    const currentIndex = entries.findIndex((e) => e.row.active);
-
-    let targetIndex = findNextByStatusType(entries, currentIndex, direction, "idle");
-    if (targetIndex === -1) {
-      const currentStatus = currentIndex === -1 ? undefined : entries[currentIndex]?.row.agent;
-      if (currentStatus?.type !== "idle") {
-        targetIndex = findNextByStatusType(entries, currentIndex, direction, "busy");
-      }
-    }
-    if (targetIndex === -1) return;
-    const target = entries[targetIndex];
-    if (!target || target.workspace.phase === "creating") return;
-    navigateSwitch(target.workspace.ref);
+    const candidates = rotation(direction).filter(isAwake);
+    const target =
+      candidates.find(isIdle) ?? candidates.find((entry) => entry.row.agent.type === "busy");
+    if (target) navigateSwitch(target.workspace.ref);
   }
 
   /**
-   * Jump to the Nth awake workspace (hibernated workspaces are unnumbered).
+   * Jump to the Nth awake workspace of the expanded projects (hibernated
+   * workspaces are unnumbered, a collapsed project shows no rows).
    *
    * A still-creating placeholder keeps its number and the jump is a no-op:
    * skipping it would renumber every row below it the instant the creation
@@ -142,7 +109,9 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
    */
   function handleJump(key: JumpKey): void {
     const index = jumpKeyToIndex(key);
-    const target = deps.rows().filter((e) => !e.row.hibernated)[index];
+    const target = deps
+      .rows()
+      .filter((entry) => !entry.row.hibernated && !deps.collapsed(entry.project))[index];
     if (!target || target.workspace.phase === "creating") return;
     navigateSwitch(target.workspace.ref);
   }
@@ -214,12 +183,12 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
       case "h":
         handleHibernateToggle();
         break;
-      case "t": {
-        // The active workspace's project; no-op without an active workspace.
-        const project = model.active()?.project;
-        if (project !== undefined) deps.toggleHideHibernated(project);
+      case "t":
+        deps.cycleHibernatedView();
         break;
-      }
+      case "f":
+        deps.openFind();
+        break;
       case "p":
         deps.toggleSidebarMode();
         break;

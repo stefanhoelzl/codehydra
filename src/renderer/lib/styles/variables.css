@@ -103,8 +103,8 @@
   --ch-logo-backdrop-opacity: 0.15;
 
   /* Layout variables (theme-independent) */
-  --ch-sidebar-width: 250px;
-  --ch-sidebar-minimized-width: 20px;
+  --ch-sidebar-width: 288px;
+  --ch-sidebar-minimized-width: 56px;
   --ch-sidebar-transition: 150ms ease-out;
 
   /* Z-index layers */
@@ -192,4 +192,64 @@
   /* Status dot glow (light) */
   --ch-status-glow-idle: 0 0 6px rgba(26, 154, 78, 0.3);
   --ch-status-glow-busy: 0 0 6px rgba(220, 53, 69, 0.3);
+}
+
+/**
+ * Sidebar palette. The sidebar keeps its own colors (not the VS Code theme),
+ * one set per OS theme, picked by the same [data-theme] switch.
+ */
+:root {
+  --ch-sb-fg: #e4e4e8;
+  --ch-sb-fg-2: rgba(228, 228, 232, 0.62);
+  --ch-sb-fg-3: rgba(228, 228, 232, 0.38);
+  --ch-sb-s1: #16161a;
+  --ch-sb-s2: #1c1c22;
+  --ch-sb-s3: #26262f;
+  --ch-sb-shell: #131317;
+  --ch-sb-head: #26262f;
+  --ch-sb-head-hover: #32323d;
+  --ch-sb-line: rgba(255, 255, 255, 0.07);
+  --ch-sb-line-2: rgba(255, 255, 255, 0.12);
+  --ch-sb-accent: #6c8cff;
+  --ch-sb-accent-soft: rgba(108, 140, 255, 0.16);
+  --ch-sb-marker: rgba(255, 255, 255, 0.88);
+  --ch-sb-idle: #4ade80;
+  --ch-sb-danger: #f14c4c;
+  --ch-sb-hl: rgba(245, 185, 66, 0.38);
+  --ch-sb-spin-track: rgba(228, 228, 232, 0.16);
+  --ch-sb-spin-head: rgba(228, 228, 232, 0.7);
+  --ch-sb-auto: #5ec8d8;
+  --ch-sb-warn: #f5b942;
+  --ch-sb-ask: #c48cff;
+  --ch-sb-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --ch-sb-peek-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  --ch-sb-card-shadow: none;
+}
+
+:root[data-theme="light"] {
+  --ch-sb-fg: #1a1a24;
+  --ch-sb-fg-2: rgba(26, 26, 36, 0.62);
+  --ch-sb-fg-3: rgba(26, 26, 36, 0.42);
+  --ch-sb-s1: #f6f7fa;
+  --ch-sb-s2: #ffffff;
+  --ch-sb-s3: #eceef3;
+  --ch-sb-shell: #eef0f4;
+  --ch-sb-head: #e9ebf0;
+  --ch-sb-head-hover: #f4f5f8;
+  --ch-sb-line: rgba(0, 0, 0, 0.08);
+  --ch-sb-line-2: rgba(0, 0, 0, 0.13);
+  --ch-sb-accent: #4b6de8;
+  --ch-sb-accent-soft: rgba(75, 109, 232, 0.12);
+  --ch-sb-marker: rgba(20, 20, 30, 0.85);
+  --ch-sb-idle: #1a9a4e;
+  --ch-sb-danger: #dc3545;
+  --ch-sb-hl: rgba(245, 185, 66, 0.45);
+  --ch-sb-spin-track: rgba(26, 26, 36, 0.14);
+  --ch-sb-spin-head: rgba(26, 26, 36, 0.6);
+  --ch-sb-auto: #0b7f93;
+  --ch-sb-warn: #a26f00;
+  --ch-sb-ask: #8a3ad6;
+  --ch-sb-shadow: 0 10px 30px rgba(20, 24, 40, 0.14);
+  --ch-sb-peek-shadow: 0 18px 50px rgba(20, 24, 40, 0.2);
+  --ch-sb-card-shadow: 0 1px 2px rgba(20, 24, 40, 0.06);
 }

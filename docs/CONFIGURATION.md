@@ -46,15 +46,11 @@ Default `claude` · `src/main.ts`. Agent selection: `claude` | `opencode`. Resta
 
 #### `sidebar.width`
 
-Default `250` · `src/main.ts`. Expanded sidebar width in px, bounds 250–100000 (an out-of-range hand edit fails load). Written by dragging the sidebar's right edge (grow-only from 250; the renderer caps the drag at 75% of the window width); also user-editable. Live.
+Default `288` · `src/main.ts`. Expanded sidebar width in px, bounds 250–100000 (an out-of-range hand edit fails load; 250 so a width saved before the floor rose still loads). Every value is clamped up to the sidebar's floor of 288 (`clampSidebarWidthMin`: the 272 px card plus its 8 px margins). Written by dragging the sidebar's right edge (never below 288; the renderer caps the drag at 75% of the window width); also user-editable. Live.
 
 #### `sidebar.mode`
 
 Default `overlay` · `presentation-module.ts`. `overlay` (collapsed strip, expands over the workspace on hover) | `docked` (always expanded; the workspace frames/overlays start at its right edge via `--ch-workspace-left`). Written by the header dock button (`set-sidebar-mode` ui:event) and Alt+X+P; docked emits no hover events and ignores `capturing`. Live.
-
-#### `sidebar.label-scroll`
-
-Default `hover` · `presentation-module.ts`. How an overflowing sidebar row label (title / branch; tags wrap) scrolls horizontally: `always` | `hover` | `off`. Live.
 
 #### `silent`
 
@@ -180,9 +176,9 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 
 `plugin-module/module.ts` (keys: `trust.ts`). `Record<key, boolean>`, key `<type>:<entry>:<name>` (`local:default:x`, `remote:acme:x`) or `project:<projectRef>:<name>`; `true` = enabled, `false` = disabled; absent = local/remote enabled, project `ask`. Older `local:<name>`, `workspace:…` and project-path keys are converted at app:start `migrations`.
 
-#### `sidebar.hidden-hibernated-projects`
+#### `sidebar.collapsed-projects`
 
-`presentation-module.ts`. Refs of the projects whose hibernated workspaces are hidden from the sidebar list (the project's hibernated-count button / Alt+X+T for the active workspace's project). Default `[]`. A ref stays listed after its project closes, so the choice survives a reopen. Replaces the global boolean `sidebar.hide-hibernated`, which is dropped without migration.
+`presentation-module.ts`. Refs of the projects whose sidebar card is collapsed to its header (a click on the header bar). Default `[]`. A ref stays listed after its project closes, so the choice survives a reopen. Keyboard navigation (Alt+X arrows and digits) skips the workspaces of a collapsed project. Replaces `sidebar.hidden-hibernated-projects` (hibernated workspaces are now folded away by default and shown by the project's moon button or Alt+X, T — not persisted), which is dropped without migration: an old value is logged and skipped.
 
 #### `api.port`
 

@@ -13,8 +13,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import { createCreationModule, validateCloneUrl } from "./creation-module";
-import type { CreationModuleDeps } from "./creation-module";
-import type { IntentModule } from "../intents/lib/module";
+import type { CreationModule, CreationModuleDeps } from "./creation-module";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import type { MockDialogHandle } from "./presentation/dialog-manager.state-mock";
 import type { Dispatcher } from "../intents/lib/dispatcher";
@@ -159,7 +158,7 @@ async function flush(): Promise<void> {
 // =============================================================================
 
 interface Setup {
-  module: IntentModule;
+  module: CreationModule;
   dialogs: ReturnType<typeof createMockDialogManager>;
   dispatcher: MockDispatcher;
   openUrl: ReturnType<typeof vi.fn>;
@@ -322,6 +321,38 @@ describe("CreationModule", () => {
 
       expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
       expect(field(panel.config, "name")["initialValue"]).toBe("half-typed");
+    });
+
+    it("a project preset (a sidebar project's +) wins over the workspace the panel came from", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B], activeWorkspaceProjectId: PROJECT_A.id });
+      const panel = await s.start();
+      panel.emitChange("name", { name: "half-typed" });
+      await flush();
+
+      // The + of PROJECT_B, clicked while a PROJECT_A workspace is active.
+      s.module.presetProject(PROJECT_B.ref, true);
+      await s.emit(EVENT_WORKSPACE_SWITCHED, null);
+
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
+      expect(field(panel.config, "name")["initialValue"]).toBe("half-typed");
+
+      // A touched form keeps the preset project when the panel is opened again.
+      await s.emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(PROJECT_A));
+      await s.emit(EVENT_WORKSPACE_SWITCHED, null);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
+    });
+
+    it("a preset with the panel already showing applies at once and is not kept", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B], activeWorkspaceProjectId: PROJECT_A.id });
+      const panel = await s.start();
+
+      s.module.presetProject(PROJECT_B.ref, false);
+      await flush();
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
+
+      await s.emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(PROJECT_A));
+      await s.emit(EVENT_WORKSPACE_SWITCHED, null);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
     });
 
     it("does not re-fetch bases when the panel is opened from the same project", async () => {

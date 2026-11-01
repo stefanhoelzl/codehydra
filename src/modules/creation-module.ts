@@ -212,7 +212,20 @@ function initialForm(): FormState {
 // Module
 // =============================================================================
 
-export function createCreationModule(deps: CreationModuleDeps): IntentModule {
+/** The creation module, plus the sidebar's project preset (a project card's +). */
+export interface CreationModule extends IntentModule {
+  /**
+   * Preselect the form's project, as the sidebar's per-project + button asks.
+   * An explicit choice: it overrides the seed rule and a touched form's
+   * project (the rest of what was typed stays). Applied at once and — with
+   * `deselecting`, when a switch to the panel is under way — again when that
+   * deselect lands, so the follow-the-workspace rule in the workspace:switched
+   * handler cannot undo it. Unknown refs are ignored.
+   */
+  presetProject(projectRef: ProjectRef, deselecting: boolean): void;
+}
+
+export function createCreationModule(deps: CreationModuleDeps): CreationModule {
   const { ui, dispatcher, logger } = deps;
 
   // ---- Session state ----
@@ -233,6 +246,8 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
    * reads it, collapsing the seed to projects[0].
    */
   let lastActiveProjectRef: ProjectRef | null = null;
+  /** A preset (presetProject) the next deselect must re-apply instead of the seed rule. */
+  let presetProjectRef: ProjectRef | null = null;
   /** Guards against overlapping resets (dismiss bursts). */
   let resetting = false;
   /** Invalidates in-flight branch fetches when the selection changes. */
@@ -1237,7 +1252,17 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         const payload = event.payload;
         if (payload !== null) {
           lastActiveProjectRef = payload.projectRef;
+          presetProjectRef = null;
           return;
+        }
+        // A project card's + asked for this project: it wins over everything.
+        if (presetProjectRef !== null) {
+          const preset = presetProjectRef;
+          presetProjectRef = null;
+          if (handle !== null && projects.some((p) => p.ref === preset)) {
+            if (preset !== form.projectRef) selectProject(preset);
+            return;
+          }
         }
         // The panel is being shown. The session outlives switches (so typed
         // input survives), which would leave an untouched form on whatever
@@ -1267,8 +1292,15 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     },
   });
 
+  function presetProject(projectRef: ProjectRef, deselecting: boolean): void {
+    if (!projects.some((p) => p.ref === projectRef)) return;
+    presetProjectRef = deselecting ? projectRef : null;
+    if (handle !== null && projectRef !== form.projectRef) selectProject(projectRef);
+  }
+
   return {
     name: "creation",
     events,
+    presetProject,
   };
 }

@@ -86,8 +86,9 @@ describe("MainView close project integration", () => {
   it("emits close-project when clicking close on a project with workspaces", async () => {
     await renderWithSnapshot();
 
-    // Button has id="close-project-${project.id}"
-    const closeButton = document.getElementById(`close-project-${projectWithWorkspaces.id}`);
+    const closeButton = document.querySelector(
+      `.proj[data-project-id="${projectWithWorkspaces.id}"] [data-act="closeproj"]`
+    );
     expect(closeButton).toBeInTheDocument();
     await fireEvent.click(closeButton!);
 
@@ -100,7 +101,9 @@ describe("MainView close project integration", () => {
   it("emits close-project for a project with no workspaces (user still confirms main-side)", async () => {
     await renderWithSnapshot();
 
-    const closeButton = document.getElementById(`close-project-${projectWithoutWorkspaces.id}`);
+    const closeButton = document.querySelector(
+      `.proj[data-project-id="${projectWithoutWorkspaces.id}"] [data-act="closeproj"]`
+    );
     expect(closeButton).toBeInTheDocument();
     await fireEvent.click(closeButton!);
 
@@ -114,7 +117,9 @@ describe("MainView close project integration", () => {
     await renderWithSnapshot();
 
     // The project disappears (e.g. closed elsewhere) before the click lands.
-    const closeButton = document.getElementById(`close-project-${projectWithWorkspaces.id}`);
+    const closeButton = document.querySelector(
+      `.proj[data-project-id="${projectWithWorkspaces.id}"] [data-act="closeproj"]`
+    );
     await pushState(makeUiState([projectWithoutWorkspaces]));
     await fireEvent.click(closeButton!);
 
