@@ -966,6 +966,41 @@ describe("CreationModule", () => {
       expect(s.openUrl).toHaveBeenCalledWith("https://github.com/new?owner=org&name=repo");
     });
 
+    it("does not claim a failed GitHub clone is missing", async () => {
+      // A private repository the user's credentials cannot read fails with a
+      // 403 — GitHub answers it like a missing one, so the dialog must not
+      // say "not found" and must point at the credentials.
+      const s = setup();
+      const panel = await s.start();
+
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () =>
+        Promise.reject(
+          new Error(
+            "Failed to clone repository from https://github.com/org/repo: " +
+              "Cloning into bare repository 'c:\\remotes\\repo-1\\repo'...\n" +
+              "fatal: unable to access 'https://github.com/org/repo/': " +
+              "The requested URL returned error: 403\n"
+          )
+        )
+      );
+
+      clone.emitChange("url", { url: "https://github.com/org/repo" });
+      await flush();
+      clone.emitAction("do-clone", { url: "https://github.com/org/repo" });
+      await flush();
+      await flush();
+
+      const texts = clone.config.sections.flatMap((sec) =>
+        sec.type === "text" ? [sec.content] : []
+      );
+      expect(texts.some((t) => t.includes("not found"))).toBe(false);
+      expect(texts.some((t) => t.includes("git credentials"))).toBe(true);
+      expect(sectionById(clone.config, "github-create")).toBeDefined();
+    });
+
     it("shows a plain error (no GitHub flow) for non-GitHub URLs", async () => {
       const s = setup();
       const panel = await s.start();

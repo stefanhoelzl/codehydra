@@ -106,6 +106,20 @@ const CLONE_ACTION_BACKGROUND = "background";
 const CLONE_ACTION_GITHUB_CREATE = "github-create";
 const CLONE_ACTION_RETRY = "retry";
 
+/**
+ * The line of a clone error worth showing: git's last output line (its
+ * `fatal: …` reason), without the "Cloning into bare repository '<path>'"
+ * progress line before it. Display only — it decides nothing; the full text
+ * stays in the log.
+ */
+function cloneFailureReason(error: string): string {
+  const lines = error
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  return lines[lines.length - 1] ?? error;
+}
+
 // =============================================================================
 // Clone URL validation (mirrors the old GitCloneDialog rules)
 // =============================================================================
@@ -962,8 +976,19 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     }
 
     if (state.error !== null && gitHubInfo !== null) {
+      // GitHub answers a missing repository and one the user's credentials
+      // cannot read alike, so the dialog never claims which it is: it offers
+      // both ways out (git's own reason is in the log).
       sections.push(
-        { type: "text", content: `${gitHubInfo.owner}/${gitHubInfo.repo} not found on GitHub.` },
+        {
+          type: "text",
+          content:
+            "GitHub reports a missing repository and one your git credentials can't read " +
+            "the same way. If the repository exists, check that git on this machine is " +
+            "signed in with an account or token that can access it.",
+          style: "subtitle",
+        },
+        { type: "text", content: "Repository doesn't exist yet?" },
         {
           type: "group",
           align: "left",
@@ -978,13 +1003,13 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         },
         {
           type: "text",
-          content: "Initialize with a README to enable cloning.",
+          content: "Initialize it with a README so it can be cloned.",
           icon: "warning",
           style: "subtitle",
         }
       );
     } else if (state.error !== null) {
-      sections.push({ type: "text", content: state.error, icon: "error" });
+      sections.push({ type: "text", content: cloneFailureReason(state.error), icon: "error" });
     }
 
     const footer: DialogSection = cloning
