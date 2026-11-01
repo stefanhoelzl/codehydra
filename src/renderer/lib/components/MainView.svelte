@@ -25,9 +25,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import * as api from "$lib/api";
-  import type { SidebarMode, UiState } from "@shared/ui-state";
+  import type { HibernatedView, UiState } from "@shared/ui-state";
   import { AgentNotificationService, createChimePlayer } from "$lib/services/agent-notifications";
-  import { createLogger } from "$lib/logging";
 
   // Setup functions
   import { setupDomainEventBindings } from "$lib/utils/setup-domain-event-bindings";
@@ -47,8 +46,6 @@
   }
 
   const { ui }: Props = $props();
-
-  const logger = createLogger("ui");
 
   // ============ Snapshot-derived views ============
   // App renders MainView only once the genesis snapshot has arrived, so `ui` is
@@ -90,13 +87,13 @@
   const totalWorkspaces = $derived(allRows.length);
   const idleWorkspaceCount = $derived(allRows.filter((row) => row.agent.type === "idle").length);
   const activeRow = $derived(allRows.find((row) => row.active) ?? null);
-  // Whether the active workspace's project hides its hibernated workspaces
-  // (drives the Alt+X+T hint); null without an active workspace. An active
-  // workspace with no row is a hibernated one its project is hiding.
-  const activeProjectHidesHibernated = $derived.by((): boolean | null => {
+  // What Alt+X, T cycles (drives its hint): every project's hibernated list
+  // while Find is open, else the active workspace's project's; null without
+  // an active workspace.
+  const hibernatedViewForT = $derived.by((): HibernatedView | null => {
+    if (ui.sidebar.find !== null) return ui.sidebar.find.hibernatedView;
     const project = projectRows.find((p) => p.workspaces.some((row) => row.active));
-    if (project) return project.hideHibernated;
-    return main?.kind === "hibernated" ? true : null;
+    return project?.hibernatedView ?? null;
   });
 
   // Frames with accessible titles: the snapshot's frames region carries only
@@ -143,70 +140,12 @@
     return setupDomainEventBindings(notificationService);
   });
 
-  // Handle closing a project: request the flow from main (the confirmation
-  // dialog opens main-side, parking the project:close dispatch).
-  function handleCloseProject(projectId: string): void {
-    if (!projectRows.some((project) => project.id === projectId)) {
-      return;
-    }
-    logger.debug("Close project requested", { projectId });
-    api.emitEvent({ kind: "close-project", projectId });
-  }
-
-  // Handle switching workspace. No eager local state: the snapshot push
-  // following workspace:switched flips the frame (and leaves the panel when
-  // it was showing — selecting a workspace deselects the panel by design).
-  // The opaque row key is echoed back; main resolves it and dispatches.
-  function handleSwitchWorkspace(key: string): void {
-    logger.debug("Workspace selected", { key });
-    api.emitEvent({ kind: "switch-workspace", key });
-  }
-
-  // Handle opening the creation panel (global sidebar entry): deselect.
-  // No workspace active = the panel is the main view (ground state).
-  function handleOpenNewWorkspace(): void {
-    logger.debug("New workspace view opened");
-    api.emitEvent({ kind: "switch-workspace", key: null });
-  }
-
-  // Handle removing a workspace: request the flow from main with the row's
-  // snapshot key (the confirmation dialog opens main-side, parking the
-  // workspace:delete dispatch).
-  function handleRemoveWorkspace(key: string): void {
-    logger.debug("Remove workspace requested", { key });
-    api.emitEvent({ kind: "remove-workspace", key });
-  }
-
   // Wake the active (hibernated) workspace from the overlay. The opaque row
   // key is echoed back; main resolves it and dispatches the wake.
   function handleWakeActiveWorkspace(): void {
     const row = activeRow;
     if (!row) return;
     api.emitEvent({ kind: "wake-workspace", key: row.key });
-  }
-
-  // Open the settings dialog (sidebar gear). Main forwards this to the settings
-  // module, which opens the declarative settings dialog.
-  function handleOpenSettings(): void {
-    api.emitEvent({ kind: "open-settings" });
-  }
-
-  // Open the user guide dialog (sidebar question mark). Main forwards this to
-  // the help module, which opens the guide in a declarative dialog.
-  function handleOpenHelp(): void {
-    api.emitEvent({ kind: "open-help" });
-  }
-
-  // Open the workspace search (sidebar magnifier). Main forwards this to the
-  // workspace-search module, which opens the declarative search dialog.
-  function handleOpenWorkspaceSearch(): void {
-    api.emitEvent({ kind: "open-workspace-search" });
-  }
-
-  // Dock / undock the sidebar (header button). Main writes `sidebar.mode` and
-  // re-pushes; Alt+X+P toggles the same key main-side.
-  function handleSetSidebarMode(sidebarMode: SidebarMode): void {
-    api.emitEvent({ kind: "set-sidebar-mode", mode: sidebarMode });
   }
 
   // Width the sidebar renders at (reported by Sidebar, live mid-drag). Docked,
@@ -218,13 +157,6 @@
   const workspaceAreaStyle = $derived(
     ui.sidebar.mode === "docked" ? `--ch-workspace-left: ${sidebarRenderedWidth}px` : undefined
   );
-
-  // Toggle hiding of one project's hibernated workspaces (its count button;
-  // Alt+X+T does the same main-side for the active workspace's project). Main
-  // flips the project in the persisted state and re-pushes.
-  function handleToggleHideHibernated(projectId: string): void {
-    api.emitEvent({ kind: "toggle-hide-hibernated", projectId });
-  }
 </script>
 
 <div class="main-view" style={workspaceAreaStyle}>
@@ -234,21 +166,11 @@
     sidebarWidth={ui.sidebar.width}
     onRenderedWidthChange={(width) => (sidebarRenderedWidth = width)}
     sidebarMode={ui.sidebar.mode}
-    onSetSidebarMode={handleSetSidebarMode}
+    find={ui.sidebar.find}
     notifications={ui.notifications}
     {mode}
-    labelScroll={ui.labelScroll}
     shortcutModeActive={mode === "shortcut"}
     capturing={ui.capturing}
-    newWorkspaceViewOpen={creationShown}
-    onCloseProject={handleCloseProject}
-    onSwitchWorkspace={handleSwitchWorkspace}
-    onOpenNewWorkspace={handleOpenNewWorkspace}
-    onRemoveWorkspace={handleRemoveWorkspace}
-    onOpenSettings={handleOpenSettings}
-    onOpenHelp={handleOpenHelp}
-    onOpenWorkspaceSearch={handleOpenWorkspaceSearch}
-    onToggleHideHibernated={handleToggleHideHibernated}
   />
 
   <ShortcutOverlay
@@ -258,7 +180,7 @@
     activeHibernated={main?.kind === "hibernated"}
     activeWorkspaceDeletionInProgress={activeRow !== null && activeRow.status === "deleting"}
     {idleWorkspaceCount}
-    hideHibernated={activeProjectHidesHibernated}
+    hibernatedView={hibernatedViewForT}
     sidebarDocked={ui.sidebar.mode === "docked"}
   />
 

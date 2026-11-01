@@ -320,7 +320,7 @@ afterEach(() => {
 });
 
 describe("wakeup entries", () => {
-  it("sets a script with its shell and variables, tagged in the sidebar", async () => {
+  it("sets a script with its shell and variables, without a sidebar tag", async () => {
     const setup = createSetup();
     const ws = setup.add("pr-12");
 
@@ -336,10 +336,7 @@ describe("wakeup entries", () => {
       env: { GH_HOST: "github.com", EMPTY: "" },
     });
     expect(JSON.parse(ws.metadata[WAKEUP_METADATA_KEY]!)).toEqual(shown);
-    expect(JSON.parse(ws.metadata[WAKEUP_TAG_KEY]!)).toEqual({
-      label: "⏰",
-      description: "Wakeup script: gh pr checks 12",
-    });
+    expect(ws.metadata[WAKEUP_TAG_KEY]).toBeUndefined();
   });
 
   it("refuses a variable that is not KEY=VALUE, or one of CodeHydra's own", async () => {
@@ -355,10 +352,11 @@ describe("wakeup entries", () => {
     expect(ws.metadata[WAKEUP_METADATA_KEY]).toBeUndefined();
   });
 
-  it("clears the script and its tag", async () => {
+  it("clears the script and a tag an older version set", async () => {
     const setup = createSetup();
     const ws = setup.add("pr-12");
     await setup.call("workspace.wakeup.set", ws.ref, { script: "x" });
+    ws.metadata[WAKEUP_TAG_KEY] = JSON.stringify({ label: "x" });
 
     await setup.call("workspace.wakeup.clear", ws.ref);
 

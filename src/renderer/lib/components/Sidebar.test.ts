@@ -1,1756 +1,497 @@
 /**
- * Tests for the Sidebar component.
- *
- * The sidebar renders UiProjectRow/UiWorkspaceRow data from the UiState
- * snapshot — rows arrive pre-joined (status, agent, tags, active), so the
- * tests build row fixtures instead of populating stores.
- *
- * The sidebar uses one DOM tree for both the expanded and collapsed state:
- * every row is [label cell | icon cell at the right edge] and the collapsed
- * sidebar shows only the icon column (via CSS keyed on the `.expanded`
- * class). Expansion is now driven by the `mode` prop from the UiState snapshot
- * (main-owned): mode !== "workspace" (or no workspaces) expands. Hover only
- * emits a `hover` ui:event; main folds it into the snapshot mode. These tests
- * therefore drive expansion via the `mode` prop and assert the emitted events.
+ * Tests for the Sidebar component: the rendering rules of the redesigned
+ * sidebar (project cards, hibernated and automated lists, questions in rows,
+ * Find) and the ui:events its gestures emit. Main owns the state the gestures
+ * change, so the tests re-render with the snapshot main would push next.
  */
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/svelte";
+import { render, fireEvent } from "@testing-library/svelte";
 import { flushSync } from "svelte";
 import type { Api } from "@shared/electron-api";
-import { createMockApi, makeUiProjectRow, makeUiWorkspaceRow } from "../test-utils";
-// Import utility functions directly from the utility module
-import { getStatusText } from "$lib/utils/sidebar-utils";
+import type { UiNotification, UiProjectRow } from "@shared/ui-state";
+import { createMockApi } from "../test-utils";
+import { NOW, question, sampleProjects } from "./sidebar-fixture";
 
-// Create mock API (flat structure) — must be set before Sidebar import
-// because NotificationStack transitively imports $lib/api which checks window.api
 const mockApi: Api = createMockApi();
 window.api = mockApi;
-
-// Mock $lib/api to avoid import-time window.api check
-// Shared fake: src/renderer/lib/api/__mocks__/index.ts
 vi.mock("$lib/api");
 
-// Import after mock setup
-import { emitEvent } from "$lib/api";
+import { emitEvent, sendNotificationEvent } from "$lib/api";
 import Sidebar from "./Sidebar.svelte";
 
-const HOVER_DELAY_MS = 150;
+type Props = {
+  projects: readonly UiProjectRow[];
+  notifications?: readonly UiNotification[];
+  find?: { hibernatedView: "hidden" | "manual" | "all" } | null;
+  sidebarMode?: "overlay" | "docked";
+  mode?: "workspace" | "hover" | "shortcut" | "dialog";
+  shortcutModeActive?: boolean;
+};
 
-/**
- * Deliberate hover: cursor deep in the gutter, sustained past the open delay.
- * Drives the hover arming logic (which emits the `hover` ui:event). Note this
- * no longer expands the sidebar on its own — expansion follows the `mode` prop.
- */
-async function hoverExpand(sidebar: Element): Promise<void> {
-  await fireEvent.mouseEnter(sidebar);
-  await fireEvent.mouseMove(sidebar, { clientX: 8 });
-  vi.advanceTimersByTime(HOVER_DELAY_MS);
-  flushSync();
+function setup(props: Props) {
+  const all = { sidebarWidth: 288, notifications: [], sidebarMode: "docked" as const, ...props };
+  const result = render(Sidebar, { props: all });
+  const rerender = (next: Partial<Props>): void => {
+    Object.assign(all, next);
+    void result.rerender(all);
+    flushSync();
+  };
+  return { ...result, rerender };
 }
 
-describe("getStatusText helper", () => {
-  it('returns "No agents running" for (0, 0)', () => {
-    expect(getStatusText(0, 0)).toBe("No agents running");
-  });
+const card = (container: Element, id: string): Element => {
+  const el = container.querySelector(`.proj[data-project-id="${id}"]`);
+  if (el === null) throw new Error(`no card ${id}`);
+  return el;
+};
+const row = (container: Element, key: string): Element => {
+  const el = container.querySelector(`.ws[data-key="${key}"]`);
+  if (el === null) throw new Error(`no row ${key}`);
+  return el;
+};
+/** The row's fold is open (it is part of the list). */
+const rowOpen = (container: Element, key: string): boolean =>
+  row(container, key).closest(".cl")?.classList.contains("open") ?? false;
+const hibGroupOpen = (container: Element, id: string): boolean =>
+  card(container, id).querySelector(".hib-group")?.classList.contains("open") ?? false;
+const events = (): unknown[] => vi.mocked(emitEvent).mock.calls.map((call) => call[0]);
 
-  it('returns "1 agent idle" for (1, 0)', () => {
-    expect(getStatusText(1, 0)).toBe("1 agent idle");
-  });
+function withProject(
+  projects: UiProjectRow[],
+  id: string,
+  change: Partial<UiProjectRow>
+): UiProjectRow[] {
+  return projects.map((project) => (project.id === id ? { ...project, ...change } : project));
+}
 
-  it('returns "2 agents idle" for (2, 0)', () => {
-    expect(getStatusText(2, 0)).toBe("2 agents idle");
-  });
-
-  it('returns "1 agent busy" for (0, 1)', () => {
-    expect(getStatusText(0, 1)).toBe("1 agent busy");
-  });
-
-  it('returns "3 agents busy" for (0, 3)', () => {
-    expect(getStatusText(0, 3)).toBe("3 agents busy");
-  });
-
-  it('returns "2 idle, 3 busy" for (2, 3)', () => {
-    expect(getStatusText(2, 3)).toBe("2 idle, 3 busy");
-  });
-});
-
-describe("Sidebar component", () => {
-  const defaultProps = {
-    projects: [],
-    sidebarWidth: 250,
-    notifications: [],
-    shortcutModeActive: false,
-    onCloseProject: vi.fn(),
-    onSwitchWorkspace: vi.fn(),
-    onOpenNewWorkspace: vi.fn(),
-    onRemoveWorkspace: vi.fn(),
-    onOpenSettings: vi.fn(),
-    onOpenHelp: vi.fn(),
-    onOpenWorkspaceSearch: vi.fn(),
-    onToggleHideHibernated: vi.fn(),
-    onSetSidebarMode: vi.fn(),
-  };
-
+describe("Sidebar", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    vi.mocked(emitEvent).mockClear();
+    vi.mocked(sendNotificationEvent).mockClear();
   });
-
   afterEach(() => {
     vi.useRealTimers();
-    document.body.innerHTML = "";
   });
 
-  describe("accessibility", () => {
-    it('renders with nav element and aria-label="Projects"', () => {
-      render(Sidebar, { props: defaultProps });
-
-      const nav = screen.getByRole("navigation", { name: "Projects" });
-      expect(nav).toBeInTheDocument();
-    });
-
-    it("active workspace has aria-current='true'", () => {
-      const ws = makeUiWorkspaceRow("ws1", { active: true });
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      const workspaceItem = screen.getByText(ws.name).closest("li");
-      expect(workspaceItem).toHaveAttribute("aria-current", "true");
-    });
-  });
-
-  describe("header actions", () => {
-    it("opens help and settings from the expanded header", async () => {
-      // No workspaces: the sidebar is expanded, so the header buttons show.
-      render(Sidebar, { props: defaultProps });
-
-      await fireEvent.click(screen.getByRole("button", { name: "Help" }));
-      expect(defaultProps.onOpenHelp).toHaveBeenCalledTimes(1);
-
-      await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-      expect(defaultProps.onOpenSettings).toHaveBeenCalledTimes(1);
-
-      await fireEvent.click(screen.getByRole("button", { name: "Find workspace" }));
-      expect(defaultProps.onOpenWorkspaceSearch).toHaveBeenCalledTimes(1);
-    });
-
-    it("orders the header buttons search, dock, gear, help", () => {
-      const { container } = render(Sidebar, { props: defaultProps });
-
-      const labels = [...container.querySelectorAll(".header-action")].map((button) =>
-        button.getAttribute("aria-label")
-      );
-      expect(labels).toEqual(["Find workspace", "Dock sidebar", "Settings", "Help"]);
-    });
-
-    it("docks an overlay sidebar and undocks a docked one", async () => {
-      const onSetSidebarMode = vi.fn();
-      const { rerender } = render(Sidebar, {
-        props: { ...defaultProps, sidebarMode: "overlay", onSetSidebarMode },
-      });
-
-      await fireEvent.click(screen.getByRole("button", { name: "Dock sidebar" }));
-      expect(onSetSidebarMode).toHaveBeenLastCalledWith("docked");
-
-      await rerender({ sidebarMode: "docked" });
-      const undock = screen.getByRole("button", { name: "Undock sidebar" });
-      expect(undock).toHaveAttribute("aria-pressed", "true");
-      await fireEvent.click(undock);
-      expect(onSetSidebarMode).toHaveBeenLastCalledWith("overlay");
-    });
-  });
-
-  describe("icon tooltips", () => {
-    it("titles the new-workspace, close-project and remove-workspace icons", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("feature-1")]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project], mode: "hover" as const },
-      });
-
-      expect(container.querySelector(".new-workspace-icon")).toHaveAttribute(
-        "title",
-        "New workspace"
-      );
-      expect(screen.getByRole("button", { name: "Close project" })).toHaveAttribute(
-        "title",
-        "Close project"
-      );
-      expect(screen.getByRole("button", { name: "Remove workspace" })).toHaveAttribute(
-        "title",
-        "Remove workspace"
+  describe("look", () => {
+    it("shows no alarm clock and no “your turn”", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      expect(container.textContent).not.toMatch(/⏰|your turn/i);
+      expect(row(container, "codehydra/hibernation-age").querySelector(".meta")?.textContent).toBe(
+        ""
       );
     });
 
-    it("titles the hibernated and deletion-failed status icons", () => {
-      const project = makeUiProjectRow([
-        makeUiWorkspaceRow("sleeping", { hibernated: true }),
-        makeUiWorkspaceRow("broken", { status: "delete-failed" }),
-      ]);
-
-      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
-
-      expect(screen.getByRole("img", { name: "Hibernated" })).toHaveAttribute(
-        "title",
-        "Hibernated - click to wake"
-      );
-      expect(screen.getByRole("img", { name: "Deletion failed" })).toHaveAttribute(
-        "title",
-        "Deletion failed"
-      );
-    });
-  });
-
-  describe("hibernation age", () => {
-    const NOW = new Date(2026, 9, 30, 12, 0).getTime();
-
-    beforeEach(() => {
-      vi.useFakeTimers({ now: NOW, toFake: ["Date", "setInterval", "clearInterval"] });
-    });
-
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    function renderAsleep(hibernatedAt: string | undefined): void {
-      const row = makeUiWorkspaceRow("sleeping", {
-        hibernated: true,
-        ...(hibernatedAt !== undefined && { hibernatedAt }),
-      });
-      render(Sidebar, { props: { ...defaultProps, projects: [makeUiProjectRow([row])] } });
-    }
-
-    it("shows the short age on the row and the full time in the tooltip", () => {
-      const at = new Date(2026, 9, 27, 14, 2);
-      renderAsleep(at.toISOString());
-
-      expect(document.querySelector(".hibernation-age")).toHaveTextContent("2d");
-      const title = screen.getByRole("img", { name: "Hibernated" }).getAttribute("title");
-      expect(title).toMatch(/^Hibernated 2 days ago \(.+\) - click to wake$/);
-      expect(title).toContain(at.toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" }));
+    it("uses the moon for hibernate and offers only remove on a hibernated row", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const busy = row(container, "codehydra/redesign-sidebar");
       expect(
-        screen.getByRole("button", { name: /sleeping in test-project - Hibernated 2 days ago/ })
-      ).toBeInTheDocument();
+        [...busy.querySelectorAll("[data-act]")].map((b) => b.getAttribute("data-act"))
+      ).toEqual(["hibernate", "remove"]);
+      for (const el of container.querySelectorAll(".ws.hibernated")) {
+        expect([...el.querySelectorAll(".hover-acts [data-act]")].length).toBe(1);
+      }
     });
 
-    it("re-renders the age as the minutes pass", async () => {
-      renderAsleep(new Date(NOW - 59 * 60_000).toISOString());
-      expect(document.querySelector(".hibernation-age")).toHaveTextContent("59m");
-
-      await vi.advanceTimersByTimeAsync(60_000);
-
-      expect(document.querySelector(".hibernation-age")).toHaveTextContent("1h");
+    it("shows the age of a hibernated row and “working” on a busy one", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      expect(
+        row(container, "codehydra/find-workspace-dialog").querySelector(".meta")?.textContent
+      ).toBe("5h");
+      expect(row(container, "acme-api/billing-v2").querySelector(".meta")?.textContent).toBe("2w");
+      expect(row(container, "codehydra/redesign-sidebar").querySelector(".meta")?.textContent).toBe(
+        "working"
+      );
     });
 
-    it("shows no age for a workspace hibernated before the time was recorded", () => {
-      renderAsleep(undefined);
+    it("explains an automated row on hover (no icon)", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      expect(row(container, "codehydra/ci-watch").getAttribute("title")).toBe(
+        "Wakes automatically: gh pr checks 812"
+      );
+    });
 
-      expect(document.querySelector(".hibernation-age")).not.toBeInTheDocument();
-      expect(screen.getByRole("img", { name: "Hibernated" })).toHaveAttribute(
-        "title",
-        "Hibernated - click to wake"
+    it("sums working, idle and hibernated in the footer", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const sum = [...container.querySelectorAll(".sb-foot .sum i")].map((i) => i.textContent);
+      expect(sum).toEqual(["4", "4", "8"]);
+    });
+  });
+
+  describe("hibernated list", () => {
+    it("is hidden at rest, and the moon shows hibernated/automated", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      expect(hibGroupOpen(container, "codehydra")).toBe(false);
+      expect(card(container, "codehydra").querySelector(".sleepers")?.textContent).toBe("2/2");
+      expect(card(container, "acme-api").querySelector(".sleepers")?.textContent).toBe("1/1");
+      expect(card(container, "website").querySelector(".sleepers")?.textContent).toBe("1");
+    });
+
+    it("the moon asks to show the list, and to hide it again", async () => {
+      const projects = sampleProjects();
+      const { container, rerender } = setup({ projects });
+      await fireEvent.click(card(container, "codehydra").querySelector(".sleepers")!);
+      expect(events()).toContainEqual({
+        kind: "set-hibernated-view",
+        projectId: "codehydra",
+        view: "manual",
+      });
+      rerender({ projects: withProject(projects, "codehydra", { hibernatedView: "manual" }) });
+      expect(hibGroupOpen(container, "codehydra")).toBe(true);
+      expect(rowOpen(container, "codehydra/ci-watch")).toBe(false);
+      vi.mocked(emitEvent).mockClear();
+      await fireEvent.click(card(container, "codehydra").querySelector(".sleepers")!);
+      expect(events()).toEqual([
+        { kind: "set-hibernated-view", projectId: "codehydra", view: "hidden" },
+      ]);
+    });
+
+    it("offers “Show automated workspaces” in their own color, which shows them", async () => {
+      const projects = withProject(sampleProjects(), "codehydra", { hibernatedView: "manual" });
+      const { container, rerender } = setup({ projects });
+      const menu = card(container, "codehydra").querySelector(".auto-menu")!;
+      expect(menu.textContent).toContain("Show automated workspaces (2)");
+      expect(menu.closest(".cl")?.classList.contains("open")).toBe(true);
+      await fireEvent.click(menu);
+      expect(events()).toContainEqual({
+        kind: "set-hibernated-view",
+        projectId: "codehydra",
+        view: "all",
+      });
+      rerender({ projects: withProject(projects, "codehydra", { hibernatedView: "all" }) });
+      expect(menu.closest(".cl")?.classList.contains("open")).toBe(false);
+      expect(rowOpen(container, "codehydra/ci-watch")).toBe(true);
+      expect(row(container, "codehydra/ci-watch").classList.contains("auto")).toBe(true);
+    });
+
+    it("lists hibernated, then automated, then awake rows, each in main's order", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const keys = [...card(container, "codehydra").querySelectorAll(".ws")].map(
+        (el) => (el as HTMLElement).dataset.key
+      );
+      expect(keys.slice(0, 4)).toEqual([
+        "codehydra/find-workspace-dialog",
+        "codehydra/atomic-state-writes",
+        "codehydra/ci-watch",
+        "codehydra/release-notes",
+      ]);
+    });
+
+    it("folds away when the pointer leaves the card, or on a click elsewhere in it", async () => {
+      const projects = withProject(sampleProjects(), "codehydra", { hibernatedView: "manual" });
+      const { container } = setup({ projects });
+      await fireEvent.mouseLeave(card(container, "codehydra"));
+      expect(events()).toContainEqual({
+        kind: "set-hibernated-view",
+        projectId: "codehydra",
+        view: "hidden",
+      });
+      vi.mocked(emitEvent).mockClear();
+      await fireEvent.click(row(container, "codehydra/hibernation-age"));
+      expect(events()[0]).toEqual({
+        kind: "set-hibernated-view",
+        projectId: "codehydra",
+        view: "hidden",
+      });
+    });
+
+    it("stays open around the active hibernated workspace", () => {
+      const { container } = setup({ projects: sampleProjects("codehydra/atomic-state-writes") });
+      expect(hibGroupOpen(container, "codehydra")).toBe(true);
+    });
+  });
+
+  describe("collapsed project", () => {
+    it("shows working and idle counts instead of the moon", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const infra = card(container, "infra");
+      expect(infra.classList.contains("closed")).toBe(true);
+      expect(infra.querySelector(".sleepers")).toBeNull();
+      expect([...infra.querySelectorAll(".cnt i")].map((i) => i.textContent)).toEqual(["1", "2"]);
+    });
+
+    it("its header toggles it (and not while Find has the focus)", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      await fireEvent.click(card(container, "website").querySelector(".proj-h")!);
+      expect(events()).toContainEqual({ kind: "toggle-project-collapsed", projectId: "website" });
+      vi.mocked(emitEvent).mockClear();
+      await fireEvent.focus(container.querySelector("input")!);
+      await fireEvent.click(card(container, "website").querySelector(".proj-h")!);
+      expect(events()).not.toContainEqual(
+        expect.objectContaining({ kind: "toggle-project-collapsed" })
       );
     });
   });
 
-  describe("hibernated count toggle", () => {
-    // Regression: with hide-hibernated on, a project whose workspaces are all
-    // asleep rendered as a bare header, indistinguishable from an empty one.
-
-    it("shows the count while hidden and offers to show them", async () => {
-      const onToggleHideHibernated = vi.fn();
-      const project = makeUiProjectRow([], { hibernatedCount: 3, hideHibernated: true });
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onToggleHideHibernated },
-      });
-
-      const button = screen.getByRole("button", { name: "Show 3 hibernated workspaces" });
-      expect(button).toHaveAttribute("title", "Show 3 hibernated workspaces");
-      expect(button).toHaveAttribute("aria-pressed", "true");
-      expect(button).toHaveTextContent("3");
-      await fireEvent.click(button);
-      expect(onToggleHideHibernated).toHaveBeenCalledWith(project.id);
-    });
-
-    it("shows the count while shown and offers to hide them", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1", { hibernated: true })], {
-        hibernatedCount: 1,
-      });
-
-      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
-
-      const button = screen.getByRole("button", { name: "Hide 1 hibernated workspace" });
-      expect(button).toHaveAttribute("aria-pressed", "false");
-    });
-
-    it("shows nothing when the project has no hibernated workspaces", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-
-      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
-
-      expect(screen.queryByRole("button", { name: /hibernated workspace/i })).toBeNull();
-    });
-  });
-
-  describe("active row scroll-into-view", () => {
-    // Regression: Alt+X arrow/jump navigation switches the active workspace to
-    // a row that may be scrolled out of the sidebar's viewport. The sidebar
-    // must scroll the newly-active row back into view.
-
-    it("scrolls the newly-active row into view when the active workspace changes (expanded)", async () => {
-      const project = makeUiProjectRow([
-        makeUiWorkspaceRow("ws1", { active: true }),
-        makeUiWorkspaceRow("ws2", { active: false }),
+  describe("row gestures", () => {
+    it("switches on click; a hibernated row wakes; a failed one opens again", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      await fireEvent.click(row(container, "website/blog-rss"));
+      expect(events()).toEqual([{ kind: "switch-workspace", key: "website/blog-rss" }]);
+      vi.mocked(emitEvent).mockClear();
+      await fireEvent.click(row(container, "website/i18n"));
+      expect(events()).toEqual([
+        { kind: "wake-workspace", key: "website/i18n" },
+        { kind: "switch-workspace", key: "website/i18n" },
       ]);
-
-      const { rerender } = render(Sidebar, {
-        // shortcut mode keeps the sidebar expanded (as during Alt+X nav).
-        props: { ...defaultProps, projects: [project], mode: "shortcut" as const },
-      });
-
-      // Spy on the second row (jsdom's default scrollIntoView is a no-op). The
-      // keyed {#each} reuses this <li> across the rerender, so the spy survives.
-      const scrollSpy = vi.fn();
-      const ws2Item = screen.getByText("ws2").closest("li")!;
-      ws2Item.scrollIntoView = scrollSpy;
-
-      // Navigate: ws2 becomes active.
-      await rerender({
-        ...defaultProps,
-        projects: [
-          makeUiProjectRow([
-            makeUiWorkspaceRow("ws1", { active: false }),
-            makeUiWorkspaceRow("ws2", { active: true }),
-          ]),
-        ],
-        mode: "shortcut" as const,
-      });
-      flushSync();
-
-      expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });
-    });
-
-    it("does not scroll while collapsed (workspace mode)", async () => {
-      const project = makeUiProjectRow([
-        makeUiWorkspaceRow("ws1", { active: true }),
-        makeUiWorkspaceRow("ws2", { active: false }),
+      vi.mocked(emitEvent).mockClear();
+      await fireEvent.click(row(container, "codehydra/e2e-flake-hunt"));
+      expect(events()).toEqual([
+        { kind: "wake-workspace", key: "codehydra/e2e-flake-hunt" },
+        { kind: "switch-workspace", key: "codehydra/e2e-flake-hunt" },
       ]);
-
-      const { rerender } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project], mode: "workspace" as const },
-      });
-
-      const scrollSpy = vi.fn();
-      const ws2Item = screen.getByText("ws2").closest("li")!;
-      ws2Item.scrollIntoView = scrollSpy;
-
-      await rerender({
-        ...defaultProps,
-        projects: [
-          makeUiProjectRow([
-            makeUiWorkspaceRow("ws1", { active: false }),
-            makeUiWorkspaceRow("ws2", { active: true }),
-          ]),
-        ],
-        mode: "workspace" as const,
-      });
-      flushSync();
-
-      expect(scrollSpy).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("state rendering", () => {
-    it("shows the New workspace entry and no 'no projects' text when there are no projects", () => {
-      render(Sidebar, { props: defaultProps });
-
-      // The New workspace entry is the only affordance; the old empty-state text is gone.
-      expect(screen.getByRole("button", { name: /new workspace/i })).toBeInTheDocument();
-      expect(screen.queryByText(/No projects open\./)).not.toBeInTheDocument();
-    });
-  });
-
-  describe("list structure", () => {
-    it("renders project list with ul/li structure", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("feature-1")]);
-      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
-
-      const lists = screen.getAllByRole("list");
-      expect(lists.length).toBeGreaterThan(0);
-
-      const items = screen.getAllByRole("listitem");
-      expect(items.length).toBeGreaterThan(0);
     });
 
-    it("renders workspaces under each project", () => {
-      const project = makeUiProjectRow([
-        makeUiWorkspaceRow("workspace-1"),
-        makeUiWorkspaceRow("workspace-2"),
+    it("hover actions hibernate and remove without switching", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const target = row(container, "website/dark-mode");
+      await fireEvent.click(target.querySelector('[data-act="hibernate"]')!);
+      await fireEvent.click(target.querySelector('[data-act="remove"]')!);
+      expect(events()).toEqual([
+        { kind: "hibernate-workspace", key: "website/dark-mode" },
+        { kind: "remove-workspace", key: "website/dark-mode" },
       ]);
-
-      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
-
-      expect(screen.getByText("workspace-1")).toBeInTheDocument();
-      expect(screen.getByText("workspace-2")).toBeInTheDocument();
-    });
-  });
-
-  describe("interactions", () => {
-    it("global 'New workspace' entry opens the New workspace view", async () => {
-      const onOpenNewWorkspace = vi.fn();
-      const project = makeUiProjectRow([makeUiWorkspaceRow("feature-1")]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onOpenNewWorkspace },
-      });
-
-      // Single global entry (no per-project add button); takes no projectId.
-      const newWorkspaceButton = screen.getByRole("button", { name: /new workspace/i });
-      await fireEvent.click(newWorkspaceButton);
-
-      expect(onOpenNewWorkspace).toHaveBeenCalledWith();
     });
 
-    it("[x] on project calls closeProject", async () => {
-      const onCloseProject = vi.fn();
-      const project = makeUiProjectRow([makeUiWorkspaceRow("feature-1")]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onCloseProject },
-      });
-
-      const closeButton = screen.getByLabelText(/close project/i);
-      await fireEvent.click(closeButton);
-
-      expect(onCloseProject).toHaveBeenCalledWith(project.id);
+    it("the project's + opens the form for that project; trash closes the project", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      await fireEvent.click(card(container, "acme-api").querySelector('[data-act="newin"]')!);
+      await fireEvent.click(card(container, "acme-api").querySelector('[data-act="closeproj"]')!);
+      expect(events()).toEqual([
+        { kind: "open-new-workspace", projectId: "acme-api" },
+        { kind: "close-project", projectId: "acme-api" },
+      ]);
     });
 
-    it("[x] on workspace requests the remove flow with the row key", async () => {
-      const onRemoveWorkspace = vi.fn();
-      const ws = makeUiWorkspaceRow("ws1");
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onRemoveWorkspace },
-      });
-
-      const removeButton = screen.getByLabelText(/remove workspace/i);
-      await fireEvent.click(removeButton);
-
-      expect(onRemoveWorkspace).toHaveBeenCalledWith(ws.key);
-    });
-
-    it("clicking workspace calls switchWorkspace", async () => {
-      const onSwitchWorkspace = vi.fn();
-      const ws = makeUiWorkspaceRow("ws1");
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onSwitchWorkspace },
-      });
-
-      const workspaceButton = screen.getByRole("button", { name: ws.name });
-      await fireEvent.click(workspaceButton);
-
-      expect(onSwitchWorkspace).toHaveBeenCalledWith(ws.key);
-    });
-
-    it.each(["creating", "loading", "open-failed"] as const)(
-      "calls switchWorkspace for a %s workspace row (its panel shows in main)",
-      async (status) => {
-        const onSwitchWorkspace = vi.fn();
-        const ws = makeUiWorkspaceRow("ws1", { status });
-        const project = makeUiProjectRow([ws]);
-
-        render(Sidebar, {
-          props: { ...defaultProps, projects: [project], onSwitchWorkspace },
-        });
-
-        const workspaceButton = screen.getByRole("button", { name: ws.name });
-        await fireEvent.click(workspaceButton);
-
-        expect(onSwitchWorkspace).toHaveBeenCalledWith(ws.key);
+    it("the footer opens the form, docks, opens settings and help", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      for (const button of container.querySelectorAll(".sb-foot button")) {
+        await fireEvent.click(button);
       }
-    );
-
-    it.each(["creating", "loading"] as const)(
-      "shows a spinner and no hibernate or remove action while %s",
-      (status) => {
-        const ws = makeUiWorkspaceRow("ws1", { status });
-        const { container } = render(Sidebar, {
-          props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
-        });
-
-        expect(container.querySelector("vscode-progress-ring.row-spinner")).toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Hibernate workspace" })).toBeNull();
-        expect(screen.queryByRole("button", { name: "Remove workspace" })).toBeNull();
-      }
-    );
-
-    it("offers Retry and Remove for an open-failed row, with the reason on hover", async () => {
-      const ws = makeUiWorkspaceRow("ws1", { status: "open-failed", openError: "agent crashed" });
-      const onRemoveWorkspace = vi.fn();
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [makeUiProjectRow([ws])], onRemoveWorkspace },
-      });
-
-      expect(container.querySelector(".row-error")).toHaveAttribute("title", "agent crashed");
-      expect(screen.queryByRole("button", { name: "Hibernate workspace" })).toBeNull();
-
-      await fireEvent.click(screen.getByRole("button", { name: "Retry opening workspace" }));
-      expect(emitEvent).toHaveBeenCalledWith({ kind: "wake-workspace", key: ws.key });
-
-      await fireEvent.click(screen.getByRole("button", { name: "Remove workspace" }));
-      expect(onRemoveWorkspace).toHaveBeenCalledWith(ws.key);
-    });
-  });
-
-  describe("shortcut mode index numbers", () => {
-    it("should-show-index-numbers-when-shortcut-mode-active", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1"), makeUiWorkspaceRow("ws2")]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], shortcutModeActive: true },
-      });
-
-      expect(screen.getByText("1")).toBeInTheDocument();
-      expect(screen.getByText("2")).toBeInTheDocument();
-    });
-
-    it("should-hide-index-numbers-when-shortcut-mode-inactive", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], shortcutModeActive: false },
-      });
-
-      expect(screen.queryByText("1")).not.toBeInTheDocument();
-    });
-
-    it("should-display-indices-1-through-9-then-0-for-tenth", () => {
-      const workspaces = Array.from({ length: 10 }, (_, i) => makeUiWorkspaceRow(`ws${i + 1}`));
-      const project = makeUiProjectRow(workspaces);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], shortcutModeActive: true },
-      });
-
-      // Check indices 1-9
-      for (let i = 1; i <= 9; i++) {
-        expect(screen.getByText(String(i))).toBeInTheDocument();
-      }
-      // Check index 0 for 10th workspace
-      expect(screen.getByText("0")).toBeInTheDocument();
-    });
-
-    it("should-number-workspaces-globally-across-projects", () => {
-      const project1 = makeUiProjectRow([makeUiWorkspaceRow("ws1"), makeUiWorkspaceRow("ws2")], {
-        id: "p1-12345678",
-        name: "p1",
-      });
-      const project2 = makeUiProjectRow([makeUiWorkspaceRow("ws3")], {
-        id: "p2-12345678",
-        name: "p2",
-      });
-
-      render(Sidebar, {
-        props: {
-          ...defaultProps,
-          projects: [project1, project2],
-          shortcutModeActive: true,
-        },
-      });
-
-      // All three workspaces should have sequential indices
-      expect(screen.getByText("1")).toBeInTheDocument();
-      expect(screen.getByText("2")).toBeInTheDocument();
-      expect(screen.getByText("3")).toBeInTheDocument();
-    });
-
-    it("should-show-dimmed-dot-for-workspaces-beyond-tenth", () => {
-      const workspaces = Array.from({ length: 11 }, (_, i) => makeUiWorkspaceRow(`ws${i + 1}`));
-      const project = makeUiProjectRow(workspaces);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], shortcutModeActive: true },
-      });
-
-      // 11th workspace should show a dot
-      const dot = screen.getByText("·");
-      expect(dot).toBeInTheDocument();
-      // Using vscode-badge with .badge-dimmed class for unavailable shortcuts
-      expect(dot).toHaveClass("badge-dimmed");
-    });
-
-    it("should-have-aria-hidden-on-index-spans", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], shortcutModeActive: true },
-      });
-
-      const indexSpan = screen.getByText("1");
-      expect(indexSpan).toHaveAttribute("aria-hidden", "true");
-    });
-
-    it("should-include-shortcut-hint-in-workspace-button-aria-label", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("my-workspace")]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], shortcutModeActive: true },
-      });
-
-      const button = screen.getByRole("button", {
-        name: /my-workspace.*press 1 to jump/i,
-      });
-      expect(button).toBeInTheDocument();
-    });
-  });
-
-  describe("agent status indicator", () => {
-    it("renders agent status indicator for each workspace", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Should have an indicator with status role
-      const indicators = screen.getAllByRole("status");
-      expect(indicators.length).toBeGreaterThan(0);
-    });
-
-    it("shows 'none' status when the row carries no agent", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Should show 'no agents running' indicator
-      const indicator = screen.getByRole("status");
-      expect(indicator).toHaveAttribute("aria-label", expect.stringMatching(/no agents running/i));
-    });
-
-    it("shows idle status when the row carries idle agents", () => {
-      const ws = makeUiWorkspaceRow("ws1", {
-        agent: { type: "idle", counts: { idle: 2, busy: 0, total: 2 } },
-      });
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      const indicator = screen.getByRole("status");
-      expect(indicator).toHaveAttribute("aria-label", expect.stringMatching(/2 agents? idle/i));
-    });
-
-    it("shows busy status when the row carries busy agents", () => {
-      const ws = makeUiWorkspaceRow("ws1", {
-        agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
-      });
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      const indicator = screen.getByRole("status");
-      expect(indicator).toHaveAttribute("aria-label", expect.stringMatching(/1 agent busy/i));
-    });
-
-    it("shows mixed status when the row carries both idle and busy agents", () => {
-      const ws = makeUiWorkspaceRow("ws1", {
-        agent: { type: "mixed", counts: { idle: 1, busy: 2, total: 3 } },
-      });
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      const indicator = screen.getByRole("status");
-      expect(indicator).toHaveAttribute("aria-label", expect.stringMatching(/1 idle.+2 busy/i));
-    });
-
-    it("renders separate indicators for multiple workspaces", () => {
-      const ws1 = makeUiWorkspaceRow("ws1", {
-        agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
-      });
-      const ws2 = makeUiWorkspaceRow("ws2", {
-        agent: { type: "busy", counts: { idle: 0, busy: 2, total: 2 } },
-      });
-      const project = makeUiProjectRow([ws1, ws2]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      const indicators = screen.getAllByRole("status");
-      expect(indicators).toHaveLength(2);
-
-      // Check that we have both idle and busy indicators
-      const ariaLabels = indicators.map((el) => el.getAttribute("aria-label"));
-      expect(ariaLabels.some((label) => label?.match(/idle/i))).toBe(true);
-      expect(ariaLabels.some((label) => label?.match(/busy/i))).toBe(true);
-    });
-  });
-
-  describe("status cell button", () => {
-    // The status cell is a button in BOTH modes; clicks bubble to the row's
-    // switch handler. When collapsed it is the entire visible row.
-
-    it("renders a status cell button for each workspace", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1"), makeUiWorkspaceRow("ws2")]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Sidebar is collapsed (workspaces exist, not hovering, uiMode is workspace)
-      const statusButtons = screen.getAllByRole("button", { name: /in test.*agent/i });
-      expect(statusButtons).toHaveLength(2);
-    });
-
-    it("clicking status cell button calls onSwitchWorkspace", async () => {
-      const onSwitchWorkspace = vi.fn();
-      const ws = makeUiWorkspaceRow("ws1");
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onSwitchWorkspace },
-      });
-
-      const statusButton = screen.getByRole("button", { name: /ws1 in test.*agent/i });
-      await fireEvent.click(statusButton);
-
-      expect(onSwitchWorkspace).toHaveBeenCalledWith(ws.key);
-    });
-
-    it("status cell button has descriptive aria-label with workspace, project, and status", () => {
-      const ws = makeUiWorkspaceRow("ws1", {
-        agent: { type: "busy", counts: { idle: 0, busy: 2, total: 2 } },
-      });
-      const project = makeUiProjectRow([ws], { name: "test" });
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Button should have aria-label with workspace name, project name, and status
-      const statusButton = screen.getByRole("button", { name: /ws1 in test.*busy/i });
-      expect(statusButton).toBeInTheDocument();
-    });
-
-    it("active workspace status button has aria-current='true'", () => {
-      const ws = makeUiWorkspaceRow("ws1", { active: true });
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      const statusButton = screen.getByRole("button", { name: /ws1 in test.*agent/i });
-      expect(statusButton).toHaveAttribute("aria-current", "true");
-    });
-
-    it("inactive workspace status button does not have aria-current", () => {
-      const ws1 = makeUiWorkspaceRow("ws1", { active: true });
-      const ws2 = makeUiWorkspaceRow("ws2");
-      const project = makeUiProjectRow([ws1, ws2]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // ws2's button should NOT have aria-current
-      const ws2Button = screen.getByRole("button", { name: /ws2 in test.*agent/i });
-      expect(ws2Button).not.toHaveAttribute("aria-current");
-    });
-  });
-
-  describe("expand hint chevrons", () => {
-    // The expand hint is the one element that truly only exists in one mode
-    // (collapsed); everything else is a single DOM tree styled per mode.
-
-    it("renders expand hint chevron in header when collapsed", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Sidebar is collapsed - check that header contains an expand hint chevron
-      const header = container.querySelector(".sidebar-header");
-      expect(header).not.toBeNull();
-
-      const headerChevron = header!.querySelector(".expand-hint");
-      expect(headerChevron).toBeInTheDocument();
-      expect(headerChevron).toHaveAttribute("aria-hidden", "true");
-      // Icon component renders vscode-icon for chevron
-      expect(headerChevron!.querySelector("vscode-icon")).toBeInTheDocument();
-    });
-
-    it("does not render expand hints when expanded", () => {
-      // When there are no workspaces, sidebar is expanded
-      const { container } = render(Sidebar, { props: defaultProps });
-
-      // Sidebar is expanded - expand hints should NOT be visible
-      const expandHints = container.querySelectorAll(".expand-hint");
-      expect(expandHints.length).toBe(0);
-    });
-  });
-
-  describe("rendering order", () => {
-    // Note: Sorting is done by the main-process presenter — the snapshot
-    // arrives pre-sorted. Sidebar renders rows in the order it receives them.
-
-    it("renders projects in the order provided", () => {
-      const mkProject = (name: string): ReturnType<typeof makeUiProjectRow> =>
-        makeUiProjectRow([makeUiWorkspaceRow("ws", { key: `${name}/ws` })], {
-          id: `${name}-12345678`,
-          name,
-        });
-
-      render(Sidebar, {
-        props: {
-          ...defaultProps,
-          // Pass projects in display order (as the presenter provides)
-          projects: [
-            mkProject("Alpha"),
-            mkProject("alpha"),
-            mkProject("beta"),
-            mkProject("charlie"),
-          ],
-        },
-      });
-
-      // Get all project names in rendered order (filter to .project-name elements only)
-      const projectNames = screen
-        .getAllByTitle(/^\//)
-        .filter((el) => el.classList.contains("project-name"));
-      const names = projectNames.map((el) => el.textContent);
-
-      expect(names).toEqual(["Alpha", "alpha", "beta", "charlie"]);
-    });
-
-    it("renders workspaces in the order provided", () => {
-      const project = makeUiProjectRow([
-        makeUiWorkspaceRow("Alpha"),
-        makeUiWorkspaceRow("alpha", { key: "test-project-12345678/alpha-lower" }),
-        makeUiWorkspaceRow("Beta"),
-        makeUiWorkspaceRow("beta", { key: "test-project-12345678/beta-lower" }),
-        makeUiWorkspaceRow("charlie"),
+      expect(events()).toEqual([
+        { kind: "open-new-workspace", projectId: null },
+        { kind: "set-sidebar-mode", mode: "overlay" },
+        { kind: "open-settings" },
+        { kind: "open-help" },
       ]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Get workspace buttons in rendered order
-      const workspaceButtons = screen.getAllByRole("button", {
-        name: /^(Alpha|alpha|Beta|beta|charlie)$/,
-      });
-      const names = workspaceButtons.map((el) => el.textContent?.trim());
-
-      expect(names).toEqual(["Alpha", "alpha", "Beta", "beta", "charlie"]);
-    });
-
-    it("shortcut indices match rendered order", () => {
-      const project = makeUiProjectRow([
-        makeUiWorkspaceRow("alpha"),
-        makeUiWorkspaceRow("beta"),
-        makeUiWorkspaceRow("charlie"),
-      ]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], shortcutModeActive: true },
-      });
-
-      // alpha should be index 1 (first in the list)
-      const alphaButton = screen.getByRole("button", { name: /alpha.*press 1 to jump/i });
-      expect(alphaButton).toBeInTheDocument();
-
-      // beta should be index 2
-      const betaButton = screen.getByRole("button", { name: /beta.*press 2 to jump/i });
-      expect(betaButton).toBeInTheDocument();
-
-      // charlie should be index 3
-      const charlieButton = screen.getByRole("button", { name: /charlie.*press 3 to jump/i });
-      expect(charlieButton).toBeInTheDocument();
     });
   });
 
-  describe("expansion state", () => {
-    const propsWithWorkspaces = () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-      return { ...defaultProps, projects: [project] };
+  describe("Find", () => {
+    it("opens every project and shows hibernated (not automated) rows", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const infra = card(container, "infra");
+      await fireEvent.focus(container.querySelector("input")!);
+      expect(events()).toContainEqual({ kind: "set-find", active: true });
+      expect(container.querySelectorAll(".proj.closed").length).toBe(0);
+      expect(card(container, "infra")).toBe(infra);
+      expect(hibGroupOpen(container, "codehydra")).toBe(true);
+      expect(rowOpen(container, "codehydra/ci-watch")).toBe(false);
+      expect(rowOpen(container, "codehydra/atomic-state-writes")).toBe(true);
+    });
+
+    it("Alt+X, T's views decide which hibernated rows Find shows", async () => {
+      const { container, rerender } = setup({ projects: sampleProjects() });
+      await fireEvent.focus(container.querySelector("input")!);
+      rerender({ find: { hibernatedView: "all" } });
+      expect(rowOpen(container, "codehydra/ci-watch")).toBe(true);
+      rerender({ find: { hibernatedView: "hidden" } });
+      expect(hibGroupOpen(container, "codehydra")).toBe(false);
+    });
+
+    it("filters by project, title, branch or tag and marks the match", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const input = container.querySelector("input")!;
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "pkce" } });
+      expect(rowOpen(container, "acme-api/oauth-pkce")).toBe(true);
+      expect(rowOpen(container, "acme-api/rate-limit")).toBe(false);
+      expect(card(container, "website").closest(".cl")?.classList.contains("open")).toBe(false);
+      expect(row(container, "acme-api/oauth-pkce").querySelector("mark")?.textContent).toBe("PKCE");
+      await fireEvent.input(input, { target: { value: "design" } });
+      expect(rowOpen(container, "website/landing-redesign")).toBe(true);
+      await fireEvent.input(input, { target: { value: "zzz" } });
+      expect(container.querySelector(".empty")?.textContent).toContain("zzz");
+    });
+
+    it("puts the marker on the active row, moves it with the arrows and Enter switches", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const input = container.querySelector("input")!;
+      await fireEvent.focus(input);
+      expect(row(container, "codehydra/redesign-sidebar").classList.contains("sel")).toBe(true);
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
+      expect(row(container, "acme-api/billing-v2").classList.contains("sel")).toBe(true);
+      await fireEvent.keyDown(input, { key: "Home" });
+      expect(row(container, "codehydra/find-workspace-dialog").classList.contains("sel")).toBe(
+        true
+      );
+      vi.mocked(emitEvent).mockClear();
+      await fireEvent.keyDown(input, { key: "Enter" });
+      expect(events()).toEqual([
+        { kind: "set-find", active: false },
+        { kind: "wake-workspace", key: "codehydra/find-workspace-dialog" },
+        { kind: "switch-workspace", key: "codehydra/find-workspace-dialog" },
+      ]);
+    });
+
+    it("Escape leaves Find and gives the workspace the focus", async () => {
+      const focusFrame = vi.fn();
+      (window as Window & { __chFocusActiveFrame?: () => void }).__chFocusActiveFrame = focusFrame;
+      const { container } = setup({ projects: sampleProjects() });
+      const input = container.querySelector("input")!;
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "ci" } });
+      await fireEvent.keyDown(input, { key: "Escape" });
+      expect(input.value).toBe("");
+      expect(events()).toContainEqual({ kind: "set-find", active: false });
+      expect(focusFrame).toHaveBeenCalled();
+      expect(card(container, "infra").classList.contains("closed")).toBe(true);
+    });
+
+    it("Alt+X, F (main opening Find) focuses the field", () => {
+      const { container, rerender } = setup({ projects: sampleProjects(), find: null });
+      rerender({ find: { hibernatedView: "manual" } });
+      expect(document.activeElement).toBe(container.querySelector("input"));
+    });
+  });
+
+  describe("questions", () => {
+    const deploy = question("q1", "acme-api/oauth-pkce", "Deploy to staging?", ["Deploy", "Skip"]);
+
+    it("a question is a card in its row, with its answers and a × to cancel", async () => {
+      const { container } = setup({ projects: sampleProjects(), notifications: [deploy] });
+      const note = row(container, "acme-api/oauth-pkce").querySelector(".note.question")!;
+      expect([...note.querySelectorAll(".nacts button")].map((b) => b.textContent?.trim())).toEqual(
+        ["Deploy", "Skip"]
+      );
+      expect(container.querySelector(".notes .note")).toBeNull();
+      expect(card(container, "acme-api").querySelector(".hdr-note")).toBeNull();
+      await fireEvent.click(note.querySelector(".nacts button")!);
+      expect(sendNotificationEvent).toHaveBeenCalledWith({
+        notificationId: "q1",
+        actionId: "Deploy",
+      });
+      await fireEvent.click(note.querySelector(".nx")!);
+      expect(sendNotificationEvent).toHaveBeenCalledWith({
+        notificationId: "q1",
+        actionId: "dismiss",
+      });
+      expect(events()).toEqual([]);
+    });
+
+    it("two questions are two cards", () => {
+      const second = question("q2", "acme-api/oauth-pkce", "Push?", ["Push"]);
+      const { container } = setup({ projects: sampleProjects(), notifications: [deploy, second] });
+      expect(row(container, "acme-api/oauth-pkce").querySelectorAll(".note.question").length).toBe(
+        2
+      );
+    });
+
+    it("a question out of sight puts a question mark in the header, which reveals it", async () => {
+      const ask = question("q3", "infra/ci-cache", "Run the migration?", ["Run now"]);
+      const { container } = setup({ projects: sampleProjects(), notifications: [ask] });
+      const mark = card(container, "infra").querySelector(".hdr-note.question")!;
+      expect(mark).not.toBeNull();
+      await fireEvent.click(mark);
+      expect(events()).toEqual([{ kind: "toggle-project-collapsed", projectId: "infra" }]);
+    });
+
+    it("a question in a workspace's editor puts a question mark on its row", () => {
+      const projects = sampleProjects().map((p) => ({
+        ...p,
+        workspaces: p.workspaces.map((r) =>
+          r.key === "website/blog-rss" ? { ...r, editorQuestion: true as const } : r
+        ),
+      }));
+      const { container } = setup({ projects });
+      expect(row(container, "website/blog-rss").querySelector(".ask")).not.toBeNull();
+      expect(row(container, "website/dark-mode").querySelector(".ask")).toBeNull();
+      expect(card(container, "website").querySelector(".hdr-note")).toBeNull();
+    });
+
+    it("…and on its project's header while the row is out of sight, which reveals it", async () => {
+      const projects = sampleProjects().map((p) => ({
+        ...p,
+        workspaces: p.workspaces.map((r) =>
+          r.key === "infra/k8s-autoscaling" ? { ...r, editorQuestion: true as const } : r
+        ),
+      }));
+      const { container } = setup({ projects });
+      const mark = card(container, "infra").querySelector(".hdr-note.question")!;
+      expect(mark.getAttribute("title")).toContain("k8s-autoscaling");
+      await fireEvent.click(mark);
+      expect(events()).toEqual([{ kind: "toggle-project-collapsed", projectId: "infra" }]);
+    });
+
+    it("revealing a hibernated row's question opens its list", async () => {
+      const ask = question("q4", "codehydra/ci-watch", "Retry?", ["Yes"]);
+      const { container } = setup({ projects: sampleProjects(), notifications: [ask] });
+      await fireEvent.click(card(container, "codehydra").querySelector(".hdr-note")!);
+      expect(events()).toEqual([
+        { kind: "set-hibernated-view", projectId: "codehydra", view: "all" },
+      ]);
+    });
+  });
+
+  describe("notifications at the bottom", () => {
+    const error: UiNotification = {
+      id: "e1",
+      count: 3,
+      config: {
+        type: "error",
+        title: "Wakeup script failed",
+        message: "gh: authentication required",
+        dismissible: true,
+        actions: [{ id: "openlog", label: "Open log" }],
+      },
+      workspace: { key: "codehydra/ci-watch", name: "Fix CI once #812 is green" },
     };
+    const info: UiNotification = { id: "i1", config: { type: "info", title: "Nightly build" } };
 
-    /** Hover ui:events emitted by the component, in order. */
-    function hoverEvents(): Array<{ kind: string; region: string | null }> {
-      return vi
-        .mocked(emitEvent)
-        .mock.calls.map(([e]) => e as { kind: string; region: string | null })
-        .filter((e) => e.kind === "hover");
-    }
-
-    it("is expanded for any non-workspace mode (main-owned)", () => {
-      for (const mode of ["hover", "shortcut", "dialog"] as const) {
-        const { container, unmount } = render(Sidebar, {
-          props: { ...propsWithWorkspaces(), mode },
-        });
-        expect(container.querySelector(".sidebar")).toHaveClass("expanded");
-        unmount();
-      }
-    });
-
-    it("is collapsed in workspace mode when there are workspaces", () => {
-      const { container } = render(Sidebar, {
-        props: { ...propsWithWorkspaces(), mode: "workspace" },
+    it("shows newest on top, with counter, workspace link and buttons", async () => {
+      const { container } = setup({ projects: sampleProjects(), notifications: [error, info] });
+      const notes = [...container.querySelectorAll(".notes .note")];
+      expect(notes.map((n) => n.getAttribute("data-note-id"))).toEqual(["i1", "e1"]);
+      expect(notes[1]?.textContent).toContain("×3");
+      expect(card(container, "codehydra").querySelector(".hdr-note")).toBeNull();
+      await fireEvent.click(notes[1]!.querySelector(".nws")!);
+      expect(events()).toEqual([{ kind: "switch-workspace", key: "codehydra/ci-watch" }]);
+      await fireEvent.click(notes[1]!.querySelector(".nacts button")!);
+      expect(sendNotificationEvent).toHaveBeenCalledWith({
+        notificationId: "e1",
+        actionId: "openlog",
       });
-      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
-    });
-
-    it("is forced collapsed while capturing, even in an otherwise-expanded mode", () => {
-      // capturing overrides mode: the hibernation screenshot must not bake in
-      // the sidebar. Shortcut mode (the state hibernate fires from) would
-      // normally expand it.
-      const { container } = render(Sidebar, {
-        props: { ...propsWithWorkspaces(), mode: "shortcut", capturing: true },
-      });
-      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
-    });
-
-    it("stays expanded when docked, in workspace mode and while capturing", () => {
-      // Docked never covers the workspace, so neither the resting mode nor the
-      // hibernation capture collapses it.
-      for (const capturing of [false, true]) {
-        const { container, unmount } = render(Sidebar, {
-          props: { ...propsWithWorkspaces(), mode: "workspace", sidebarMode: "docked", capturing },
-        });
-        const sidebar = container.querySelector(".sidebar");
-        expect(sidebar).toHaveClass("expanded");
-        expect(sidebar).toHaveClass("docked");
-        unmount();
-      }
-    });
-
-    it("emits no hover event for a pointer resting on a docked sidebar", async () => {
-      const { container } = render(Sidebar, {
-        props: { ...propsWithWorkspaces(), sidebarMode: "docked" },
-      });
-
-      await hoverExpand(container.querySelector(".sidebar")!);
-      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
-
-      expect(hoverEvents()).toEqual([]);
-    });
-
-    it("still releases a hover left over from before docking", async () => {
-      const { container, rerender } = render(Sidebar, { props: propsWithWorkspaces() });
-      const sidebar = container.querySelector(".sidebar")!;
-      await hoverExpand(sidebar);
-      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
-
-      await rerender({ mode: "hover", sidebarMode: "docked" });
-      await fireEvent.mouseLeave(sidebar, { clientX: 400 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS);
-
-      expect(hoverEvents()).toEqual([
-        { kind: "hover", region: "sidebar" },
-        { kind: "hover", region: null },
-      ]);
-    });
-
-    it("expands again once capturing clears", () => {
-      const { container } = render(Sidebar, {
-        props: { ...propsWithWorkspaces(), mode: "shortcut", capturing: false },
-      });
-      expect(container.querySelector(".sidebar")).toHaveClass("expanded");
-    });
-
-    it("emits a sidebar hover event after deliberate hover (trigger depth + open delay)", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await hoverExpand(sidebar!);
-
-      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
-    });
-
-    it("emits a hover event when the cursor enters and rests without movement (edge slam)", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!, { clientX: 0 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS);
-      flushSync();
-
-      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
-    });
-
-    it("does not emit before the open delay elapses", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS - 50);
-      flushSync();
-
-      expect(hoverEvents()).toEqual([]);
-    });
-
-    it("does not emit while the cursor stays in the outer quarter of the gutter", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-      await fireEvent.mouseMove(sidebar!, { clientX: 18 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
-      flushSync();
-
-      expect(hoverEvents()).toEqual([]);
-    });
-
-    it("moving back out of the trigger depth cancels the pending hover", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS - 50);
-      await fireEvent.mouseMove(sidebar!, { clientX: 18 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
-      flushSync();
-
-      expect(hoverEvents()).toEqual([]);
-    });
-
-    it("leaving before the open delay elapses cancels the pending hover", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS - 50);
-      await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
-      flushSync();
-
-      expect(hoverEvents()).toEqual([]);
-    });
-
-    it("emits hover region null on mouseleave after the debounce", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await hoverExpand(sidebar!);
-      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
-
-      await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS);
-      flushSync();
-
-      expect(hoverEvents()).toEqual([
-        { kind: "hover", region: "sidebar" },
-        { kind: "hover", region: null },
-      ]);
-    });
-
-    it("emits hover on a slam to the left edge (shallow enter, then leave reported outside)", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!, { clientX: 18 });
-      await fireEvent.mouseLeave(sidebar!, { clientX: -1 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS);
-      flushSync();
-
-      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
-    });
-
-    it("emits hover null on left exit when the window is not at the screen edge (windowed mode)", async () => {
-      const original = Object.getOwnPropertyDescriptor(window, "screenX");
-      Object.defineProperty(window, "screenX", { value: 120, configurable: true });
-      try {
-        const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-        const sidebar = container.querySelector(".sidebar");
-        await hoverExpand(sidebar!);
-
-        await fireEvent.mouseLeave(sidebar!, { clientX: -1 });
-        vi.advanceTimersByTime(HOVER_DELAY_MS);
-        flushSync();
-
-        expect(hoverEvents()).toEqual([
-          { kind: "hover", region: "sidebar" },
-          { kind: "hover", region: null },
-        ]);
-      } finally {
-        if (original) {
-          Object.defineProperty(window, "screenX", original);
-        } else {
-          Object.defineProperty(window, "screenX", { value: 0, configurable: true });
-        }
-      }
-    });
-
-    it("stays armed (no null event) while the cursor is pinned at the left window edge", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await hoverExpand(sidebar!);
-
-      await fireEvent.mouseLeave(sidebar!, { clientX: 0 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
-      flushSync();
-
-      // Pin = deepest hover; no collapse event is emitted.
-      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
-    });
-
-    it("does not arm hover (no event) while a non-workspace mode forces expansion", async () => {
-      const { container } = render(Sidebar, {
-        props: { ...propsWithWorkspaces(), mode: "shortcut", shortcutModeActive: true },
-      });
-
-      const sidebar = container.querySelector(".sidebar");
-      expect(sidebar).toHaveClass("expanded");
-
-      // Cursor sits deep in the sidebar during shortcut mode: hover is not
-      // eligible, so no hover ui:event is emitted (no latch).
-      await fireEvent.mouseEnter(sidebar!);
-      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
-      flushSync();
-
-      expect(hoverEvents()).toEqual([]);
-    });
-
-    it("is expanded when there are no workspaces", () => {
-      const { container } = render(Sidebar, { props: defaultProps });
-
-      const sidebar = container.querySelector(".sidebar");
-      expect(sidebar).toHaveClass("expanded");
-    });
-
-    it("cancels the collapse event when mouse re-enters during debounce", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await hoverExpand(sidebar!);
-
-      await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-      vi.advanceTimersByTime(100);
-      await fireEvent.mouseEnter(sidebar!);
-      vi.advanceTimersByTime(HOVER_DELAY_MS);
-      flushSync();
-
-      // Re-enter cancelled the collapse: no null event followed the open one.
-      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
-    });
-
-    it("clears pending timeouts on unmount (no late collapse event)", async () => {
-      const { container, unmount } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      await hoverExpand(sidebar!);
-
-      await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-      unmount();
-      vi.advanceTimersByTime(200);
-      flushSync();
-
-      // The collapse timeout was cleared on unmount: no null event fired.
-      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
-    });
-
-    it("respects prefers-reduced-motion media query (CSS verification)", () => {
-      // Note: CSS @media (prefers-reduced-motion: reduce) cannot be fully tested in JSDOM
-      // since JSDOM doesn't support media query evaluation.
-      // We verify the CSS rule exists by checking the component renders correctly.
-      // The actual animation disable is handled by CSS.
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      expect(sidebar).toBeInTheDocument();
-      // The sidebar class enables CSS to apply the @media rule
-      expect(sidebar).toHaveClass("sidebar");
     });
   });
 
-  describe("unified layout (expanded vs collapsed)", () => {
-    const propsWithWorkspaces = () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")], { name: "test" });
-      return { ...defaultProps, projects: [project] };
-    };
-    // Expansion is mode-driven now; render with mode "hover" to expand.
-    const expandedProps = () => ({ ...propsWithWorkspaces(), mode: "hover" as const });
-
-    it("renders one DOM tree: status cell, workspace button, and remove button exist in both modes", () => {
-      const collapsed = render(Sidebar, { props: propsWithWorkspaces() });
-      expect(collapsed.container.querySelector(".sidebar")).not.toHaveClass("expanded");
-      expect(collapsed.container.querySelector(".status-cell")).toBeInTheDocument();
-      expect(collapsed.container.querySelector(".workspace-btn")).toBeInTheDocument();
-      expect(collapsed.container.querySelector(".remove-btn")).toBeInTheDocument();
-      collapsed.unmount();
-
-      const expanded = render(Sidebar, { props: expandedProps() });
-      expect(expanded.container.querySelector(".sidebar")).toHaveClass("expanded");
-      expect(expanded.container.querySelector(".status-cell")).toBeInTheDocument();
-      expect(expanded.container.querySelector(".workspace-btn")).toBeInTheDocument();
-      expect(expanded.container.querySelector(".remove-btn")).toBeInTheDocument();
-    });
-
-    it("status cell has descriptive aria-label in both modes", () => {
-      const assertLabel = (container: HTMLElement): void => {
-        const statusCell = container.querySelector(".status-cell");
-        expect(statusCell).toHaveAttribute("aria-label");
-        expect(statusCell!.getAttribute("aria-label")).toMatch(/ws1 in test/);
-      };
-
-      const collapsed = render(Sidebar, { props: propsWithWorkspaces() });
-      assertLabel(collapsed.container);
-      collapsed.unmount();
-
-      const expanded = render(Sidebar, { props: expandedProps() });
-      assertLabel(expanded.container);
-    });
-
-    it("workspace label and remove button are in a label cell (hidden when collapsed via CSS)", () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const labelCell = container.querySelector(".workspace-label-cell");
-      expect(labelCell).toHaveClass("ch-label-cell");
-      expect(labelCell!.querySelector(".workspace-btn")).toBeInTheDocument();
-      expect(labelCell!.querySelector(".remove-btn")).toBeInTheDocument();
-    });
-
-    it("project header is a label cell and has no inert attribute", () => {
-      const collapsed = render(Sidebar, { props: propsWithWorkspaces() });
-      const header = collapsed.container.querySelector(".project-header");
-      expect(header).toHaveClass("ch-label-cell");
-      expect(header).not.toHaveAttribute("inert");
-      collapsed.unmount();
-
-      const expanded = render(Sidebar, { props: expandedProps() });
-      expect(expanded.container.querySelector(".project-header")).not.toHaveAttribute("inert");
-    });
-
-    it("h2 heading exists in both modes inside a label cell", () => {
-      const collapsed = render(Sidebar, { props: propsWithWorkspaces() });
-      expect(collapsed.container.querySelector(".sidebar")).not.toHaveClass("expanded");
-      const heading = collapsed.container.querySelector(".sidebar-header h2");
-      expect(heading).toBeInTheDocument();
-      expect(heading!.closest(".ch-label-cell")).not.toBeNull();
-      collapsed.unmount();
-
-      const expanded = render(Sidebar, { props: expandedProps() });
-      expect(expanded.container.querySelector(".sidebar-header h2")).toBeInTheDocument();
-    });
-
-    it("hides the scrollbar in collapsed mode so it can't cover the status indicators", () => {
-      // The collapsed gutter is ~20px wide; a native scrollbar would overlap
-      // the status-indicator icon column and hide it. JSDOM neither renders
-      // scrollbars nor injects scoped component styles, so we assert the
-      // component ships the collapsed-only scrollbar-hiding rules at source.
-      const source = readFileSync(
-        resolve(process.cwd(), "src/renderer/lib/components/Sidebar.svelte"),
-        "utf8"
+  describe("shortcut mode", () => {
+    it("numbers the awake rows of expanded projects", () => {
+      const { container } = setup({ projects: sampleProjects(), shortcutModeActive: true });
+      const numbered = [...container.querySelectorAll(".ws")].filter((el) =>
+        el.querySelector(".meta kbd")
       );
-
-      expect(source).toMatch(
-        /\.sidebar:not\(\.expanded\)\s+\.sidebar-content\s*\{[\s\S]*?scrollbar-width:\s*none/
-      );
-      expect(source).toMatch(
-        /\.sidebar:not\(\.expanded\)\s+\.sidebar-content::-webkit-scrollbar\s*\{[\s\S]*?display:\s*none/
-      );
-    });
-
-    it("vscode-divider has no inert attribute", () => {
-      const project1 = makeUiProjectRow([makeUiWorkspaceRow("ws1")], {
-        id: "p1-12345678",
-        name: "test",
-      });
-      const project2 = makeUiProjectRow([makeUiWorkspaceRow("ws2")], {
-        id: "p2-12345678",
-        name: "test2",
-      });
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project1, project2] },
-      });
-
-      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
-      const divider = container.querySelector("vscode-divider");
-      expect(divider).toBeInTheDocument();
-      expect(divider).not.toHaveAttribute("inert");
+      expect(numbered.length).toBe(10);
+      expect(
+        row(container, "codehydra/e2e-flake-hunt").querySelector(".meta kbd")?.textContent
+      ).toBe("1");
+      expect(container.querySelector('.ws[data-key="infra/ci-cache"] .meta kbd')).toBeNull();
     });
   });
 
-  describe("workspace tags", () => {
-    it("renders tag pills on the second line when the row carries tags", () => {
-      const ws = makeUiWorkspaceRow("ws1", {
-        tags: [{ name: "bugfix" }, { name: "wip", color: "#ff0" }],
+  describe("collapsed rail", () => {
+    it("overlay and not hovered: the rail shows awake rows of expanded projects", () => {
+      const { container } = setup({
+        projects: sampleProjects(),
+        sidebarMode: "overlay",
+        mode: "workspace",
       });
-      const project = makeUiProjectRow([ws]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Tags now live inline on the row's second (branch/tags) line.
-      expect(container.querySelector(".ws-secondary-line")).toBeInTheDocument();
-
-      const pills = container.querySelectorAll(".ws-tag");
-      expect(pills).toHaveLength(2);
-
-      const pillTexts = Array.from(pills).map((p) => p.textContent?.trim());
-      expect(pillTexts).toContain("bugfix");
-      expect(pillTexts).toContain("wip");
-    });
-
-    it("lays tags out in the wrapping line, outside the branch's scrolling label", () => {
-      const ws = makeUiWorkspaceRow("feat-branch", {
-        title: "My title",
-        tags: [{ name: "bugfix" }, { name: "wip", color: "#ff0" }],
-      });
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
-      });
-
-      const line = container.querySelector(".ws-secondary-line");
-      const tags = Array.from(container.querySelectorAll(".ws-tag"));
-      expect(tags).toHaveLength(2);
-      for (const tag of tags) {
-        expect(tag.parentElement).toBe(line);
-        expect(tag.closest(".scroll")).toBeNull();
-      }
-      expect(line?.querySelector(".scroll .ws-branch")).toBeInTheDocument();
-    });
-
-    it("does not render a second line when the row has no title and no tags", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      expect(container.querySelector(".ws-secondary-line")).not.toBeInTheDocument();
-      expect(container.querySelector(".ws-tag")).not.toBeInTheDocument();
-    });
-
-    it("shows a tag's label in place of its name", () => {
-      const ws = makeUiWorkspaceRow("ws1", {
-        tags: [{ name: "review", label: "🔍" }],
-      });
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
-      });
-
-      const tag = container.querySelector(".ws-tag");
-      expect(tag?.textContent?.trim()).toBe("🔍");
-      expect(tag?.textContent).not.toContain("review");
-    });
-
-    it("wears pill chrome only when the tag has a color", () => {
-      const ws = makeUiWorkspaceRow("ws1", {
-        tags: [{ name: "wip" }, { name: "bugfix", color: "#ff0" }],
-      });
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
-      });
-
-      const [bare, pill] = Array.from(container.querySelectorAll(".ws-tag"));
-      expect(bare).not.toHaveClass("colored");
-      expect(pill).toHaveClass("colored");
-    });
-
-    it("titles a tag only when the tooltip adds something the pill does not show", () => {
-      const ws = makeUiWorkspaceRow("ws1", {
-        tags: [
-          // Nothing to add: displayed text already is the name.
-          { name: "wip" },
-          // An emoji hides the name, so the name becomes the tooltip.
-          { name: "review", label: "🔍" },
-          // An explicit description wins over the name.
-          { name: "blocked", label: "🚧", description: "waiting on CI" },
-        ],
-      });
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
-      });
-
-      const [plain, emoji, described] = Array.from(container.querySelectorAll(".ws-tag"));
-      expect(plain).not.toHaveAttribute("title");
-      expect(emoji).toHaveAttribute("title", "review");
-      expect(described).toHaveAttribute("title", "waiting on CI");
-    });
-  });
-
-  describe("workspace title", () => {
-    it("shows the custom title as the primary label and the branch on the second line", () => {
-      const ws = makeUiWorkspaceRow("feat-branch", { title: "My nice title" });
-      const project = makeUiProjectRow([ws]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      expect(container.querySelector(".ws-primary-text")?.textContent?.trim()).toBe(
-        "My nice title"
-      );
-      // The branch name is demoted to the second line alongside any tags.
-      expect(container.querySelector(".ws-secondary-line .ws-branch")?.textContent?.trim()).toBe(
-        "feat-branch"
-      );
-    });
-
-    it("falls back to the branch name as the primary label when no title is set", () => {
-      const ws = makeUiWorkspaceRow("feat-branch");
-      const project = makeUiProjectRow([ws]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      expect(container.querySelector(".ws-primary-text")?.textContent?.trim()).toBe("feat-branch");
-      // No title → no branch duplicated on a second line.
-      expect(container.querySelector(".ws-branch")).not.toBeInTheDocument();
-    });
-  });
-
-  describe("hibernation indicator", () => {
-    const hibernatedSetup = () => {
-      const ws = makeUiWorkspaceRow("ws1", { hibernated: true });
-      const project = makeUiProjectRow([ws], { name: "test" });
-      return {
-        ws,
-        project,
-        props: { ...defaultProps, projects: [project] },
-      };
-    };
-
-    it("renders both pause and play icons for a hibernated workspace", () => {
-      const { props } = hibernatedSetup();
-      const { container } = render(Sidebar, { props });
-
-      // Both icons are in the DOM; CSS swaps them on :hover (not testable here).
-      const indicator = container.querySelector(".hibernation-indicator");
-      expect(indicator).toBeInTheDocument();
-      expect(indicator!.querySelector(".icon-pause vscode-icon")).toBeInTheDocument();
-      expect(indicator!.querySelector(".icon-play vscode-icon")).toBeInTheDocument();
-    });
-
-    it("status cell aria-label announces the wake action when hibernated", () => {
-      const { props } = hibernatedSetup();
-      render(Sidebar, { props });
-
-      const statusButton = screen.getByRole("button", {
-        name: /ws1 in test - Hibernated - click to wake/i,
-      });
-      expect(statusButton).toBeInTheDocument();
-    });
-
-    it("clicking the status cell wakes the workspace and switches to it", async () => {
-      const onSwitchWorkspace = vi.fn();
-      const { ws, props } = hibernatedSetup();
-      render(Sidebar, { props: { ...props, onSwitchWorkspace } });
-
-      const statusButton = screen.getByRole("button", { name: /Hibernated - click to wake/i });
-      await fireEvent.click(statusButton);
-
-      expect(emitEvent).toHaveBeenCalledWith({ kind: "wake-workspace", key: ws.key });
-      // The click bubbles to the row's switch handler.
-      expect(onSwitchWorkspace).toHaveBeenCalledWith(ws.key);
-    });
-
-    it("clicking the status cell of a non-hibernated workspace does not wake", async () => {
-      const onSwitchWorkspace = vi.fn();
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")], { name: "test" });
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onSwitchWorkspace },
-      });
-
-      const statusButton = screen.getByRole("button", { name: /ws1 in test/i });
-      await fireEvent.click(statusButton);
-
-      expect(emitEvent).not.toHaveBeenCalledWith(
-        expect.objectContaining({ kind: "wake-workspace" })
-      );
-      expect(onSwitchWorkspace).toHaveBeenCalled();
-    });
-
-    it("does not render the hibernation indicator when not hibernated", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      expect(container.querySelector(".hibernation-indicator")).not.toBeInTheDocument();
-    });
-  });
-
-  describe("hibernate button", () => {
-    it("emits hibernate-workspace without switching to the row", async () => {
-      const onSwitchWorkspace = vi.fn();
-      const ws = makeUiWorkspaceRow("ws1");
-      const project = makeUiProjectRow([ws]);
-      render(Sidebar, { props: { ...defaultProps, projects: [project], onSwitchWorkspace } });
-
-      await fireEvent.click(screen.getByRole("button", { name: "Hibernate workspace" }));
-
-      expect(emitEvent).toHaveBeenCalledWith({ kind: "hibernate-workspace", key: ws.key });
-      expect(onSwitchWorkspace).not.toHaveBeenCalled();
-    });
-
-    it("sits in the label cell, before the remove button", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-      const { container } = render(Sidebar, { props: { ...defaultProps, projects: [project] } });
-
-      const buttons = [...container.querySelectorAll(".workspace-label-cell .action-btn")];
-      expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
-        "Hibernate workspace",
-        "Remove workspace",
-      ]);
-    });
-
-    it.each([
-      ["hibernated", { hibernated: true }],
-      ["creating", { status: "creating" }],
-      ["deleting", { status: "deleting" }],
-      ["delete-failed", { status: "delete-failed" }],
-    ] as const)("is absent on a %s workspace", (_label, overrides) => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1", overrides)]);
-      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
-
-      expect(screen.queryByLabelText("Hibernate workspace")).not.toBeInTheDocument();
-    });
-  });
-
-  describe("deletion indicator", () => {
-    it("shows spinner when workspace is deleting (expanded)", async () => {
-      const ws = makeUiWorkspaceRow("ws1", { status: "deleting" });
-      const project = makeUiProjectRow([ws]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Should have progress-ring (spinner) instead of status indicator
-      expect(container.querySelector("vscode-progress-ring.row-spinner")).toBeInTheDocument();
-    });
-
-    it("shows agent status indicator when not deleting", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Should have status indicator, NOT spinner
-      expect(container.querySelector("vscode-progress-ring.row-spinner")).not.toBeInTheDocument();
-      expect(screen.getByRole("status")).toBeInTheDocument();
-    });
-
-    it("status cell aria-label shows Deleting when workspace is being deleted", () => {
-      const ws = makeUiWorkspaceRow("ws1", { status: "deleting" });
-      const project = makeUiProjectRow([ws], { name: "test" });
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // The button aria-label should say "Deleting" instead of agent status
-      const statusButton = screen.getByRole("button", { name: /ws1 in test.*deleting/i });
-      expect(statusButton).toBeInTheDocument();
-    });
-
-    it("shows spinner for deleting workspace and status for non-deleting", () => {
-      const ws1 = makeUiWorkspaceRow("ws1", { status: "deleting" });
-      const ws2 = makeUiWorkspaceRow("ws2");
-      const project = makeUiProjectRow([ws1, ws2]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Should have one spinner (ws1) and one status indicator (ws2)
-      expect(container.querySelectorAll("vscode-progress-ring.row-spinner")).toHaveLength(1);
-      expect(screen.getAllByRole("status")).toHaveLength(1);
-    });
-
-    it("hides X button when deletion status is in-progress", () => {
-      const ws = makeUiWorkspaceRow("ws1", { status: "deleting" });
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // X button should NOT be rendered for workspace being deleted
-      expect(screen.queryByLabelText("Remove workspace")).not.toBeInTheDocument();
-    });
-
-    it("hides X button when deletion status is error", () => {
-      const ws = makeUiWorkspaceRow("ws1", { status: "delete-failed" });
-      const project = makeUiProjectRow([ws]);
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // X button should NOT be rendered for workspace with deletion error
-      expect(screen.queryByLabelText("Remove workspace")).not.toBeInTheDocument();
-    });
-
-    it("shows warning triangle when deletion status is error", () => {
-      const ws = makeUiWorkspaceRow("ws1", { status: "delete-failed" });
-      const project = makeUiProjectRow([ws]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Warning triangle should be visible - Icon component renders vscode-icon
-      const warning = container.querySelector(".row-error");
-      expect(warning).toBeInTheDocument();
-      expect(warning!.querySelector("vscode-icon")).toBeInTheDocument();
-    });
-
-    it("warning triangle has accessible attributes", () => {
-      const ws = makeUiWorkspaceRow("ws1", { status: "delete-failed" });
-      const project = makeUiProjectRow([ws]);
-
-      const { container } = render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // Warning should have role="img" and aria-label
-      const warning = container.querySelector(".row-error");
-      expect(warning).toHaveAttribute("role", "img");
-      expect(warning).toHaveAttribute("aria-label", "Deletion failed");
-    });
-
-    it("status cell aria-label shows Deletion failed when status is error", () => {
-      const ws = makeUiWorkspaceRow("ws1", { status: "delete-failed" });
-      const project = makeUiProjectRow([ws], { name: "test" });
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      // The button aria-label should say "Deletion failed" for error state
-      const statusButton = screen.getByRole("button", { name: /ws1 in test.*deletion failed/i });
-      expect(statusButton).toBeInTheDocument();
-    });
-
-    it("status cell aria-label shows Creating for a creating placeholder row", () => {
-      const ws = makeUiWorkspaceRow("ws1", { status: "creating" });
-      const project = makeUiProjectRow([ws], { name: "test" });
-
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project] },
-      });
-
-      const statusButton = screen.getByRole("button", { name: /ws1 in test.*creating/i });
-      expect(statusButton).toBeInTheDocument();
-    });
-  });
-
-  describe("resize", () => {
-    // jsdom's window.innerWidth defaults to 1024, so the max clamp is
-    // 0.75 * 1024 = 768.
-    const MAX = 768;
-
-    function resizeHandle(): HTMLElement {
-      const handle = document.querySelector(".resize-handle");
-      if (!(handle instanceof HTMLElement)) throw new Error("no resize handle");
-      return handle;
-    }
-
-    function dragOverlay(): HTMLElement {
-      const overlay = document.querySelector(".resize-overlay");
-      if (!(overlay instanceof HTMLElement)) throw new Error("no drag overlay");
-      return overlay;
-    }
-
-    it("renders a resize handle while expanded", () => {
-      // No projects ⇒ expanded regardless of mode.
-      render(Sidebar, { props: defaultProps });
-      expect(document.querySelector(".resize-handle")).not.toBeNull();
-    });
-
-    it("hides the resize handle while collapsed", () => {
-      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
-      render(Sidebar, { props: { ...defaultProps, projects: [project], mode: "workspace" } });
-      expect(document.querySelector(".resize-handle")).toBeNull();
-    });
-
-    it("emits a resize-sidebar event with the dragged width on release", async () => {
-      render(Sidebar, { props: { ...defaultProps, sidebarWidth: 250 } });
-
-      await fireEvent.mouseDown(resizeHandle(), { clientX: 250 });
-      flushSync();
-      // Overlay is mounted for the duration of the drag.
-      await fireEvent.mouseMove(dragOverlay(), { clientX: 450 });
-      await fireEvent.mouseUp(dragOverlay(), { clientX: 450 });
-      flushSync();
-
-      expect(emitEvent).toHaveBeenCalledWith({ kind: "resize-sidebar", width: 450 });
-    });
-
-    it("clamps the dragged width to the window-relative maximum", async () => {
-      render(Sidebar, { props: { ...defaultProps, sidebarWidth: 250 } });
-
-      await fireEvent.mouseDown(resizeHandle(), { clientX: 250 });
-      flushSync();
-      await fireEvent.mouseMove(dragOverlay(), { clientX: 5000 });
-      await fireEvent.mouseUp(dragOverlay(), { clientX: 5000 });
-      flushSync();
-
-      expect(emitEvent).toHaveBeenCalledWith({ kind: "resize-sidebar", width: MAX });
-    });
-
-    it("never goes below the grow-only floor when dragged left", async () => {
-      render(Sidebar, { props: { ...defaultProps, sidebarWidth: 250 } });
-
-      await fireEvent.mouseDown(resizeHandle(), { clientX: 250 });
-      flushSync();
-      await fireEvent.mouseMove(dragOverlay(), { clientX: 50 });
-      await fireEvent.mouseUp(dragOverlay(), { clientX: 50 });
-      flushSync();
-
-      expect(emitEvent).toHaveBeenCalledWith({ kind: "resize-sidebar", width: 250 });
-    });
-
-    it("holds the dragged width after release (no flash back before the snapshot echo)", async () => {
-      render(Sidebar, { props: { ...defaultProps, sidebarWidth: 250 } });
-      const nav = screen.getByRole("navigation", { name: "Projects" });
-
-      await fireEvent.mouseDown(resizeHandle(), { clientX: 250 });
-      flushSync();
-      await fireEvent.mouseMove(dragOverlay(), { clientX: 450 });
-      await fireEvent.mouseUp(dragOverlay(), { clientX: 450 });
-      flushSync();
-
-      // The local override must persist past mouseup — the snapshot prop is
-      // still 250 here — so the sidebar does not snap back to 250 mid-round-trip.
-      expect(nav.style.getPropertyValue("--ch-sidebar-width")).toBe("450px");
+      expect(container.querySelector(".sb")?.classList.contains("collapsed")).toBe(true);
+      const groups = [...container.querySelectorAll(".rail .rgrp")];
+      expect(groups.length).toBe(4);
+      expect(groups[3]?.querySelectorAll(".r-ws").length).toBe(1);
     });
   });
 });

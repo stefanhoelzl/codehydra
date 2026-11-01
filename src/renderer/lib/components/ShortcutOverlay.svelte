@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { HibernatedView } from "@shared/ui-state";
+
   interface Props {
     active: boolean;
     workspaceCount?: number;
@@ -7,10 +9,11 @@
     activeWorkspaceDeletionInProgress?: boolean;
     idleWorkspaceCount?: number;
     /**
-     * Whether the active workspace's project hides its hibernated workspaces
-     * (drives the T hint label); null hides the hint (no active workspace).
+     * What T would change: the hibernated list of the active workspace's
+     * project (or of every project while the sidebar's Find field is open);
+     * null hides the hint (no active workspace).
      */
-    hideHibernated?: boolean | null;
+    hibernatedView?: HibernatedView | null;
     /** Whether the sidebar is docked (drives the P hint label). */
     sidebarDocked?: boolean;
   }
@@ -22,7 +25,7 @@
     activeHibernated = false,
     activeWorkspaceDeletionInProgress = false,
     idleWorkspaceCount = 0,
-    hideHibernated = null,
+    hibernatedView = null,
     sidebarDocked = false,
   }: Props = $props();
 
@@ -37,6 +40,12 @@
   const showNew = true;
   const showDelete = $derived(hasActiveWorkspace && !activeWorkspaceDeletionInProgress);
   const showIdleNavigation = $derived(idleWorkspaceCount >= minToNavigate);
+  // T cycles hidden → hibernated → hibernated and automated → hidden.
+  const NEXT_HIBERNATED_LABEL: Record<HibernatedView, string> = {
+    hidden: "Show hibernated",
+    manual: "Show automated",
+    all: "Hide hibernated",
+  };
 </script>
 
 <!-- 
@@ -99,13 +108,13 @@
   </span>
   <span
     class="shortcut-hint"
-    class:shortcut-hint--hidden={hideHibernated === null}
-    aria-label={hideHibernated
-      ? "T key to show hibernated workspaces"
-      : "T key to hide hibernated workspaces"}
+    class:shortcut-hint--hidden={hibernatedView === null}
+    aria-label={hibernatedView === null
+      ? undefined
+      : `T key: ${NEXT_HIBERNATED_LABEL[hibernatedView].toLowerCase()} workspaces`}
   >
     <vscode-badge>T</vscode-badge>
-    {hideHibernated ? "Show hibernated" : "Hide hibernated"}
+    {hibernatedView === null ? "" : NEXT_HIBERNATED_LABEL[hibernatedView]}
   </span>
   <span
     class="shortcut-hint"

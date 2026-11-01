@@ -90,7 +90,7 @@ describe("Integration tests", () => {
       await renderApp(snapshotOf([ws("ws1"), ws("ws2")], "ws1"));
       await waitFor(() => expect(screen.getByText("ws2")).toBeInTheDocument());
 
-      await fireEvent.click(screen.getByRole("button", { name: "ws2" }));
+      await fireEvent.click(screen.getByText("ws2").closest(".ws")!);
       expect(mockApi.emitEvent).toHaveBeenCalledWith({
         kind: "switch-workspace",
         key: "test-project-12345678/ws2",
@@ -100,9 +100,9 @@ describe("Integration tests", () => {
       pushState(snapshotOf([ws("ws1"), ws("ws2")], "ws2"));
 
       await waitFor(() => {
-        const ws2Item = screen.getByText("ws2").closest("li");
+        const ws2Item = screen.getByText("ws2").closest(".ws");
         expect(ws2Item).toHaveAttribute("aria-current", "true");
-        const ws1Item = screen.getByText("ws1").closest("li");
+        const ws1Item = screen.getByText("ws1").closest(".ws");
         expect(ws1Item).not.toHaveAttribute("aria-current");
       });
     });
@@ -117,7 +117,9 @@ describe("Integration tests", () => {
       // Request the remove flow for ws2 (the confirmation dialog is a
       // main-side framework session now; this test covers the renderer's
       // part: the gesture emits the keyed event).
-      const removeButton = document.getElementById("remove-ws-test-project-12345678/ws2");
+      const removeButton = document.querySelector(
+        '.ws[data-key="test-project-12345678/ws2"] [data-act="remove"]'
+      );
       expect(removeButton).toBeInTheDocument();
       await fireEvent.click(removeButton!);
 
@@ -129,7 +131,9 @@ describe("Integration tests", () => {
       // Deletion progress + removal arrive as snapshots
       pushState(snapshotOf([ws("ws1"), ws("ws2", { status: "deleting" })], "ws1"));
       await waitFor(() => {
-        expect(document.querySelector("vscode-progress-ring.row-spinner")).toBeInTheDocument();
+        expect(
+          document.querySelector('.ws.deleting[data-key="test-project-12345678/ws2"]')
+        ).toBeInTheDocument();
       });
 
       pushState(snapshotOf([ws("ws1")], "ws1"));
@@ -205,7 +209,7 @@ describe("Integration tests", () => {
       // shortcut mode.
       pushState({ ...snapshotOf([ws("ws1"), ws("ws2")], "ws2"), mode: "shortcut" });
       await waitFor(() => {
-        const ws2Item = screen.getByText("ws2").closest("li");
+        const ws2Item = screen.getByText("ws2").closest(".ws");
         expect(ws2Item).toHaveAttribute("aria-current", "true");
       });
 

@@ -188,7 +188,7 @@ describe("MainView component", () => {
 
       await pushState(
         makeUiState([PROJECT], {
-          sidebar: { projects: [PROJECT], width: 320, mode: "docked" },
+          sidebar: { projects: [PROJECT], width: 320, mode: "docked", find: null },
         })
       );
 
@@ -220,18 +220,18 @@ describe("MainView component", () => {
       await pushState(makeUiState([PROJECT]));
       await waitFor(() => expect(screen.getByText("feature-1")).toBeInTheDocument());
 
-      await fireEvent.click(screen.getByRole("button", { name: "feature-1" }));
+      await fireEvent.click(screen.getByText("feature-1").closest(".ws")!);
 
       expect(mockApi.emitEvent).toHaveBeenCalledWith({
         kind: "switch-workspace",
         key: WS1.key,
       });
       // No local mutation: the row stays inactive until a push says otherwise.
-      const item = screen.getByText("feature-1").closest("li");
+      const item = screen.getByText("feature-1").closest(".ws");
       expect(item).not.toHaveAttribute("aria-current");
     });
 
-    it("the New workspace entry deselects (switch-workspace key null)", async () => {
+    it("the footer + opens the New workspace form", async () => {
       renderMainView();
       await pushState(
         makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
@@ -240,9 +240,12 @@ describe("MainView component", () => {
       );
       await waitFor(() => expect(screen.getByText("feature-1")).toBeInTheDocument());
 
-      await fireEvent.click(screen.getByRole("button", { name: /new workspace/i }));
+      await fireEvent.click(screen.getByRole("button", { name: "New workspace" }));
 
-      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "switch-workspace", key: null });
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({
+        kind: "open-new-workspace",
+        projectId: null,
+      });
     });
 
     it("close-project emits the close-project ui:event (dialog opens main-side)", async () => {
@@ -250,7 +253,7 @@ describe("MainView component", () => {
       await pushState(makeUiState([PROJECT]));
       await waitFor(() => expect(screen.getByText("test-project")).toBeInTheDocument());
 
-      await fireEvent.click(screen.getByLabelText(/close project/i));
+      await fireEvent.click(screen.getByLabelText("Close project"));
 
       expect(mockApi.emitEvent).toHaveBeenCalledWith({
         kind: "close-project",

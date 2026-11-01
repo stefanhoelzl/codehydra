@@ -101,55 +101,83 @@ Linux).
 
 ### The sidebar
 
-The sidebar lists your projects and their workspaces, sorted by name.
+The sidebar is a card at the left of the window: the **Find** field on top, a
+card per project with its workspaces, notifications below them, and a footer.
+Projects are sorted by name.
 
-- **Collapsed**, it is a strip of status icons. It expands when you rest the
-  pointer at the left edge of the window, in shortcut mode, while a dialog or
-  the New workspace form is showing, and whenever there are no workspaces.
+- **Collapsed**, it is a rail: each project's letter with the status glyphs of
+  its awake workspaces. It expands when you point at the rail, in shortcut
+  mode, while Find, a dialog or the New workspace form is open, and whenever
+  there are no workspaces.
 - **Docked**, it stays expanded beside the workspace, which shrinks to the
   rest of the window instead of being covered. Toggle it with the dock button
-  in the header (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>); the choice is
+  in the footer (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>); the choice is
   saved as `sidebar.mode` (`overlay`, the default, or `docked`). Docked, resting
   the pointer on the sidebar is not a hover: a workspace an agent opens in the
   background takes the view as it would with the sidebar collapsed.
-- **Resize** it by dragging its right edge (at least 250 px, at most 75% of the
+- **Resize** it by dragging its right edge (at least 288 px, at most 75% of the
   window); the width is saved as `sidebar.width`. Docked, the workspace
   follows the drag.
-- The header has, when expanded, the **magnifier** (find a workspace), the
-  **dock** button, the **gear** (settings) and **?** (this guide). Hover any
-  sidebar icon for what it does.
-- A project with sleeping workspaces shows an **eye** with how many there are.
-  Click it (or press <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> for the active
-  workspace's project) to hide that project's sleeping workspaces; it shows a
-  closed eye while they are hidden. Each project remembers its choice, also
-  after it is closed and reopened.
+- The **footer** counts the workspaces that are working, waiting for you and
+  hibernated, and has **+** (New workspace), the **dock** button, the **gear**
+  (settings) and **?** (this guide). Hover any sidebar icon for what it does.
+
+A **project card** has a header bar with the project's letter, its name (a
+cloud marks a cloned project), and on hover a trash icon (close the project)
+and **+** (a new workspace in this project).
+
+- Click the header bar to **collapse** the project to its header, and again to
+  expand it; each project remembers this, also after a restart. A collapsed
+  project shows how many of its workspaces are working and idle. Collapsing
+  the project you are in moves you to the first awake workspace of the next
+  expanded project, as <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>↓</kbd> would from its
+  last workspace; there is none when every other project is collapsed, and
+  you stay. Shortcut navigation skips the workspaces of collapsed projects.
+- Its **hibernated workspaces** are folded away. The **moon** in the header
+  says how many there are, e.g. `2/1`: 2 hibernated, and after the slash 1
+  **automated** one (it has a [wakeup script](#wakeup-scripts) and wakes by
+  itself). Click the moon to show the hibernated ones at the top of the card,
+  most recently hibernated first; a **Show automated workspaces** item, in its
+  own color, shows the automated ones below them. Moving the pointer off the
+  card, or clicking anything else in it, folds the list away again. The
+  hibernated workspace you are on stays shown.
+- <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> steps the current project's list
+  through the same three states: hidden, hibernated shown, automated shown too.
 - Notifications (clone progress, failures, updates) stack at the bottom of the
-  sidebar, newest on top; repeats merge into one card with a count. The stack
-  takes at most 30% of the sidebar's height and scrolls beyond that.
+  sidebar, newest on top; repeats merge into one card with a count. One about
+  a workspace names it, and clicking the name goes there. The stack takes at
+  most a third of the sidebar's height and scrolls beyond that.
+- A [question](#asking-you) waiting for you marks its workspace's row with a
+  violet **question mark**: one open in the workspace's editor (`ch ws ask`,
+  `select`, `input`, `pick-file`) shows the mark at the end of the row; a
+  `ch ws ask --sidebar` question is a card in the row instead, with its answers
+  as buttons and a × to cancel. While the row is out of sight (a collapsed
+  project, a folded hibernated list), the project's header shows the question
+  mark, and its header bar flashes when the question arrives; click the
+  question mark to bring the row into view.
 
 A workspace row shows its title (or its name if it has none); with a title, the
 second line shows the branch. Tags follow, each in its color and with its label,
-and its description on hover; they wrap onto further lines when they do not fit.
-A long title or branch scrolls as `sidebar.label-scroll` says (`hover` by
-default). A folder icon marks a local project, a source-control icon
-a cloned one.
+and its description on hover. A title that does not fit ends in "…". The end
+of the row says **working** while the agent works, and for a hibernated
+workspace how long it has slept. Hovering a row shows its actions: hibernate
+(moon) and remove (trash), or retry and remove for one that could not be
+opened, or remove for a hibernated one.
 
-The icon on each row:
+The glyph on each row:
 
-| Icon                       | Meaning                                                       |
-| -------------------------- | ------------------------------------------------------------- |
-| Grey dot                   | No agent                                                      |
-| Green dot                  | Idle                                                          |
-| Red pulsing dot            | Busy                                                          |
-| Red dot                    | Mixed                                                         |
-| Spinner                    | Being created, opened or deleted                              |
-| Warning triangle           | Could not be opened (the reason on hover), or deletion failed |
-| Pause icon (play on hover) | Hibernated — click to wake                                    |
+| Glyph        | Meaning                                                           |
+| ------------ | ----------------------------------------------------------------- |
+| Grey spinner | The agent is working                                              |
+| Green dot    | The agent is waiting for you                                      |
+| Hollow dot   | No agent running                                                  |
+| Dotted ring  | Being created, opened or removed                                  |
+| Red warning  | Could not be opened (the reason on hover), or its deletion failed |
+| Moon         | Hibernated (in the automated color for one with a wakeup script)  |
 
-Hovering the dot shows the counts, e.g. "2 idle, 1 busy". A row also turns
-green while a dialog about that workspace is waiting for you — a hook trust
-question, a failed deletion — including the placeholder row of a workspace
-still being created.
+A row also turns green while a dialog about that workspace is waiting for you —
+a hook trust question, a failed deletion — including the placeholder row of a
+workspace still being created.
 
 ### Opening and closing projects
 
@@ -203,12 +231,14 @@ offers:
 
 ### Creating a workspace
 
-Click **New workspace** at the top of the sidebar (or <kbd>Alt</kbd>+<kbd>X</kbd>,
-<kbd>Enter</kbd>). The form has:
+Click **+** in the sidebar's footer (or <kbd>Alt</kbd>+<kbd>X</kbd>,
+<kbd>Enter</kbd>), or **+** in a project's header for a workspace in that
+project. The form has:
 
-- **Project** — preselected with the project of the workspace you came from
-  (the project you opened most recently when you have just opened one), unless
-  you have already started filling in the form.
+- **Project** — the project whose **+** you clicked; from the footer,
+  preselected with the project of the workspace you came from (the project you
+  opened most recently when you have just opened one), unless you have already
+  started filling in the form.
 - **Name** — becomes the git branch. Type a new name, or pick an existing local
   or remote branch to check it out (which also fills in its base). Letters,
   digits and `-_./`, starting with a letter or digit, at most 100 characters,
@@ -232,27 +262,33 @@ is easy to spot. Turn this off with `auto-tag.new`.
 ### Switching, hibernating and waking
 
 - **Switch** — click a row, or in shortcut mode use the arrows or a number.
-- **Find** — <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>F</kbd> (or the sidebar's
-  magnifier) opens a search listing every ready workspace of every project,
-  hibernated ones included even in a project whose eye hides them. Typing filters it:
-  each word must appear in the workspace's title, name, project, or a tag's
-  name, label or description. The first match is highlighted, so
-  <kbd>Enter</kbd> picks it; <kbd>↑</kbd>/<kbd>↓</kbd> move the highlight. Picking
-  switches to the workspace and wakes it if it is hibernated.
-  <kbd>Escape</kbd> closes the search.
-- **Hibernate** — hover a ready row and click its pause icon, or press
+- **Find** — click the Find field at the top of the sidebar (or
+  <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>F</kbd>, or <kbd>/</kbd> while the sidebar has
+  the focus). While it has the focus every project is expanded and their
+  hibernated workspaces are shown; <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> steps
+  all projects at once through hibernated shown, automated shown too, and
+  none. Typing filters the rows: the text must appear in the workspace's
+  title, name, project, or a tag's name, label or description, and it is
+  marked where it matches. A marker sits on the current workspace (else the
+  first match); <kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Page Up</kbd>/<kbd>Page Down</kbd>,
+  <kbd>Home</kbd>/<kbd>End</kbd> move it, and <kbd>Enter</kbd> goes to its
+  workspace (waking it if it is hibernated). <kbd>Escape</kbd> clears the field
+  and returns to the workspace. Leaving the field puts every project back as
+  it was.
+- **Hibernate** — hover a ready row and click its moon, or press
   <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> on the active workspace (or
   `ch ws hibernate`). Any workspace can hibernate, busy or not, without a
-  confirmation; hibernating the active one moves you to another.
-- **Wake** — select it and click its screenshot, click the pause icon on its
-  row, or press <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> again. Selecting a
-  hibernated workspace never wakes it by itself.
-- **How long it has slept** — a hibernated row shows its age (`40m`, `5h`,
-  `12d`) at the end of its first line, in the sidebar and in the Find list;
-  hovering the pause icon, and the hibernated screen, add the date and time it
-  was hibernated. `ch ws status` (MCP `workspace_get_status`) reports it as
-  `hibernated` and `hibernatedAt`. Workspaces hibernated before
-  CodeHydra recorded the time show no age until they are hibernated again.
+  confirmation; the row flies into its project's moon, and hibernating the
+  active one moves you to another.
+- **Wake** — click its row (it wakes and you go there), click the screenshot
+  of the hibernated workspace you are on, or press <kbd>Alt</kbd>+<kbd>X</kbd>,
+  <kbd>H</kbd> again.
+- **How long it has slept** — a hibernated row shows its age (`now`, `40m`,
+  `5h`, `3d`, `2w`) at the end of the row; hovering the age, and the
+  hibernated screen, add the date and time it was hibernated. `ch ws status`
+  (MCP `workspace_get_status`) reports it as `hibernated` and `hibernatedAt`.
+  Workspaces hibernated before CodeHydra recorded the time show no age until
+  they are hibernated again.
 - **A blank editor** — if the process that draws the editors crashes, every
   open workspace goes grey at once; CodeHydra notices within a few seconds
   and reloads them all. If a single workspace's editor shuts down or navigates
@@ -307,8 +343,9 @@ ch ws hibernate --wakeup 'gh pr checks 12 >/dev/null && echo "{\"action\":\"wake
   the script runs again next poll. The notification closes by itself once a
   run succeeds or the workspace is woken. `ch ws wakeup show` lists the failure with its run log, kept under
   `<data directory>/logs/wakeup/`.
-- A workspace with a wakeup script shows an alarm clock tag (⏰) in the
-  sidebar; hover it to see the script.
+- A hibernated workspace with a wakeup script is **automated**: the sidebar
+  lists it apart, in its own color, behind its project's **Show automated
+  workspaces** item; hover its row to see the script.
 
 ### Deleting a workspace
 
@@ -363,23 +400,24 @@ failed panel means Dismiss.
 Hold <kbd>Alt</kbd> and tap <kbd>X</kbd> to enter shortcut mode, and keep
 holding <kbd>Alt</kbd> while you press:
 
-| Key                                      | Action                                                              |
-| ---------------------------------------- | ------------------------------------------------------------------- |
-| <kbd>↑</kbd> / <kbd>↓</kbd>              | Previous / next workspace                                           |
-| <kbd>←</kbd> / <kbd>→</kbd>              | Previous / next idle workspace (a busy one if none is idle)         |
-| <kbd>1</kbd>-<kbd>9</kbd>, <kbd>0</kbd>  | Jump to the numbered workspace (numbers are shown in shortcut mode) |
-| <kbd>Enter</kbd>                         | Open the New workspace form                                         |
-| <kbd>F</kbd>                             | Find a workspace by name, title, project or tag                     |
-| <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the active workspace                                         |
-| <kbd>H</kbd>                             | Hibernate / wake the active workspace                               |
-| <kbd>T</kbd>                             | Hide / show the active project's hibernated workspaces              |
-| <kbd>P</kbd>                             | Dock / undock the sidebar                                           |
-| <kbd>S</kbd>                             | Open settings                                                       |
-| <kbd>B</kbd>                             | Report a bug (also works while a dialog is open)                    |
-| <kbd>Escape</kbd>                        | Leave shortcut mode                                                 |
+| Key                                      | Action                                                                           |
+| ---------------------------------------- | -------------------------------------------------------------------------------- |
+| <kbd>↑</kbd> / <kbd>↓</kbd>              | Previous / next workspace                                                        |
+| <kbd>←</kbd> / <kbd>→</kbd>              | Previous / next idle workspace (a busy one if none is idle)                      |
+| <kbd>1</kbd>-<kbd>9</kbd>, <kbd>0</kbd>  | Jump to the numbered workspace (numbers are shown in shortcut mode)              |
+| <kbd>Enter</kbd>                         | Open the New workspace form                                                      |
+| <kbd>F</kbd>                             | Find a workspace (the sidebar's Find field)                                      |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the active workspace                                                      |
+| <kbd>H</kbd>                             | Hibernate / wake the active workspace                                            |
+| <kbd>T</kbd>                             | Step the hibernated list: hidden, hibernated, automated too (Find: all projects) |
+| <kbd>P</kbd>                             | Dock / undock the sidebar                                                        |
+| <kbd>S</kbd>                             | Open settings                                                                    |
+| <kbd>B</kbd>                             | Report a bug (also works while a dialog is open)                                 |
+| <kbd>Escape</kbd>                        | Leave shortcut mode                                                              |
 
 Releasing <kbd>Alt</kbd> or leaving the window also ends shortcut mode.
-Navigation skips hibernated and hidden workspaces.
+Navigation skips hibernated workspaces and the workspaces of collapsed
+projects; the numbers count the awake workspaces of expanded projects.
 
 ### Background processes: `ch bg`
 
@@ -1706,11 +1744,12 @@ ch ws pick-file "Pick a screenshot" --filters '{"Images":["png","jpg"]}'
 ```
 
 - **`ws ask`** — a question with 1 to 5 buttons (50 characters each). It is a
-  dialog in the workspace's editor, or with `--sidebar` a card in CodeHydra's
-  sidebar that you see from any workspace (clicking its title goes there).
-  **Cancel is always there** — the dialog's own Cancel button, the card's
-  dismiss button — so never pass one as an option. `--detail` adds a second
-  line, `--level info|warning|error` sets the icon.
+  dialog in the workspace's editor — the workspace's sidebar row shows a
+  question mark until you answer it — or with `--sidebar` a card in that row,
+  which you see from any workspace. **Cancel is always there** — the dialog's
+  own Cancel button, the card's × — so never pass one as an option. `--detail`
+  adds a second line, `--level info|warning|error` sets the dialog's icon (a
+  card always looks like a question). Two questions are two cards.
 - **`ws select`** — a list you can filter, for more options than buttons hold,
   long labels, or several answers (`--many`). An option is a label or a JSON
   object: `{"label": …, "description": …, "detail": …, "picked": true}`
@@ -1729,11 +1768,12 @@ ch ws pick-file "Pick a screenshot" --filters '{"Images":["png","jpg"]}'
   stopped (<kbd>Ctrl</kbd>+<kbd>C</kbd>, an agent's turn cancelled). Read it
   with `jq -r .answer`.
 - While a question is open, its workspace shows as waiting for you, like an
-  agent that went idle. A stopped or timed-out `select` or `input` closes;
-  an `ask` dialog or a file dialog cannot be closed from outside, so it stays
-  until you dismiss it, and that answer goes nowhere.
+  agent that went idle. A stopped or timed-out `select`, `input` or
+  `ask --sidebar` closes; an `ask` dialog or a file dialog cannot be closed
+  from outside, so it stays until you dismiss it, and that answer goes nowhere.
 - The dialogs, lists and file pickers appear in the workspace's editor, so you
-  see them when you are on that workspace; only `ws ask --sidebar` reaches you
+  see them when you are on that workspace (the question mark on its row tells
+  you one is waiting); a `ws ask --sidebar` card shows in the sidebar from
   anywhere. A plugin's automation cannot ask; a plugin script can run
   `ch ws ask` itself.
 

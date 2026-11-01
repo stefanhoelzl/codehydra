@@ -18,22 +18,14 @@ import type { NotificationConfig } from "./notification-types";
 export type UiTheme = "dark" | "light";
 
 /**
- * Clamp an expanded-sidebar width (px) to the grow-only floor (250) — the
- * historical default, so resizing can never make the sidebar narrower than it
- * was before this feature. The window-relative maximum is enforced
- * renderer-side (main can't see the window size); the config default is inlined
- * in main.ts.
+ * Clamp an expanded-sidebar width (px) to the floor (288): the sidebar is a
+ * 272px card inside an 8px margin, the narrowest its rows are laid out for.
+ * The window-relative maximum is enforced renderer-side (main can't see the
+ * window size); the config default is inlined in main.ts.
  */
 export function clampSidebarWidthMin(width: number): number {
-  return Math.max(250, Math.round(width));
+  return Math.max(288, Math.round(width));
 }
-
-/**
- * How an overflowing sidebar row label scrolls horizontally (config
- * `sidebar.label-scroll`). `always` = overflowing lines scroll continuously,
- * `hover` = only while the row is hovered, `off` = clip (no motion).
- */
-export type SidebarLabelScroll = "always" | "hover" | "off";
 
 /**
  * How the sidebar shares the window with the workspace (config
@@ -43,6 +35,16 @@ export type SidebarLabelScroll = "always" | "hover" | "off";
  */
 export const SIDEBAR_MODES = ["overlay", "docked"] as const;
 export type SidebarMode = (typeof SIDEBAR_MODES)[number];
+
+/**
+ * How much of a project's hibernated list the sidebar shows: `hidden` (none,
+ * the resting state), `manual` (the hibernated workspaces without a wakeup
+ * script) or `all` (the automated ones too). Main-owned, not persisted: the
+ * project's moon button, its "Show automated workspaces" item and
+ * Alt+X, T change it; leaving the project card resets it to `hidden`.
+ */
+export const HIBERNATED_VIEWS = ["hidden", "manual", "all"] as const;
+export type HibernatedView = (typeof HIBERNATED_VIEWS)[number];
 
 /**
  * An open dialog session, render-ready. The presenter owns the registry (via
@@ -137,9 +139,22 @@ export interface UiWorkspaceRow {
    * time was recorded has none. The renderer derives the age it shows.
    */
   readonly hibernatedAt?: string;
+  /**
+   * The wakeup script of a hibernated workspace that has one (an "automated"
+   * workspace: it wakes by itself). Present only while `hibernated`. The
+   * sidebar lists these after the other hibernated workspaces, behind their
+   * own "Show automated workspaces" item.
+   */
+  readonly wakeupScript?: string;
   readonly agent: AgentStatus;
   readonly tags: readonly WorkspaceTag[];
   readonly active: boolean;
+  /**
+   * A question (`ch ws ask` without `--sidebar`, select, input, pick-file) is
+   * open in the workspace's editor and waits for the user: the row shows a
+   * question mark. Absent otherwise.
+   */
+  readonly editorQuestion?: true;
   /** Why the open failed; present while `status` is `open-failed`. */
   readonly openError?: string;
   /** Present while `status` is `deleting`/`delete-failed`; absent otherwise. */
@@ -153,20 +168,31 @@ export interface UiProjectRow {
   readonly title: string;
   /** True for projects cloned from a git URL (drives the project icon). */
   readonly remote: boolean;
+  /**
+   * Every workspace of the project, in sidebar order: the hibernated ones
+   * without a wakeup script (most recently hibernated first), then the
+   * automated ones (likewise), then the awake ones by name. The renderer shows
+   * or folds them away; keyboard navigation walks the same order.
+   */
   readonly workspaces: readonly UiWorkspaceRow[];
   /**
-   * How many of this project's workspaces are hibernated, whether or not they
-   * are in `workspaces`. The renderer cannot derive this while they are hidden
-   * — the hidden rows never reach it — and without it a project whose
-   * workspaces are all asleep renders exactly like one that has none.
+   * The project card is collapsed to its header (persisted
+   * `sidebar.collapsed-projects` state). Keyboard navigation skips the
+   * workspaces of a collapsed project.
    */
-  readonly hibernatedCount: number;
-  /**
-   * When true, this project's hibernated workspaces are omitted from
-   * `workspaces` (persisted `sidebar.hidden-hibernated-projects` state). Drives
-   * the project's hide/show toggle; the presenter has already filtered the rows.
-   */
-  readonly hideHibernated: boolean;
+  readonly collapsed: boolean;
+  /** How much of the hibernated list is shown (see HibernatedView). */
+  readonly hibernatedView: HibernatedView;
+}
+
+/**
+ * The sidebar's Find field while it has the focus: every project is expanded
+ * and the rows filter as the user types (the text stays renderer-local).
+ * `hibernatedView` applies to every project at once and starts at `manual`;
+ * Alt+X, T cycles it.
+ */
+export interface UiSidebarFind {
+  readonly hibernatedView: HibernatedView;
 }
 
 /**
@@ -201,6 +227,12 @@ export interface UiState {
     readonly width: number;
     /** How the sidebar shares the window with the workspace (config `sidebar.mode`). */
     readonly mode: SidebarMode;
+    /**
+     * The Find field is focused (null otherwise). Main owns it so Alt+X, F can
+     * open it, Alt+X, T can cycle its hibernated view, and the overlay sidebar
+     * stays expanded while it is open.
+     */
+    readonly find: UiSidebarFind | null;
   };
   /**
    * Mounted workspace iframes: key → IDE server URL. Every workspace with a
@@ -209,8 +241,6 @@ export interface UiState {
   readonly frames: Readonly<Record<string, string>>;
   readonly main: UiMainView;
   readonly theme: UiTheme;
-  /** How overflowing sidebar row labels scroll (config `sidebar.label-scroll`). */
-  readonly labelScroll: SidebarLabelScroll;
   /** Suppress the chime played when an agent goes idle (config `silent`). */
   readonly silent: boolean;
   /**

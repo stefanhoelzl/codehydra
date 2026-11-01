@@ -86,7 +86,10 @@
       if (focused || state.main.kind === "starting") return;
       focused = true;
       void tick().then(() => {
-        const firstFocusable = containerRef ? getFocusables(containerRef)[0] : undefined;
+        // The sidebar's Find field is skipped: focusing it opens Find.
+        const firstFocusable = containerRef
+          ? getFocusables(containerRef).find((el) => !el.hasAttribute("data-no-autofocus"))
+          : undefined;
         firstFocusable?.focus();
       });
     });

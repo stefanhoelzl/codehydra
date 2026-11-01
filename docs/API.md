@@ -915,7 +915,8 @@ project? }`.
 `ui_pick_file`, API server `api:workspace:ask` / `select` / `input` / `pickFile`) put a
 question to the user and wait for the answer, through `vscode:show-message` (types
 `ask`, `select`, `input`, `pick-file`) — or, for `ask` with `sidebar`, a waiting
-`notification:show` card attached to the workspace. A notification tells; a question
+`notification:show` card of type `question` attached to the workspace, which the
+sidebar shows in that workspace's row (`level` then changes nothing). A notification tells; a question
 waits.
 
 ```console
@@ -945,6 +946,8 @@ $ ch ws pick-file "Screenshot" --filters '{"Images":["png"]}' --start ./docs
   the user dismisses them — that late answer goes nowhere.
 - **Waiting on the user.** While a question is open the workspace reads idle
   (`vscode:modal-changed`, `source: "editor"` for the editor's, `"sidebar"` for a card).
+  While an editor question is open the sidebar also marks the workspace's row with a
+  question mark (a toast is not a question and marks nothing).
   Only an editor modal also holds back the terminal focus.
 - `save` takes neither `many` nor `folders` (exit `2`).
 

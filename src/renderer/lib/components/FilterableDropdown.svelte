@@ -1,7 +1,4 @@
 <script lang="ts">
-  import type { DropdownWorkspaceRow } from "@shared/dialog-types";
-  import WorkspaceOptionRow from "./WorkspaceOptionRow.svelte";
-
   /**
    * A dropdown option that can be selected.
    */
@@ -11,8 +8,6 @@
     value: string;
     /** Extra text the filter matches but never shows. */
     keywords?: string;
-    /** Render the option as a sidebar workspace row instead of its label. */
-    row?: DropdownWorkspaceRow;
   }
 
   interface FilterableDropdownProps {
@@ -460,16 +455,11 @@
               id={`${baseId}-option-${option.value.replace(/[^a-zA-Z0-9-]/g, "-")}`}
               role="option"
               class="dropdown-option"
-              class:workspace-option={option.row !== undefined}
               class:highlighted={isHighlighted}
               aria-selected={isHighlighted}
               onmousedown={(e: MouseEvent) => handleOptionMouseDown(e, option.value)}
             >
-              {#if option.row !== undefined}
-                <WorkspaceOptionRow row={option.row} />
-              {:else}
-                {option.label}
-              {/if}
+              {option.label}
             </li>
           {/if}
         {/each}
@@ -535,10 +525,6 @@
   .dropdown-listbox.inline {
     position: static;
     max-height: min(60vh, 480px);
-  }
-
-  .dropdown-option.workspace-option {
-    padding: 4px 8px 4px 12px;
   }
 
   .group-header {

@@ -100,6 +100,16 @@ describe("App component", () => {
       expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "ui-connected" });
     });
 
+    it("does not put the startup focus in the sidebar's Find field (that would open Find)", async () => {
+      render(App);
+      await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
+
+      pushState(makeUiState([makeUiProjectRow([ws("a")])], { main: { kind: "creation" } }));
+
+      await waitFor(() => expect(document.activeElement?.tagName).toBe("BUTTON"));
+      expect(mockApi.emitEvent).not.toHaveBeenCalledWith({ kind: "set-find", active: true });
+    });
+
     it("starts blank (no MainView) before the first snapshot", () => {
       const { container } = render(App);
 

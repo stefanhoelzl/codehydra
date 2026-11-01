@@ -14,20 +14,22 @@ const DAY = 24 * HOUR;
 
 describe("formatShortAge", () => {
   it.each([
-    [0, "<1m"],
-    [59_999, "<1m"],
+    [0, "now"],
+    [59_999, "now"],
     [MIN, "1m"],
     [59 * MIN + 59_999, "59m"],
     [HOUR, "1h"],
     [23 * HOUR + 59 * MIN, "23h"],
     [DAY, "1d"],
-    [45 * DAY + 5 * HOUR, "45d"],
+    [6 * DAY + 23 * HOUR, "6d"],
+    [7 * DAY, "1w"],
+    [45 * DAY + 5 * HOUR, "6w"],
   ])("%i ms ago → %s", (elapsed, expected) => {
     expect(formatShortAge(ago(elapsed), NOW)).toBe(expected);
   });
 
   it("treats a time in the future (clock skew) as just now", () => {
-    expect(formatShortAge(NOW + HOUR, NOW)).toBe("<1m");
+    expect(formatShortAge(NOW + HOUR, NOW)).toBe("now");
   });
 });
 

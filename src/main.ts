@@ -187,11 +187,11 @@ import { createDebugModule } from "./modules/debug-module";
 import { createPresentationModule } from "./modules/presentation/presentation-module";
 import { createSettingsModule } from "./modules/settings-module";
 import { createHelpModule } from "./modules/help-module";
-import { createWorkspaceSearchModule } from "./modules/workspace-search-module";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createErrorNotificationModule } from "./modules/error-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
 import { createCreationModule } from "./modules/creation-module";
+import type { ProjectRef } from "./intents/contract";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoTaggingModule } from "./modules/auto-tagging-module";
 import { createLockModule } from "./modules/lock-module";
@@ -291,12 +291,15 @@ const downloadBinariesConfig = configService.register("download-binaries", {
   ...storeBoolean(),
 });
 // Expanded-sidebar width (px). Written by the renderer's drag-to-resize gesture
-// and also user-editable here. The [250, 100000] bounds enforce the grow-only
-// floor at the config layer: an out-of-range hand-edited value fails load with
-// a help message (like ide-server.port), rather than being silently coerced.
+// and also user-editable here. The [250, 100000] bounds reject nonsense at the
+// config layer: an out-of-range hand-edited value fails load with a help
+// message (like ide-server.port), rather than being silently coerced. 250 stays
+// the load bound so a width saved before the floor rose still loads; the
+// presenter clamps every value to the sidebar's real floor (288,
+// clampSidebarWidthMin), which is also the default.
 const sidebarWidthConfig = configService.register("sidebar.width", {
-  default: 250,
-  description: "Expanded sidebar width in pixels (drag its right edge to resize; min 250)",
+  default: 288,
+  description: "Expanded sidebar width in pixels (drag its right edge to resize; min 288)",
   applies: "live",
   ...storeNumber({ min: 250, max: 100000 }),
 });
@@ -513,7 +516,7 @@ const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}
 // so the presenter closes over mutable refs.
 let openSettings: () => void = () => {};
 let openHelp: () => void = () => {};
-let openWorkspaceSearch: () => void = () => {};
+let presetNewWorkspaceProject: (projectRef: ProjectRef, deselecting: boolean) => void = () => {};
 const presentationModule = createPresentationModule({
   loggingService,
   viewManager,
@@ -526,7 +529,9 @@ const presentationModule = createPresentationModule({
   stateService,
   onOpenSettings: () => openSettings(),
   onOpenHelp: () => openHelp(),
-  onOpenWorkspaceSearch: () => openWorkspaceSearch(),
+  onOpenNewWorkspace: (projectRef, deselecting) => {
+    if (projectRef !== null) presetNewWorkspaceProject(projectRef, deselecting);
+  },
 });
 const settingsModule = createSettingsModule({
   ui: presentationModule,
@@ -545,12 +550,6 @@ const helpModule = createHelpModule({
   logger: loggingService.createLogger("help"),
 });
 openHelp = helpModule.openHelp;
-const workspaceSearchModule = createWorkspaceSearchModule({
-  ui: presentationModule,
-  dispatcher,
-  logger: loggingService.createLogger("ui"),
-});
-openWorkspaceSearch = workspaceSearchModule.openSearch;
 const cloneNotificationModule = createCloneNotificationModule({ dispatcher });
 const errorNotificationModule = createErrorNotificationModule({ dispatcher });
 
@@ -1079,6 +1078,7 @@ dispatcher.registerModule(osNotificationModule);
 dispatcher.registerModule(powerModule);
 dispatcher.registerModule(frameWatchdogModule);
 dispatcher.registerModule(deletionDialogModule);
+presetNewWorkspaceProject = creationModule.presetProject;
 dispatcher.registerModule(creationModule);
 dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
@@ -1102,7 +1102,6 @@ dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(debugModule);
 dispatcher.registerModule(errorReportModule);
 dispatcher.registerModule(settingsModule.module);
-dispatcher.registerModule(workspaceSearchModule.module);
 dispatcher.registerModule(autoTaggingModule);
 dispatcher.registerModule(lockModule);
 dispatcher.registerModule(cloneNotificationModule);

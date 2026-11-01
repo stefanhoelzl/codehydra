@@ -6,14 +6,16 @@
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
 
-/** Single floored unit for the sidebar row: `<1m`, `5m`, `3h`, `12d`. */
+/** Single floored unit for the sidebar row: `now`, `5m`, `3h`, `4d`, `2w`. */
 export function formatShortAge(since: number, now: number): string {
   const elapsed = Math.max(0, now - since);
-  if (elapsed < MINUTE) return "<1m";
+  if (elapsed < MINUTE) return "now";
   if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)}m`;
   if (elapsed < DAY) return `${Math.floor(elapsed / HOUR)}h`;
-  return `${Math.floor(elapsed / DAY)}d`;
+  if (elapsed < WEEK) return `${Math.floor(elapsed / DAY)}d`;
+  return `${Math.floor(elapsed / WEEK)}w`;
 }
 
 /** The same floored unit, spelled out: `just now`, `1 minute ago`, `3 days ago`. */

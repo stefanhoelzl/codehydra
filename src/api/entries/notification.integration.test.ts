@@ -200,7 +200,8 @@ describe("vscode.ask with sidebar", () => {
     expect(cards.lastNotification!.opened).toEqual({
       title: "Deploy?",
       message: "to staging",
-      type: "warning",
+      // A card is a question whatever the level: the sidebar puts it in the row.
+      type: "question",
       dismissible: true,
       actions: [
         { id: "Deploy", label: "Deploy" },

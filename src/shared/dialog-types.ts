@@ -11,8 +11,6 @@
  * renderer displays it.
  */
 
-import type { AgentStatus, WorkspaceTag } from "./api/types";
-
 // ---- Sections ----
 
 /**
@@ -366,26 +364,11 @@ export interface RadioOption {
  *
  * - keywords: extra text the filter matches but never shows (e.g. a
  *   workspace's project and tag descriptions).
- * - row: render the option as a sidebar workspace row (status icon, title,
- *   branch line, tags) instead of its plain label. The label stays what the
- *   filter matches and the input shows.
  */
 export interface DropdownOption {
   readonly value: string;
   readonly label: string;
   readonly keywords?: string;
-  readonly row?: DropdownWorkspaceRow;
-}
-
-/** The sidebar-row view of a workspace suggestion; see DropdownOption.row. */
-export interface DropdownWorkspaceRow {
-  readonly name: string;
-  readonly title?: string;
-  readonly hibernated: boolean;
-  /** When it was hibernated (ISO-8601); see UiWorkspaceRow.hibernatedAt. */
-  readonly hibernatedAt?: string;
-  readonly agent: AgentStatus;
-  readonly tags: readonly WorkspaceTag[];
 }
 
 /**

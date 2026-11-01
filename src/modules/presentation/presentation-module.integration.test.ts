@@ -14,6 +14,7 @@
  *   presenter, so a shared bug cannot hide in both.
  */
 
+import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../../intents/vscode-modal-changed";
 import { describe, it, expect, vi } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
@@ -106,9 +107,9 @@ const PROJECT_REF = projectRefFor(PROJECT_PATH);
 const keyOf = (name: string): string => makeWorkspaceRef(PROJECT_REF, name);
 // Local copies of the sidebar-width default/floor (the source constants are no
 // longer exported; the tests only need values that match main.ts's inlined
-// 250, which is stable).
-const SIDEBAR_DEFAULT_WIDTH = 250;
-const SIDEBAR_MIN_WIDTH = 250;
+// 288, which is stable).
+const SIDEBAR_DEFAULT_WIDTH = 288;
+const SIDEBAR_MIN_WIDTH = 288;
 
 function createDeps() {
   // Typed sendToUI spy for snapshot assertions; the rest of the view-manager
@@ -144,8 +145,8 @@ function createDeps() {
 /**
  * Minimal StateService mock: register() returns a stateful, store-backed
  * accessor (mirrors createMockConfig for state.json). The presenter registers
- * `sidebar.hidden-hibernated-projects` here; tests flip it via the toggle ui:event/shortcut
- * and read it back through the accessor.
+ * `sidebar.collapsed-projects` here; tests flip it via the toggle ui:event and
+ * read it back through the accessor.
  */
 function createMockStateService(): Pick<StateService, "register"> & {
   readonly values: ReadonlyMap<string, unknown>;
@@ -170,9 +171,9 @@ function createMockStateService(): Pick<StateService, "register"> & {
 }
 type Deps = ReturnType<typeof createDeps>;
 
-/** The persisted `sidebar.hidden-hibernated-projects` value. */
+/** The persisted `sidebar.collapsed-projects` value. */
 function stateValue(deps: Deps): unknown {
-  return deps.stateService.values.get("sidebar.hidden-hibernated-projects");
+  return deps.stateService.values.get("sidebar.collapsed-projects");
 }
 
 /** Drive an inbound ui:event into the presenter (via the view-manager mock). */
@@ -493,11 +494,11 @@ describe("PresentationModule - ui:state snapshots", () => {
           projects: [],
           width: SIDEBAR_DEFAULT_WIDTH,
           mode: "overlay",
+          find: null,
         },
         frames: {},
         main: { kind: "starting" },
         theme: "dark",
-        labelScroll: "hover",
         silent: false,
         mode: "dialog",
         capturing: false,
@@ -525,11 +526,11 @@ describe("PresentationModule - ui:state snapshots", () => {
         projects: [],
         width: SIDEBAR_DEFAULT_WIDTH,
         mode: "overlay",
+        find: null,
       },
       frames: {},
       main: { kind: "creation" },
       theme: "dark",
-      labelScroll: "hover",
       silent: false,
       mode: "hover",
       capturing: false,
@@ -576,17 +577,17 @@ describe("PresentationModule - ui:state snapshots", () => {
                 active: true,
               },
             ],
-            hibernatedCount: 0,
-            hideHibernated: false,
+            collapsed: false,
+            hibernatedView: "hidden",
           },
         ],
         width: SIDEBAR_DEFAULT_WIDTH,
         mode: "overlay",
+        find: null,
       },
       frames: { [keyOf("main")]: "http://127.0.0.1:1/main" },
       main: { kind: "workspace", frameKey: keyOf("main") },
       theme: "dark",
-      labelScroll: "hover",
       silent: false,
       mode: "workspace",
       capturing: false,
@@ -1456,105 +1457,224 @@ describe("PresentationModule - sidebar resize", () => {
     expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
   });
 
-  it("toggle-hide-hibernated flips the project's flag and omits its hibernated rows", async () => {
+  it("toggle-project-collapsed flips the project's flag and persists it", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
-    const awake = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
-    const asleep = makeWorkspace("b", { metadata: { hibernated: "true" } });
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake, asleep]) });
-
-    // Default: both rows visible, flag off; the count is there regardless.
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("a")]) });
     const project = (): UiProjectRow => lastSnapshot(deps).sidebar.projects[0]!;
-    expect(project().hideHibernated).toBe(false);
-    expect(project().workspaces.map((w) => w.name)).toEqual(["a", "b"]);
-    expect(project().hibernatedCount).toBe(1);
+    expect(project().collapsed).toBe(false);
 
-    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: PROJECT_ID });
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
     await flush();
-
-    // Hidden: the hibernated row is dropped, the flag is on, the count stays,
-    // and the project's ref is persisted.
-    expect(project().hideHibernated).toBe(true);
+    // Collapsed: the rows still ride along (the renderer folds them away).
+    expect(project().collapsed).toBe(true);
     expect(project().workspaces.map((w) => w.name)).toEqual(["a"]);
-    expect(project().hibernatedCount).toBe(1);
     expect(stateValue(deps)).toEqual([PROJECT_REF]);
 
-    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: PROJECT_ID });
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
     await flush();
-
-    // Shown again.
-    expect(project().hideHibernated).toBe(false);
-    expect(project().workspaces.map((w) => w.name)).toEqual(["a", "b"]);
+    expect(project().collapsed).toBe(false);
     expect(stateValue(deps)).toEqual([]);
   });
 
-  it("toggle-hide-hibernated leaves other projects untouched", async () => {
+  it("toggle-project-collapsed for an unknown project is dropped", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
-    await emit(module, EVENT_PROJECT_OPENED, {
-      project: makeProject([makeWorkspace("a", { metadata: { hibernated: "true" } })]),
-    });
-    await openBeta(module, { hibernated: true });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("a")]) });
 
-    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: BETA_ID });
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: "nope-00000000" });
     await flush();
 
-    const [alpha, beta] = lastSnapshot(deps).sidebar.projects;
-    expect(alpha!.hideHibernated).toBe(false);
-    expect(alpha!.workspaces.map((w) => w.name)).toEqual(["a"]);
-    expect(beta!.hideHibernated).toBe(true);
-    expect(beta!.workspaces).toEqual([]);
-  });
-
-  it("toggle-hide-hibernated for an unknown project is dropped", async () => {
-    const deps = createDeps();
-    const module = await startModule(deps);
-    await emit(module, EVENT_PROJECT_OPENED, {
-      project: makeProject([makeWorkspace("a", { metadata: { hibernated: "true" } })]),
-    });
-
-    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: "nope-00000000" });
-    await flush();
-
-    expect(lastSnapshot(deps).sidebar.projects[0]!.hideHibernated).toBe(false);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.collapsed).toBe(false);
     expect(stateValue(deps)).toEqual([]);
   });
 
-  it("an all-hibernated project reports its count instead of looking empty", async () => {
-    const deps = createDeps();
-    const module = await startModule(deps);
-    await emit(module, EVENT_PROJECT_OPENED, {
-      project: makeProject([
-        makeWorkspace("a", { metadata: { hibernated: "true" } }),
-        makeWorkspace("b", { metadata: { hibernated: "true" } }),
-      ]),
-    });
-
-    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: PROJECT_ID });
-    await flush();
-
-    // Every row is gone, so `workspaces` alone cannot distinguish this from a
-    // project with no workspaces at all — the count is what carries it.
-    const project = lastSnapshot(deps).sidebar.projects[0]!;
-    expect(project.workspaces).toEqual([]);
-    expect(project.hibernatedCount).toBe(2);
-  });
-
-  it("a hidden project stays hidden after it is closed and reopened", async () => {
+  it("a collapsed project stays collapsed after it is closed and reopened", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const open = (): Promise<void> =>
-      emit(module, EVENT_PROJECT_OPENED, {
-        project: makeProject([makeWorkspace("a", { metadata: { hibernated: "true" } })]),
-      });
+      emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("a")]) });
     await open();
-    emitUiEvent(deps, { kind: "toggle-hide-hibernated", projectId: PROJECT_ID });
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
 
     await emit(module, EVENT_PROJECT_CLOSED, { projectId: PROJECT_ID, projectRef: PROJECT_REF });
     await open();
     await flush();
 
-    expect(lastSnapshot(deps).sidebar.projects[0]!.hideHibernated).toBe(true);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.collapsed).toBe(true);
+  });
+
+  it("orders hibernated (newest first), then automated, then awake by name", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const sleep = (at: string | undefined, wakeup?: string): Record<string, string> => ({
+      hibernated: "true",
+      ...(at !== undefined && { "hibernated-at": at }),
+      ...(wakeup !== undefined && {
+        wakeup: JSON.stringify({ script: wakeup, shell: "bash", env: {} }),
+      }),
+    });
+    await emit(module, EVENT_PROJECT_OPENED, {
+      project: makeProject([
+        makeWorkspace("zeta"),
+        makeWorkspace("old", { metadata: sleep("2026-01-01T00:00:00.000Z") }),
+        makeWorkspace("auto-old", { metadata: sleep("2026-01-01T00:00:00.000Z", "x") }),
+        makeWorkspace("alpha"),
+        makeWorkspace("unknown", { metadata: sleep(undefined) }),
+        makeWorkspace("auto-new", { metadata: sleep("2026-03-01T00:00:00.000Z", "y") }),
+        makeWorkspace("new", { metadata: sleep("2026-03-01T00:00:00.000Z") }),
+      ]),
+    });
+
+    const rows = lastSnapshot(deps).sidebar.projects[0]!.workspaces;
+    expect(rows.map((w) => w.name)).toEqual([
+      "new",
+      "old",
+      "unknown",
+      "auto-new",
+      "auto-old",
+      "alpha",
+      "zeta",
+    ]);
+    expect(rows.find((w) => w.name === "auto-new")!.wakeupScript).toBe("y");
+    expect(rows.find((w) => w.name === "new")!.wakeupScript).toBeUndefined();
+  });
+
+  it("carries the wakeup script only while hibernated, and never the legacy wakeup tag", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("a", {
+      metadata: {
+        wakeup: JSON.stringify({ script: "gh pr checks 12", shell: "bash", env: {} }),
+        "tags.wakeup": JSON.stringify({ label: "x" }),
+        "tags.review": JSON.stringify({ color: "#22c55e" }),
+      },
+    });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    const row = () => lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
+    await flush();
+    expect(row().wakeupScript).toBeUndefined();
+    expect(row().tags.map((t) => t.name)).toEqual(["review"]);
+
+    const change = (key: string, value: string | null) =>
+      emit(module, EVENT_METADATA_CHANGED, {
+        projectId: PROJECT_ID,
+        workspaceName: "a",
+        workspaceRef: workspace.ref,
+        key,
+        value,
+      });
+    await change("hibernated", "true");
+    await flush();
+    expect(row().wakeupScript).toBe("gh pr checks 12");
+
+    await change("wakeup", null);
+    await flush();
+    expect(row().wakeupScript).toBeUndefined();
+    await change("tags.wakeup", JSON.stringify({ label: "x" }));
+    await flush();
+    expect(row().tags.map((t) => t.name)).toEqual(["review"]);
+  });
+
+  it("marks a row while a question is open in its editor (not for a sidebar card)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("a");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    const row = () => lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
+    const modal = (source: "editor" | "sidebar", open: boolean) =>
+      module.hooks![VSCODE_MODAL_CHANGED_OPERATION_ID]!.modal!.handler({
+        workspaceRef: workspace.ref,
+        source,
+        open,
+      } as never);
+    await flush();
+    expect(row().editorQuestion).toBeUndefined();
+
+    await modal("sidebar", true);
+    await flush();
+    expect(row().editorQuestion).toBeUndefined();
+
+    await modal("editor", true);
+    await flush();
+    expect(row().editorQuestion).toBe(true);
+
+    await modal("editor", false);
+    await flush();
+    expect(row().editorQuestion).toBeUndefined();
+  });
+
+  it("set-hibernated-view sets one project's view; hibernating folds it away", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const a = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a]) });
+    await openBeta(module, { hibernated: true });
+    const projects = (): readonly UiProjectRow[] => lastSnapshot(deps).sidebar.projects;
+
+    emitUiEvent(deps, { kind: "set-hibernated-view", projectId: PROJECT_ID, view: "all" });
+    await flush();
+    expect(projects().map((p) => p.hibernatedView)).toEqual(["all", "hidden"]);
+
+    await emit(module, EVENT_METADATA_CHANGED, {
+      projectId: PROJECT_ID,
+      workspaceName: "a",
+      workspaceRef: a.ref,
+      key: "hibernated",
+      value: "true",
+    });
+    await flush();
+    expect(projects()[0]!.hibernatedView).toBe("hidden");
+  });
+
+  it("set-find opens Find at the manual view and keeps the sidebar expanded", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const a = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
+    await openProject(module, makeProject([a]));
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
+    await flush();
+    expect(lastSnapshot(deps).mode).toBe("workspace");
+
+    emitUiEvent(deps, { kind: "set-find", active: true });
+    await flush();
+    expect(lastSnapshot(deps).sidebar.find).toEqual({ hibernatedView: "manual" });
+    expect(lastSnapshot(deps).mode).toBe("hover");
+
+    emitUiEvent(deps, { kind: "set-find", active: false });
+    await flush();
+    expect(lastSnapshot(deps).sidebar.find).toBeNull();
+    expect(lastSnapshot(deps).mode).toBe("workspace");
+  });
+
+  it("open-new-workspace deselects and presets the project", async () => {
+    const onOpenNewWorkspace = vi.fn();
+    const deps = { ...createDeps(), onOpenNewWorkspace };
+    const module = await startModule(deps);
+    const a = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
+    await openProject(module, makeProject([a]));
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
+    const dispatched: unknown[] = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: unknown) => {
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
+    } as unknown as Deps["dispatcher"];
+
+    emitUiEvent(deps, { kind: "open-new-workspace", projectId: PROJECT_ID });
+    emitUiEvent(deps, { kind: "open-new-workspace", projectId: null });
+    emitUiEvent(deps, { kind: "open-new-workspace", projectId: "nope-00000000" });
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspaceRef: null } },
+      { type: "workspace:switch", payload: { workspaceRef: null } },
+    ]);
+    expect(onOpenNewWorkspace.mock.calls).toEqual([
+      [PROJECT_REF, true],
+      [null, true],
+    ]);
   });
 });
 
@@ -2591,7 +2711,7 @@ describe("PresentationModule - shortcut navigation", () => {
   ): Promise<IntentModule> {
     const module = await startModule(deps);
     const workspaces = names.map((n) => makeWorkspace(n, { url: `http://127.0.0.1:1/${n}` }));
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject(workspaces) });
+    await openProject(module, makeProject(workspaces));
     if (activeName) {
       const active = workspaces.find((w) => w.name === activeName)!;
       await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(active));
@@ -2745,26 +2865,44 @@ describe("PresentationModule - shortcut navigation", () => {
     expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
   });
 
-  it("t toggles hide-hibernated for the active workspace's project only", async () => {
+  it("t cycles the active project's hibernated view: hidden, manual, all, hidden", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const awake = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
-    const asleep = makeWorkspace("b", { metadata: { hibernated: "true" } });
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake, asleep]) });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake]) });
     await openBeta(module, { hibernated: true });
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(awake));
-    const projects = (): readonly UiProjectRow[] => lastSnapshot(deps).sidebar.projects;
+    const views = (): string[] => lastSnapshot(deps).sidebar.projects.map((p) => p.hibernatedView);
 
-    await key(module, "t");
-    await flush();
-    expect(projects()[0]!.hideHibernated).toBe(true);
-    expect(projects()[0]!.workspaces.map((w) => w.name)).toEqual(["a"]);
-    expect(projects()[1]!.hideHibernated).toBe(false);
+    const seen: string[][] = [];
+    for (let i = 0; i < 3; i++) {
+      await key(module, "t");
+      await flush();
+      seen.push(views());
+    }
+    expect(seen).toEqual([
+      ["manual", "hidden"],
+      ["all", "hidden"],
+      ["hidden", "hidden"],
+    ]);
+  });
 
-    await key(module, "t");
+  it("t in Find cycles Find's view for every project: manual, all, hidden", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a"], "a");
+    await key(module, "f");
     await flush();
-    expect(projects()[0]!.hideHibernated).toBe(false);
-    expect(projects()[0]!.workspaces.map((w) => w.name)).toEqual(["a", "b"]);
+    expect(lastSnapshot(deps).sidebar.find).toEqual({ hibernatedView: "manual" });
+
+    const seen: unknown[] = [];
+    for (let i = 0; i < 3; i++) {
+      await key(module, "t");
+      await flush();
+      seen.push(lastSnapshot(deps).sidebar.find?.hibernatedView);
+    }
+    expect(seen).toEqual(["all", "hidden", "manual"]);
+    // The projects' own views are untouched.
+    expect(lastSnapshot(deps).sidebar.projects[0]!.hibernatedView).toBe("hidden");
   });
 
   it("t is a no-op without an active workspace", async () => {
@@ -2777,27 +2915,94 @@ describe("PresentationModule - shortcut navigation", () => {
 
     await key(module, "t");
     await flush();
-    expect(lastSnapshot(deps).sidebar.projects[0]!.hideHibernated).toBe(false);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.hibernatedView).toBe("hidden");
   });
 
-  it("up/down navigation skips a hidden hibernated row when hide is on", async () => {
+  it("up/down skip hibernated rows", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const a = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
     const b = makeWorkspace("b", { metadata: { hibernated: "true" } });
     const c = makeWorkspace("c", { url: "http://127.0.0.1:1/c" });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a, b, c]) });
-    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
-
-    // Hide hibernated, then navigate down from a: b is hidden, so c is next.
-    await key(module, "t");
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(c));
     const dispatched = recordDispatches(deps);
 
+    // Order is b (hibernated, first), a, c: down from c wraps past b to a.
     await key(module, "down");
 
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspaceRef: c.ref, focus: false } },
+      { type: "workspace:switch", payload: { workspaceRef: a.ref, focus: false } },
     ]);
+  });
+
+  it("arrows and digits skip the workspaces of a collapsed project", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a"], "a");
+    await openBeta(module, { hibernated: false });
+    const betaB = makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "b");
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "down");
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspaceRef: betaB, focus: false } },
+    ]);
+
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: BETA_ID });
+    dispatched.length = 0;
+    await key(module, "down");
+    await key(module, "right");
+    await key(module, "2");
+    expect(dispatched).toEqual([]);
+  });
+
+  it("left/right count a workspace without an agent as idle, before busy ones", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "b", "c"], "a");
+    await emit(module, EVENT_AGENT_STATUS_UPDATED, {
+      workspaceRef: refOf("b"),
+      projectRef: PROJECT_REF,
+      projectId: PROJECT_ID,
+      workspaceName: "b",
+      active: false,
+      status: { status: "busy", counts: { idle: 0, busy: 1 } },
+    });
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "right");
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspaceRef: refOf("c"), focus: false } },
+    ]);
+  });
+
+  it("collapsing the active workspace's project moves to the next expanded project", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a"], "a");
+    await openBeta(module, { hibernated: false });
+    const betaB = makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "b");
+    const dispatched = recordDispatches(deps);
+
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspaceRef: betaB, focus: false } },
+    ]);
+
+    // Collapsing a project the active workspace is not in moves nothing; with
+    // every other project collapsed there is nowhere to go.
+    dispatched.length = 0;
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: BETA_ID });
+    expect(dispatched).toEqual([]);
+  });
+
+  it("f opens Find", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a"], "a");
+
+    await key(module, "f");
+    await flush();
+
+    expect(lastSnapshot(deps).sidebar.find).toEqual({ hibernatedView: "manual" });
   });
 
   it("enter deselects (switch to null) so the creation panel shows", async () => {
@@ -3139,7 +3344,6 @@ describe("PresentationModule - push logging", () => {
     expect(projected.mode).toBe(snapshot.mode);
     expect(projected.theme).toBe(snapshot.theme);
     expect(projected.capturing).toBe(snapshot.capturing);
-    expect(projected.labelScroll).toBe(snapshot.labelScroll);
     expect(projected.silent).toBe(snapshot.silent);
   });
 
@@ -3629,9 +3833,10 @@ describe("PresentationModule - loading rows", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake, asleep]) });
     await flush();
 
+    // The hibernated row sorts first.
     expect(rows(deps)).toEqual([
-      ["a", "loading", false],
       ["b", "ready", false],
+      ["a", "loading", false],
     ]);
     expect(lastSnapshot(deps).frames).toEqual({});
 
@@ -3639,8 +3844,8 @@ describe("PresentationModule - loading rows", () => {
     await flush();
 
     expect(rows(deps)).toEqual([
-      ["a", "ready", false],
       ["b", "ready", false],
+      ["a", "ready", false],
     ]);
     expect(lastSnapshot(deps).frames).toEqual({ [keyOf("a")]: "http://127.0.0.1:1/a" });
   });

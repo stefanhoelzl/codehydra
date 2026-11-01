@@ -26,7 +26,7 @@
  */
 
 import { z } from "zod/v4";
-import { SIDEBAR_MODES } from "./ui-state";
+import { HIBERNATED_VIEWS, SIDEBAR_MODES } from "./ui-state";
 
 const logContextSchema = z.record(
   z.string(),
@@ -74,16 +74,27 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // Open the user guide dialog (sidebar question-mark click). The presenter
   // forwards this to the help module.
   z.object({ kind: z.literal("open-help") }),
-  // Open the workspace search dialog (sidebar magnifier click). The presenter
-  // forwards this to the workspace-search module; the Alt+X+F shortcut reaches
-  // the same module via the shortcut-key domain event.
-  z.object({ kind: z.literal("open-workspace-search") }),
-  // Toggle whether one project's hibernated workspaces are hidden from the
-  // sidebar (the project's hibernated-count button). The presenter flips the
-  // project in the `sidebar.hidden-hibernated-projects` state key, persists it,
-  // and re-pushes the snapshot. The Alt+X+T shortcut drives the same presenter
-  // toggle for the active workspace's project via the shortcut-key domain event.
-  z.object({ kind: z.literal("toggle-hide-hibernated"), projectId: z.string() }),
+  // Collapse or expand a project card (its header bar). The presenter flips the
+  // project in the persisted `sidebar.collapsed-projects` state. Collapsing the
+  // project of the active workspace moves to the first awake workspace of the
+  // next expanded project, as Alt+X, Down would from its last workspace.
+  z.object({ kind: z.literal("toggle-project-collapsed"), projectId: z.string() }),
+  // Show part of a project's hibernated list (its moon button, its "Show
+  // automated workspaces" item) or fold it away again (the pointer leaving the
+  // card, a click elsewhere in it). Alt+X, T cycles the same state main-side.
+  z.object({
+    kind: z.literal("set-hibernated-view"),
+    projectId: z.string(),
+    view: z.enum(HIBERNATED_VIEWS),
+  }),
+  // The sidebar's Find field gained (true) or lost (false) the focus. While it
+  // has it the presenter carries `sidebar.find`, which keeps an overlay sidebar
+  // expanded; Alt+X, F asks the renderer to focus it by setting that field.
+  z.object({ kind: z.literal("set-find"), active: z.boolean() }),
+  // Open the New workspace form (the sidebar's + buttons). projectId presets
+  // its project (a project card's +); null keeps the form's own choice (the
+  // footer +, which is Alt+X, Enter).
+  z.object({ kind: z.literal("open-new-workspace"), projectId: z.string().nullable() }),
   // Dialog user interactions. The
   // presenter routes these to the matching open dialog session by `dialogId`
   // (the opaque id echoed from the snapshot's `dialogs`). `data` is the flat
