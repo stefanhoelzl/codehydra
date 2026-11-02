@@ -36,6 +36,7 @@ export function makeUiProjectRow(
     id: "test-project-12345678",
     name: "test-project",
     remote: false,
+    colorIndex: 0,
     collapsed: false,
     hibernatedView: "hidden",
     ...overrides,

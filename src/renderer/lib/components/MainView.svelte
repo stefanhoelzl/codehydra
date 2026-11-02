@@ -87,14 +87,21 @@
   const totalWorkspaces = $derived(allRows.length);
   const idleWorkspaceCount = $derived(allRows.filter((row) => row.agent.type === "idle").length);
   const activeRow = $derived(allRows.find((row) => row.active) ?? null);
+  const activeProject = $derived(
+    projectRows.find((p) => p.workspaces.some((row) => row.active)) ?? null
+  );
   // What Alt+X, T cycles (drives its hint): every project's hibernated list
   // while Find is open, else the active workspace's project's; null without
   // an active workspace.
   const hibernatedViewForT = $derived.by((): HibernatedView | null => {
     if (ui.sidebar.find !== null) return ui.sidebar.find.hibernatedView;
-    const project = projectRows.find((p) => p.workspaces.some((row) => row.active));
-    return project?.hibernatedView ?? null;
+    return activeProject?.hibernatedView ?? null;
   });
+  // What Alt+X, C toggles (drives its hint): the active workspace's project;
+  // null without one, and while Find is open (it expands every project).
+  const activeCollapsedForC = $derived(
+    ui.sidebar.find !== null || activeProject === null ? null : activeProject.collapsed
+  );
 
   // Frames with accessible titles: the snapshot's frames region carries only
   // key → URL; the iframe title (workspace name) is joined from the sidebar
@@ -181,6 +188,7 @@
     activeWorkspaceDeletionInProgress={activeRow !== null && activeRow.status === "deleting"}
     {idleWorkspaceCount}
     hibernatedView={hibernatedViewForT}
+    activeCollapsed={activeCollapsedForC}
     sidebarDocked={ui.sidebar.mode === "docked"}
   />
 

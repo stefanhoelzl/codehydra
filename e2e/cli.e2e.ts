@@ -317,12 +317,12 @@ test.describe("ch notification", () => {
     const { id } = json(
       ch(["notification", "show", "Building", "--type", "spinner", "--percent", "40"])
     ) as { id: string };
-    await expect(card("Building").locator(".notification-pct")).toHaveText("40%");
+    await expect(card("Building").locator(".pct")).toHaveText("40%");
 
     json(
       ch(["notification", "show", "Building", "--id", id, "--type", "spinner", "--percent", "80"])
     );
-    await expect(card("Building").locator(".notification-pct")).toHaveText("80%");
+    await expect(card("Building").locator(".pct")).toHaveText("80%");
 
     expect(json(ch(["notification", "close", id]))).toEqual({ closed: true });
     await expect(card("Building")).toHaveCount(0);
@@ -339,12 +339,12 @@ test.describe("ch notification", () => {
 
     const repeated = card("Heads up");
     await expect(repeated).toHaveAccessibleName("Heads up (2)");
-    // The badge sits in the label, clear of the type icon — on the icon it
+    // The badge sits in the title, clear of the type icon — on the icon it
     // covered the icon and overhung the sidebar's edge.
-    await expect(repeated.locator(".notification-label .notification-count")).toHaveText("2");
+    await expect(repeated.locator(".ntitle .ncount")).toHaveText("×2");
     const overflow = await app()
       .uiPage()
-      .locator(".notification-stack")
+      .locator("nav.sidebar .notes")
       .evaluate((stack) => stack.scrollWidth - stack.clientWidth);
     expect(overflow, "the notification stack must not scroll sideways").toBeLessThanOrEqual(0);
 

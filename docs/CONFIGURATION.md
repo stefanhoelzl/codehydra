@@ -178,7 +178,7 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 
 #### `sidebar.collapsed-projects`
 
-`presentation-module.ts`. Refs of the projects whose sidebar card is collapsed to its header (a click on the header bar). Default `[]`. A ref stays listed after its project closes, so the choice survives a reopen. Keyboard navigation (Alt+X arrows and digits) skips the workspaces of a collapsed project. Replaces `sidebar.hidden-hibernated-projects` (hibernated workspaces are now folded away by default and shown by the project's moon button or Alt+X, T — not persisted), which is dropped without migration: an old value is logged and skipped.
+`presentation-module.ts`. Refs of the projects whose sidebar card is collapsed to its header (a click on the header bar, or Alt+X, C). Default `[]`. A ref stays listed after its project closes, so the choice survives a reopen. Keyboard navigation (Alt+X arrows and digits) skips the workspaces of a collapsed project. Replaces `sidebar.hidden-hibernated-projects` (hibernated workspaces are now folded away by default and shown by the project's moon button or Alt+X, T — not persisted), which is dropped without migration: an old value is logged and skipped.
 
 #### `api.port`
 

@@ -14,8 +14,8 @@ test("the window renders the sidebar and the new-workspace panel", async () => {
   const ui = app().uiPage();
 
   await expect(ui.getByRole("navigation", { name: "Projects" })).toBeVisible();
-  await expect(ui.getByRole("heading", { name: "PROJECTS" })).toBeVisible();
-  await expect(ui.getByRole("button", { name: "New workspace" })).toBeVisible();
+  await expect(ui.getByRole("textbox", { name: "Find workspace" })).toBeVisible();
+  await expect(ui.getByRole("button", { name: "New workspace", exact: true })).toBeVisible();
 
   // With no project open, the panel offers the two ways to get one.
   await expect(ui.getByRole("button", { name: "Open project folder" })).toBeVisible();

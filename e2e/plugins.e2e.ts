@@ -284,10 +284,7 @@ function marker(workspace: string, name: string): boolean {
 }
 
 function rowOf(ui: Page, name: string): Locator {
-  return ui
-    .getByRole("listitem")
-    .filter({ has: workspaceRow(ui, name) })
-    .last();
+  return ui.locator("nav.sidebar .ws").filter({ has: workspaceRow(ui, name) });
 }
 
 /** Text inside the sidebar only — short tag names are too generic page-wide. */
@@ -295,9 +292,15 @@ function sidebarText(ui: Page, text: string): Locator {
   return ui.locator("nav.sidebar").getByText(text, { exact: true });
 }
 
-/** A hibernated row announces itself in its accessible name. */
+/**
+ * A hibernated row announces itself in its accessible name. It folds away
+ * behind its project's count, so look past the fold (wait for it attached).
+ */
 function hibernatedRow(ui: Page, name: string): Locator {
-  return ui.getByRole("button", { name: new RegExp(`^${name} in .*Hibernated`) });
+  return ui.getByRole("button", {
+    name: new RegExp(`^${name} in .*Hibernated`),
+    includeHidden: true,
+  });
 }
 
 /**
@@ -338,6 +341,8 @@ async function clickUntil(button: Locator, done: () => Promise<void>): Promise<v
 
 async function removeViaSidebar(ui: Page, name: string): Promise<void> {
   await expandSidebar(ui);
+  // The hover actions only show while the pointer is on the row.
+  await rowOf(ui, name).hover();
   await rowOf(ui, name).getByRole("button", { name: "Remove workspace" }).click();
   const confirm = ui.getByRole("dialog", { name: "Remove Workspace" });
   await expect(confirm).toBeVisible();
@@ -499,7 +504,8 @@ test("the deletion gate refuses, and Dismiss force-deletes past it", async () =>
   const ui = app().uiPage();
   await removeViaSidebar(ui, "alpha");
 
-  await expect(rowOf(ui, "alpha").getByRole("img", { name: "Deletion failed" })).toBeVisible({
+  // The row's status cell names its state.
+  await expect(ui.getByRole("button", { name: /^alpha in .* - Deletion failed$/ })).toBeVisible({
     timeout: 60_000,
   });
   expect(existsSync(join(workspacesDir(), "alpha"))).toBe(true);
@@ -662,7 +668,7 @@ test("an event wakes the hibernated workspace it matches", async () => {
     extraArgs: launchFlags(),
   });
   const ui = app().uiPage();
-  await hibernatedRow(ui, "ev-42").waitFor({ timeout: CREATE_TIMEOUT });
+  await hibernatedRow(ui, "ev-42").waitFor({ state: "attached", timeout: CREATE_TIMEOUT });
 
   writeArmed(evArmed, [eventItem("ev-42", "nudged")]);
 

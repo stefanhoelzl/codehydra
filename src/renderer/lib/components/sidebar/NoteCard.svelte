@@ -65,7 +65,7 @@
   class:in-row={inRow}
   data-note-id={note.id}
   role={question ? "dialog" : "status"}
-  aria-label={config.title}
+  aria-label={count > 1 ? `${config.title} (${count})` : config.title}
 >
   <div class="nh">
     <span class="nicon">

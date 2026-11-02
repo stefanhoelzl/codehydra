@@ -94,7 +94,6 @@ import {
   type PrepareCaptureHookResult,
   type CleanupCaptureHookResult,
 } from "../../intents/hibernate-workspace";
-import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../../intents/vscode-modal-changed";
 import {
   INTENT_WAKE_WORKSPACE,
   EVENT_WORKSPACE_WAKE_FAILED,
@@ -179,6 +178,12 @@ export interface PresentationModuleDeps {
    * but persisted to state.json rather than config.json).
    */
   readonly stateService: Pick<StateService, "register">;
+  /**
+   * An open project's badge color, an index below PROJECT_COLOR_COUNT. Wired in
+   * the composition root to the local-project module, which assigns it at open
+   * and keeps it in the project's record.
+   */
+  readonly projectColor: (projectRef: ProjectRef) => number | undefined;
   /**
    * Called when the renderer emits the `open-settings` ui event (the sidebar
    * gear). Wired in the composition root to the settings module's openSettings;
@@ -578,8 +583,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * exit is still talking over.
    */
   const framesReleased = new Set<WorkspaceRef>();
-  /** Workspaces with a question open in their editor (`vscode:modal-changed`, source editor). */
-  const editorQuestions = new Set<WorkspaceRef>();
   /** Hibernation screenshot data URLs keyed by workspace ref (null = missing). */
   const screenshots = new Map<WorkspaceRef, string | null>();
   const screenshotLoads = new Set<WorkspaceRef>();
@@ -634,6 +637,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     logger,
     scheduleUpdate,
     rows: currentRows,
+    collapsed: isCollapsed,
     retryOpen,
     deleteWorkspace: dispatchInteractiveDelete,
   });
@@ -646,6 +650,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     deleteWorkspace: dispatchInteractiveDelete,
     collapsed: isCollapsed,
     cycleHibernatedView,
+    toggleActiveCollapsed,
     openFind: () => setFind(true),
     toggleSidebarMode: () =>
       setSidebarMode(sidebarModeConfig.get() === "docked" ? "overlay" : "docked"),
@@ -709,7 +714,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    */
   function buildRow(workspace: WorkspaceModel): UiWorkspaceRow {
     const progress = deletions.get(workspace.ref);
-    const asking = editorQuestions.has(workspace.ref);
     const agent = toAgentStatus(agents.statuses.get(workspace.ref));
     // A workspace still being created has its ref already, so the first
     // hook-trust question (raised during after-worktree-created) marks its
@@ -735,7 +739,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       tags: [...workspace.tags],
       active: workspace.ref === model.activeRef,
       ...(workspace.openError !== undefined && { openError: workspace.openError }),
-      ...(asking && { editorQuestion: true }),
       // Derive the render-ready row view from the full tracked progress.
       ...(progress && { deletionProgress: toUiDeletionProgress(progress) }),
     };
@@ -869,6 +872,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       name: project.name,
       title: project.remoteUrl ?? project.path,
       remote: project.remoteUrl !== undefined,
+      colorIndex: deps.projectColor(project.ref) ?? 0,
       workspaces: workspaces.map(buildRow),
       collapsed: isCollapsed(project),
       hibernatedView: hibernatedViews.get(project.ref) ?? "hidden",
@@ -1233,7 +1237,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    *
    * Collapsing the project of the active workspace moves on, as Alt+X, Down
    * would from its last workspace: to the first awake workspace of the next
-   * expanded project, wrapping round. With none, the active workspace stays.
+   * expanded project, wrapping round. With none, the active workspace stays
+   * (and the collapsed card keeps showing its row).
    */
   function toggleCollapsed(project: ProjectModel): void {
     const current = collapsedProjectsState.get();
@@ -1282,6 +1287,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     const project = model.active()?.project;
     if (project === undefined) return;
     setHibernatedView(project, nextHibernatedView(hibernatedViews.get(project.ref) ?? "hidden"));
+  }
+
+  /**
+   * Alt+X, C: collapse or expand the active workspace's project, as a click
+   * on its header does (collapsing moves on to the next expanded project).
+   * No-op without one, and while Find is open (Find expands every project).
+   */
+  function toggleActiveCollapsed(): void {
+    if (find !== null) return;
+    const project = model.active()?.project;
+    if (project !== undefined) toggleCollapsed(project);
   }
 
   /**
@@ -1475,7 +1491,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         const { workspaceRef } = event.payload;
         model.removeWorkspace(workspaceRef);
         deletions.delete(workspaceRef);
-        editorQuestions.delete(workspaceRef);
         framesReleased.delete(workspaceRef);
         screenshots.delete(workspaceRef);
         // A card about a workspace that is gone has nothing left to point at.
@@ -1723,19 +1738,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             framesReleased.add(workspaceRef);
             scheduleUpdate();
             return { result: {} };
-          },
-        },
-      },
-      [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
-        // A question open in a workspace's editor (ask, select, input,
-        // pick-file — a toast is no modal): its sidebar row shows a question
-        // mark until the last one is answered or dismissed.
-        modal: {
-          handler: async (ctx): Promise<void> => {
-            if (ctx.source !== "editor") return;
-            if (ctx.open) editorQuestions.add(ctx.workspaceRef);
-            else editorQuestions.delete(ctx.workspaceRef);
-            scheduleUpdate();
           },
         },
       },

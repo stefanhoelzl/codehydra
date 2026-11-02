@@ -34,6 +34,7 @@ import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { SupportedPlatform } from "../boundaries/platform/platform-info";
 import type { Logger } from "../boundaries/platform/logging";
 import type { ProjectConfig } from "../shared/types/project";
+import { PROJECT_COLOR_COUNT } from "../shared/ui-state";
 import { ProjectStoreError, getErrorMessage } from "../shared/errors/service-errors";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import {
@@ -76,6 +77,27 @@ export interface LocalProject {
   readonly id: ProjectId;
   readonly name: string;
   readonly path: Path;
+  /** Index into the sidebar's badge palette (see assignColor). */
+  readonly color: number;
+}
+
+/** A project record as stored: the config plus the badge color it was given, if any. */
+export interface StoredProject extends ProjectConfig {
+  readonly color?: number;
+}
+
+/**
+ * The badge color for a project being opened: the one its record keeps, unless
+ * another open project has it by now; else the lowest index none has. With
+ * every color taken, they repeat in order.
+ */
+export function assignColor(kept: number | undefined, taken: readonly number[]): number {
+  const isFree = (index: number): boolean => !taken.includes(index);
+  if (kept !== undefined && kept >= 0 && kept < PROJECT_COLOR_COUNT && isFree(kept)) return kept;
+  for (let index = 0; index < PROJECT_COLOR_COUNT; index++) {
+    if (isFree(index)) return index;
+  }
+  return taken.length % PROJECT_COLOR_COUNT;
 }
 
 /**
@@ -175,22 +197,28 @@ function recordDirName(dirs: StoreDirs, projectPath: string, remoteUrl?: string)
 }
 
 /**
- * Parse one record. A managed project's record holds only its URL and the
- * path is derived from it; a local project's holds its path.
+ * Parse one record. A managed project's record holds its URL and the path is
+ * derived from it; a local project's holds its path. Either may hold the badge
+ * color it was given; a record without one (or with a bad one) gets one at open.
  */
-function parseRecord(dirs: StoreDirs, content: string): ProjectConfig | undefined {
+function parseRecord(dirs: StoreDirs, content: string): StoredProject | undefined {
   const parsed: unknown = JSON.parse(content);
   if (typeof parsed !== "object" || parsed === null) return undefined;
-  const record = parsed as { path?: unknown; remoteUrl?: unknown };
+  const record = parsed as { path?: unknown; remoteUrl?: unknown; color?: unknown };
   const remoteUrl = typeof record.remoteUrl === "string" ? record.remoteUrl : undefined;
+  const color = Number.isInteger(record.color) ? (record.color as number) : undefined;
+  const extras = {
+    ...(remoteUrl !== undefined && { remoteUrl }),
+    ...(color !== undefined && { color }),
+  };
 
   if (typeof record.path === "string") {
     const path = projectPathSchema.parse(new Path(record.path).toString());
-    return { path, ...(remoteUrl !== undefined && { remoteUrl }) };
+    return { path, ...extras };
   }
   if (remoteUrl !== undefined) {
     const path = projectPathSchema.parse(managedClonePath(dirs.remotesDir, remoteUrl).toString());
-    return { path, remoteUrl };
+    return { path, ...extras };
   }
   return undefined;
 }
@@ -199,16 +227,20 @@ export async function saveProject(
   fs: ProjectFs,
   dirs: StoreDirs,
   projectPath: ProjectPath,
-  remoteUrl?: string
+  remoteUrl?: string,
+  color?: number
 ): Promise<void> {
   const normalizedPath = projectPathSchema.parse(new Path(projectPath).toString());
   const managed = remoteUrl !== undefined && isManaged(dirs, normalizedPath, remoteUrl);
   const projectDir = new Path(dirs.projectsDir, recordDirName(dirs, normalizedPath, remoteUrl));
   const configPath = new Path(projectDir, "config.json");
 
-  const record = managed
-    ? { remoteUrl }
-    : { path: normalizedPath, ...(remoteUrl !== undefined && { remoteUrl }) };
+  const record = {
+    ...(managed
+      ? { remoteUrl }
+      : { path: normalizedPath, ...(remoteUrl !== undefined && { remoteUrl }) }),
+    ...(color !== undefined && { color }),
+  };
 
   try {
     await fs.mkdir(projectDir);
@@ -221,8 +253,8 @@ export async function saveProject(
 export async function loadAllProjects(
   fs: ProjectFs,
   dirs: StoreDirs
-): Promise<readonly ProjectConfig[]> {
-  const results: ProjectConfig[] = [];
+): Promise<readonly StoredProject[]> {
+  const results: StoredProject[] = [];
 
   let entries;
   try {
@@ -251,7 +283,7 @@ async function getProjectConfig(
   fs: ProjectFs,
   dirs: StoreDirs,
   projectPath: string
-): Promise<ProjectConfig | undefined> {
+): Promise<StoredProject | undefined> {
   const normalizedPath = new Path(projectPath).toString();
 
   // First, try the path-hashed location (every local project)
@@ -325,6 +357,8 @@ export interface LocalProjectModule extends IntentModule {
    * know whether each one was cloned (named by its origin) or is a checkout.
    */
   projectRefs(): Promise<ReadonlyMap<string, ProjectRef>>;
+  /** An open project's badge color (see assignColor); undefined if it is not open. */
+  projectColor(projectRef: ProjectRef): number | undefined;
 }
 
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalProjectModule {
@@ -369,9 +403,17 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
     return refs;
   }
 
+  function projectColor(projectRef: ProjectRef): number | undefined {
+    for (const project of projects.values()) {
+      if (project.ref === projectRef) return project.color;
+    }
+    return undefined;
+  }
+
   return {
     name: "local-project",
     projectRefs,
+    projectColor,
     hooks: defineHooks({
       // resolve-project -> resolve (single registration replaces 5 per-operation hooks)
       [RESOLVE_PROJECT_OPERATION_ID]: {
@@ -498,19 +540,37 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
               return { result: { projectId, name: projectPath.basename, alreadyOpen: true } };
             }
 
-            // Persist to store if new
             const existingConfig = await getProjectConfig(fs, dirs(), projectPathStr);
-            if (!existingConfig) {
-              await saveProject(fs, dirs(), projectPathStr, remoteUrl);
-            }
-
-            // Add to internal state
+            // A record keeps its badge color while no other open project has it.
+            // Picked and added to internal state with no await in between:
+            // startup opens the saved projects in parallel.
+            const color = assignColor(
+              existingConfig?.color,
+              [...projects.values()].map((project) => project.color)
+            );
             projects.set(normalizedKey, {
               ref: projectRef,
               id: projectId,
               name: projectPath.basename,
               path: projectPath,
+              color,
             });
+
+            // Persist to store if new, or if its color changed
+            if (!existingConfig || existingConfig.color !== color) {
+              try {
+                await saveProject(
+                  fs,
+                  dirs(),
+                  projectPathStr,
+                  existingConfig?.remoteUrl ?? remoteUrl,
+                  color
+                );
+              } catch (error: unknown) {
+                projects.delete(normalizedKey);
+                throw error;
+              }
+            }
 
             return { result: { projectId, name: projectPath.basename } };
           },

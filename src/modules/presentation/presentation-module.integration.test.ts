@@ -14,7 +14,6 @@
  *   presenter, so a shared bug cannot hide in both.
  */
 
-import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../../intents/vscode-modal-changed";
 import { describe, it, expect, vi } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
@@ -95,6 +94,7 @@ import {
 } from "../../intents/show-notification";
 import { projPath, wsPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import type { ProjectPath, ProjectRef } from "../../intents/contract";
 
 // =============================================================================
 // Test setup helpers
@@ -116,6 +116,7 @@ function createDeps() {
   // mock provides onFromUI + __emitFromUI for driving inbound ui:events.
   const sendToUI = vi.fn<(channel: string, ...args: unknown[]) => void>();
   const viewManager = createMockViewManager({ overrides: { sendToUI } });
+  const projectColors = new Map<ProjectRef, number>();
   return {
     loggingService: createMockLogging(),
     viewManager,
@@ -139,6 +140,9 @@ function createDeps() {
     sidebarWidthConfig: createMockAccessor<number>("sidebar.width", SIDEBAR_DEFAULT_WIDTH),
     configService: createMockConfig(),
     stateService: createMockStateService(),
+    /** Badge colors by project ref, as the local-project module would hand them out. */
+    projectColors,
+    projectColor: (projectRef: ProjectRef) => projectColors.get(projectRef),
   };
 }
 
@@ -331,9 +335,13 @@ function switchedPayload(workspace: Workspace): unknown {
 const BETA_ID = "beta-87654321" as ProjectId;
 
 /** Open a second project "beta" with a single workspace "b". */
-async function openBeta(module: IntentModule, options: { hibernated: boolean }): Promise<void> {
+async function openBeta(
+  module: IntentModule,
+  options: { hibernated: boolean; startupPath?: ProjectPath }
+): Promise<void> {
   const betaRef = projectRefFor(projPath("/projects/beta"));
   await emit(module, EVENT_PROJECT_OPENED, {
+    ...(options.startupPath !== undefined && { path: options.startupPath }),
     project: {
       ref: betaRef,
       id: BETA_ID,
@@ -566,6 +574,7 @@ describe("PresentationModule - ui:state snapshots", () => {
             name: "alpha",
             title: PROJECT_PATH,
             remote: false,
+            colorIndex: 0,
             workspaces: [
               {
                 key: keyOf("main"),
@@ -1037,6 +1046,16 @@ describe("PresentationModule - ui:state snapshots", () => {
     });
     await flush();
     expect(module.deletionProgress(ref)).toBeUndefined();
+  });
+
+  it("a project row carries the badge color its project was given", async () => {
+    const deps = createDeps();
+    deps.projectColors.set(PROJECT_REF, 7);
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("feat")]) });
+    await flush();
+
+    expect(lastSnapshot(deps).sidebar.projects[0]!.colorIndex).toBe(7);
   });
 
   it("agent status updates land inline on the row", async () => {
@@ -1574,34 +1593,6 @@ describe("PresentationModule - sidebar resize", () => {
     await change("tags.wakeup", JSON.stringify({ label: "x" }));
     await flush();
     expect(row().tags.map((t) => t.name)).toEqual(["review"]);
-  });
-
-  it("marks a row while a question is open in its editor (not for a sidebar card)", async () => {
-    const deps = createDeps();
-    const module = await startModule(deps);
-    const workspace = makeWorkspace("a");
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
-    const row = () => lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
-    const modal = (source: "editor" | "sidebar", open: boolean) =>
-      module.hooks![VSCODE_MODAL_CHANGED_OPERATION_ID]!.modal!.handler({
-        workspaceRef: workspace.ref,
-        source,
-        open,
-      } as never);
-    await flush();
-    expect(row().editorQuestion).toBeUndefined();
-
-    await modal("sidebar", true);
-    await flush();
-    expect(row().editorQuestion).toBeUndefined();
-
-    await modal("editor", true);
-    await flush();
-    expect(row().editorQuestion).toBe(true);
-
-    await modal("editor", false);
-    await flush();
-    expect(row().editorQuestion).toBeUndefined();
   });
 
   it("set-hibernated-view sets one project's view; hibernating folds it away", async () => {
@@ -2887,6 +2878,39 @@ describe("PresentationModule - shortcut navigation", () => {
     ]);
   });
 
+  it("c collapses the active project as a header click does, and expands it", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a"], "a");
+    await openBeta(module, { hibernated: false });
+    const betaB = makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "b");
+    const dispatched = recordDispatches(deps);
+    const collapsed = (): boolean[] => lastSnapshot(deps).sidebar.projects.map((p) => p.collapsed);
+
+    await key(module, "c");
+    await flush();
+    expect(collapsed()).toEqual([true, false]);
+    expect(stateValue(deps)).toEqual([PROJECT_REF]);
+    // It moves on to the next expanded project.
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspaceRef: betaB, focus: false } },
+    ]);
+
+    // (The mocked switch does not land: "a" is still active.)
+    await key(module, "c");
+    await flush();
+    expect(collapsed()).toEqual([false, false]);
+    expect(stateValue(deps)).toEqual([]);
+  });
+
+  it("c is a no-op while Find is open", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a"], "a");
+    await key(module, "f");
+    await key(module, "c");
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.collapsed).toBe(false);
+  });
+
   it("t in Find cycles Find's view for every project: manual, all, hidden", async () => {
     const deps = createDeps();
     const module = await withWorkspaces(deps, ["a"], "a");
@@ -4061,6 +4085,64 @@ describe("PresentationModule - startup screen", () => {
     ]);
     // The startup modal gave way to the active workspace's loading panel.
     expect(currentSystemDialog(deps).kind).toBe("panel");
+  });
+
+  it("lands in an expanded project rather than a collapsed one above it", async () => {
+    const deps = createDeps();
+    (deps.stateService.values as Map<string, unknown>).set("sidebar.collapsed-projects", [
+      PROJECT_REF,
+    ]);
+    const dispatched: Array<{ type: string; payload: unknown }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+        if (intent.type === INTENT_GET_ACTIVE_WORKSPACE) return Promise.resolve(null);
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
+    } as unknown as Deps["dispatcher"];
+    const module = await toRunning(deps);
+    for (const path of [PROJECT_PATH, BETA_PATH]) {
+      await trackOpens(module).before({ type: INTENT_OPEN_PROJECT, payload: { path } });
+    }
+
+    // "alpha" (collapsed) sorts above "beta" (expanded).
+    await emit(module, EVENT_PROJECT_OPENED, {
+      project: makeProject([makeWorkspace("a")]),
+      path: PROJECT_PATH,
+    });
+    await openBeta(module, { hibernated: false, startupPath: BETA_PATH });
+    await flush();
+
+    const betaB = makeWorkspaceRef(projectRefFor(BETA_PATH), "b");
+    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: betaB } }]);
+  });
+
+  it("lands in a collapsed project when no expanded one has an awake row", async () => {
+    const deps = createDeps();
+    (deps.stateService.values as Map<string, unknown>).set("sidebar.collapsed-projects", [
+      PROJECT_REF,
+    ]);
+    const dispatched: Array<{ type: string; payload: unknown }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+        if (intent.type === INTENT_GET_ACTIVE_WORKSPACE) return Promise.resolve(null);
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
+    } as unknown as Deps["dispatcher"];
+    const module = await toRunning(deps);
+    for (const path of [PROJECT_PATH, BETA_PATH]) {
+      await trackOpens(module).before({ type: INTENT_OPEN_PROJECT, payload: { path } });
+    }
+
+    const a = makeWorkspace("a");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a]), path: PROJECT_PATH });
+    await openBeta(module, { hibernated: true, startupPath: BETA_PATH });
+    await flush();
+
+    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: a.ref } }]);
   });
 
   it("ignores project:opens outside startup", async () => {

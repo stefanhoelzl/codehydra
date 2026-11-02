@@ -57,15 +57,37 @@ export function rowGlyph(row: UiWorkspaceRow): RowGlyph {
   return row.agent.type === "idle" ? "idle" : "none";
 }
 
+/**
+ * The status part of a row's accessible name ("alpha in web - 1 agent idle").
+ * `hibernated` is the hibernated wording, which carries the row's age.
+ */
+export function rowStatusText(row: UiWorkspaceRow, hibernated: string): string {
+  switch (row.status) {
+    case "creating":
+      return "Creating";
+    case "loading":
+      return "Loading";
+    case "open-failed":
+      return "Failed to open";
+    case "deleting":
+      return "Deleting";
+    case "delete-failed":
+      return "Deletion failed";
+    case "ready":
+      break;
+  }
+  if (row.hibernated) return hibernated;
+  if (row.agent.type === "none") return "No agents running";
+  const { idle, busy } = row.agent.counts;
+  const agents = (count: number): string => `${count} ${count === 1 ? "agent" : "agents"}`;
+  if (busy === 0) return `${agents(idle)} idle`;
+  if (idle === 0) return `${agents(busy)} busy`;
+  return `${idle} idle, ${busy} busy`;
+}
+
 /** An awake, ready row: one that can be hibernated (and counts in the footer summary). */
 export const isAwakeReady = (row: UiWorkspaceRow): boolean =>
   row.status === "ready" && !row.hibernated;
-
-/** No agent running counts as idle, like an idle one: both wait for the user. */
-export const isIdleRow = (row: UiWorkspaceRow): boolean => {
-  const glyph = rowGlyph(row);
-  return glyph === "idle" || glyph === "none";
-};
 
 /** The Find text as matched: trimmed, lower case. Empty outside Find. */
 export function normalizedQuery(view: SidebarView): string {
@@ -109,19 +131,35 @@ export function rowOn(project: UiProjectRow, row: UiWorkspaceRow, view: SidebarV
   if (view.find !== null) {
     return matches(project, row, normalizedQuery(view)) && findShows(view.find.hibernatedView, row);
   }
+  // A collapsed project still shows the workspace you are on (Alt+X, T
+  // collapses the active workspace's project without moving away).
+  if (project.collapsed) return row.active;
   return !isAutomated(row) || automatedShown(project);
 }
 
-/** The project's two folds: its body (expanded) and its hibernated list. */
+/**
+ * The project's folds: whether it is expanded (its header says so), whether
+ * its body is open (expanded, or collapsed around the active row) and its
+ * hibernated list.
+ */
 export function projectFolds(
   project: UiProjectRow,
   view: SidebarView
-): { readonly expanded: boolean; readonly hibernatedOpen: boolean } {
+): {
+  readonly expanded: boolean;
+  readonly bodyOpen: boolean;
+  readonly hibernatedOpen: boolean;
+} {
   if (view.find !== null) {
-    return { expanded: true, hibernatedOpen: view.find.hibernatedView !== "hidden" };
+    return {
+      expanded: true,
+      bodyOpen: true,
+      hibernatedOpen: view.find.hibernatedView !== "hidden",
+    };
   }
   return {
     expanded: !project.collapsed,
+    bodyOpen: !project.collapsed || project.workspaces.some((row) => row.active),
     hibernatedOpen:
       project.hibernatedView !== "hidden" ||
       project.workspaces.some((row) => row.active && row.hibernated),
@@ -131,7 +169,7 @@ export function projectFolds(
 /** The row is out of sight: project collapsed, hibernated list closed, filtered or folded away. */
 export function rowHidden(project: UiProjectRow, row: UiWorkspaceRow, view: SidebarView): boolean {
   const folds = projectFolds(project, view);
-  return !folds.expanded || (row.hibernated && !folds.hibernatedOpen) || !rowOn(project, row, view);
+  return !folds.bodyOpen || (row.hibernated && !folds.hibernatedOpen) || !rowOn(project, row, view);
 }
 
 /** Rows the Find marker walks (in display order). */
@@ -168,46 +206,29 @@ export function rowQuestions(
   return notifications.filter((note) => isQuestion(note) && note.workspace?.key === key).reverse();
 }
 
-/** A project's questions whose rows are out of sight (its header shows a question mark). */
-export function hiddenQuestions(
-  project: UiProjectRow,
-  notifications: readonly UiNotification[],
-  view: SidebarView
-): readonly UiNotification[] {
-  return notifications.filter((note) => {
-    if (!isQuestion(note)) return false;
-    const row = project.workspaces.find((candidate) => candidate.key === note.workspace?.key);
-    return row !== undefined && rowHidden(project, row, view);
-  });
-}
-
-/** A project's rows whose editor holds a question while the row is out of sight. */
-export function hiddenAskingRows(
-  project: UiProjectRow,
-  view: SidebarView
-): readonly UiWorkspaceRow[] {
-  return project.workspaces.filter(
-    (row) => row.editorQuestion === true && rowHidden(project, row, view)
-  );
-}
-
-/** The colors a project's letter badge cycles through, picked by its name. */
-const PROJECT_COLORS = [
-  "#7c6cff",
-  "#0ea5a4",
-  "#e0782f",
-  "#d946ef",
-  "#22c55e",
+/**
+ * The project badge palette (PROJECT_COLOR_COUNT colors, each readable under
+ * the badge's white letter). Main hands out the indices lowest first, so
+ * neighbours in this list are far apart in hue.
+ */
+export const PROJECT_COLORS = [
   "#3b82f6",
+  "#e0782f",
+  "#22c55e",
+  "#d946ef",
+  "#0ea5a4",
   "#ef4444",
-  "#f59e0b",
+  "#7c6cff",
+  "#ca8a04",
+  "#ec4899",
+  "#0891b2",
+  "#65a30d",
+  "#64748b",
 ] as const;
 
-/** A stable color for a project, derived from its name. */
-export function projectColor(name: string): string {
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
-  return PROJECT_COLORS[hash % PROJECT_COLORS.length] ?? PROJECT_COLORS[0];
+/** A project's badge color, from the palette index main assigned it. */
+export function projectColor(colorIndex: number): string {
+  return PROJECT_COLORS[colorIndex % PROJECT_COLORS.length] ?? PROJECT_COLORS[0];
 }
 
 /** The next view the moon button toggles to: open the hibernated list, or close it. */

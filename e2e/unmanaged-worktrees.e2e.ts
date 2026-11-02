@@ -99,7 +99,7 @@ test("stray worktrees stay out of the sidebar unless adopted in the picker", asy
   await launchApp(app(), { agent: currentAgent() });
 
   const restarted = app().uiPage();
-  await expect(restarted.getByRole("button", { name: "New workspace" })).toBeVisible({
+  await expect(restarted.getByRole("button", { name: "New workspace", exact: true })).toBeVisible({
     timeout: 60_000,
   });
   await expect(restarted.getByText("Open existing worktrees?")).toHaveCount(0);

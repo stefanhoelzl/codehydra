@@ -527,6 +527,8 @@ const presentationModule = createPresentationModule({
   sidebarWidthConfig,
   configService,
   stateService,
+  // Built further down; read only once a project is open.
+  projectColor: (projectRef) => localProjectModule.projectColor(projectRef),
   onOpenSettings: () => openSettings(),
   onOpenHelp: () => openHelp(),
   onOpenNewWorkspace: (projectRef, deselecting) => {

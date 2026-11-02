@@ -137,7 +137,7 @@ test("offers to terminate whatever holds the IDE server port, then starts", asyn
     await expect(ui.getByRole("navigation", { name: "Projects" })).toBeVisible({
       timeout: 30_000,
     });
-    await expect(ui.getByRole("button", { name: "New workspace" })).toBeVisible();
+    await expect(ui.getByRole("button", { name: "New workspace", exact: true })).toBeVisible();
   } finally {
     // No-op when the app already killed it; guards the failure paths.
     holder.kill("SIGKILL");

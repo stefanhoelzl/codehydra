@@ -128,19 +128,21 @@ New worktrees are created only under the current root. Discovery also counts wor
 
 **Changing the root.** The settings dialog shows the root read-only (a `SettingsExtraRow` the module contributes); its **Change…** opens the module's dialog, which checks the folder (empty, writable, not inside a project or the data/bundles root), confirms, writes `paths.workspaces-pending` and relaunches. The app:start `migrations` hook runs a pending request on the starting screen before any project opens, without asking; a check problem or a failure offers Retry / Continue with current folder (drops the request) / Quit (keeps it, as a crash does). The migration moves managed clones and nothing else: worktrees stay in place so agents keep their conversations and editors their state, and new worktrees go to the new root. The switch records each old workspaces directory that still holds worktrees (`paths.workspaces-previous`): discovery counts a worktree there as CodeHydra's own on any branch, detached included, the way it counts one under the current root — no tag, so nothing ties ownership to a branch. The switch (`paths.workspaces`, clearing the request) is the commit point: failures before it are undone (copies deleted, `git worktree repair` pointed back); after it they are reported. Earlier versions adopted the worktrees with the `external` tag instead; once (`paths.workspaces-adoptions-converted`), before settling the root, `convert-adoptions.ts` records the directory of every tagged worktree inside a `…/projects/<project>/workspaces/` directory and removes its tag (a picker adoption elsewhere keeps its tag). Path-keyed state (`auto-workspaces`, screenshots) is moved by each owner (`moveProjects`). Earlier releases kept the wanted root in config (`paths.workspaces`) and the one in use in state (`paths.workspaces-current`); the hook carries the latter over, turns a differing former into a request, and resets both. The new folder is recorded with symlinks and junctions resolved, because git reports worktree paths resolved and ownership is a path-prefix test. See `src/modules/workspaces-root/migrate.ts`.
 
+**Badge colors.** Every open project's record (`<dataRoot>/projects/<…>/config.json`) keeps the index of its sidebar badge color. `local-project-module` assigns it at open: the record's own index unless another open project has it, else the lowest free one (`assignColor`; they repeat once all `PROJECT_COLOR_COUNT` are taken). Closing deletes the record, which frees the color. The presenter reads it through `projectColor` into `UiProjectRow.colorIndex`; the palette itself lives in the renderer (`sidebar-model.ts`).
+
 ### Remote Projects (Cloned from URL)
 
 Projects can be created by cloning from a git URL. A "remote" (managed) project is identified by its URL, not by where its clone sits. `<root>` is the workspaces root (the data root by default, see above):
 
 ```
 <root>/remotes/<repo-name>-<url-hash>/<repo-name>/    # The clone (a normal clone) — the project's path
-<dataRoot>/projects/<repo-name>-<url-hash>/config.json # The record: {"remoteUrl": "..."} only
+<dataRoot>/projects/<repo-name>-<url-hash>/config.json # The record: {"remoteUrl": "...", "color": n}
 <root>/projects/<repo-name>-<path-hash>/workspaces/   # Its worktrees, named after the clone path like any project
 ```
 
 **Key differences from local projects:**
 
-- **URL-named record**: the record holds only `remoteUrl`; the path is derived from it (`managedClonePath` in `src/boundaries/platform/paths.ts`), so nothing stored names the clone's location and the clone can move. A record is written this way only when the clone sits exactly where its URL derives; otherwise it keeps `{path, remoteUrl}` under the path-named directory (`src/modules/local-project-module.ts`)
+- **URL-named record**: the record holds `remoteUrl` (and, like every record, the project's badge `color`); the path is derived from it (`managedClonePath` in `src/boundaries/platform/paths.ts`), so nothing stored names the clone's location and the clone can move. A record is written this way only when the clone sits exactly where its URL derives; otherwise it keeps `{path, remoteUrl}` under the path-named directory (`src/modules/local-project-module.ts`)
 - **Ref by origin**: the project's [ref](#refs) uses the normalized origin, not the path
 - **Duplicate detection**: Cloning the same URL returns the existing clone (the clone directory is derived from the normalized URL); a URL that is a path on this machine is refused ("Open the folder instead")
 - **Deletion option**: When closing a remote project, users can optionally delete the clone and its project directories
@@ -208,7 +210,8 @@ component), derived declaratively from the `frames` map of the `UiState` snapsho
   modal lasts only until every startup `project:open` has emitted
   `project:opened` or `project:open-failed` (the presenter tracks them with an
   interceptor; `app:started` ends it at the latest), then lands on the topmost
-  awake row. No view-level load tracking exists.
+  awake row of an expanded project (of a collapsed one only when no expanded
+  project has one). No view-level load tracking exists.
 - **Recovery**: `frame-watchdog-module` has two witnesses for a frame that
   stays mounted but no longer shows a workbench. All workspace iframes share
   one renderer process, and Electron emits no event when a subframe's process

@@ -217,9 +217,8 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Ask the user a question with buttons and wait for the answer.",
     instructions:
-      `${FOR_THE_USER} Shows a dialog in the workspace's editor (its sidebar row shows a ` +
-      "question mark meanwhile), or with sidebar a question card in the workspace's row in " +
-      "CodeHydra's sidebar. A Cancel is always there (the dialog's Cancel button, the card's " +
+      `${FOR_THE_USER} Shows a dialog in the workspace's editor, or with sidebar a question ` +
+      "card in the workspace's row in CodeHydra's sidebar. A Cancel is always there (the dialog's Cancel button, the card's " +
       "X): do not pass one as an option. " +
       "Returns { answer }: the clicked option, or null if cancelled, timed out or the caller " +
       "went away. The workspace shows as waiting on the user while it is open. For free " +

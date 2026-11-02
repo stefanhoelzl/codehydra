@@ -25,8 +25,6 @@
   import { clampSidebarWidthMin } from "@shared/ui-state";
   import { createLogger } from "$lib/logging";
   import {
-    hiddenAskingRows,
-    hiddenQuestions,
     isQuestion,
     markerRows,
     normalizedQuery,
@@ -273,10 +271,27 @@
   /** "/" anywhere outside a text field opens Find. */
   function handleWindowKeydown(event: KeyboardEvent): void {
     if (event.key !== "/" || event.altKey || event.ctrlKey || event.metaKey) return;
-    const tag = document.activeElement?.tagName;
-    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    if (typingInField(event)) return;
     event.preventDefault();
     findInput?.focus();
+  }
+
+  /**
+   * The key goes to a text field. Read from the event's path, not
+   * document.activeElement: a <vscode-textfield> keeps its <input> in a shadow
+   * root, so the active element is the custom element itself.
+   */
+  function typingInField(event: KeyboardEvent): boolean {
+    return event
+      .composedPath()
+      .some(
+        (node) =>
+          node instanceof HTMLElement &&
+          (node.isContentEditable ||
+            node.tagName === "INPUT" ||
+            node.tagName === "SELECT" ||
+            node.tagName === "TEXTAREA")
+      );
   }
 
   // ============ Expansion ============
@@ -435,8 +450,9 @@
     );
   });
 
-  // A question arriving while its row is out of sight: its project's header
-  // bar flashes in the question color three times.
+  // A question card arriving for a row out of sight (a collapsed project, a
+  // folded hibernated list) unfolds it, so the card is never shown nowhere.
+  // Not while Find is open: Find decides what is shown until it ends.
   /** Question ids already seen (not reactive: only this effect reads it). */
   const seenQuestions: Record<string, true> = {};
   let questionsPrimed = false;
@@ -448,7 +464,7 @@
       questionsPrimed = true;
       return;
     }
-    if (!animate) return;
+    if (untrack(() => view.find) !== null) return;
     for (const note of fresh) {
       const project = projects.find((candidate) =>
         candidate.workspaces.some((row) => row.key === note.workspace?.key)
@@ -456,47 +472,9 @@
       if (project === undefined) continue;
       const row = project.workspaces.find((candidate) => candidate.key === note.workspace?.key);
       if (row === undefined || !untrack(() => rowHidden(project, row, view))) continue;
-      void tick().then(() => signal(project.id));
+      untrack(() => revealRow(project, row));
     }
   });
-
-  // Likewise when a question opens in the editor of a workspace whose row is out of sight.
-  let askingBefore: readonly string[] | null = null;
-  $effect(() => {
-    const asking = allRows.filter((row) => row.editorQuestion === true).map((row) => row.key);
-    const before = askingBefore;
-    askingBefore = asking;
-    if (before === null || !animate) return;
-    for (const key of asking) {
-      if (before.includes(key)) continue;
-      const project = projects.find((candidate) =>
-        candidate.workspaces.some((row) => row.key === key)
-      );
-      const row = project?.workspaces.find((candidate) => candidate.key === key);
-      if (project === undefined || row === undefined) continue;
-      if (!untrack(() => rowHidden(project, row, view))) continue;
-      void tick().then(() => signal(project.id));
-    }
-  });
-
-  function signal(projectId: string): void {
-    const header = listEl?.querySelector<HTMLElement>(
-      `.proj[data-project-id="${CSS.escape(projectId)}"] .proj-h`
-    );
-    if (!header) return;
-    const base = getComputedStyle(header).backgroundColor;
-    const ask = getComputedStyle(document.documentElement).getPropertyValue("--ch-sb-ask").trim();
-    const on = `color-mix(in srgb, ${ask} 45%, ${base})`;
-    const options = { duration: 1600, easing: "ease-in-out" };
-    header.animate(
-      [base, on, base, on, base, on, base].map((color) => ({ backgroundColor: color })),
-      options
-    );
-    header.querySelector(".hdr-note")?.animate(
-      [1, 1.35, 1, 1.35, 1, 1.35, 1].map((k) => ({ transform: `scale(${k})` })),
-      options
-    );
-  }
 
   // ============ Gestures ============
 
@@ -536,18 +514,8 @@
     api.emitEvent({ kind: "toggle-project-collapsed", projectId: project.id });
   }
 
-  /**
-   * Bring an out-of-sight question into view — the newest card, else a row whose
-   * editor asks: expand, open the hibernated list.
-   */
-  function revealQuestion(project: UiProjectRow): void {
-    const note = hiddenQuestions(project, notifications, view).at(-1);
-    const row =
-      note === undefined
-        ? hiddenAskingRows(project, view)[0]
-        : project.workspaces.find((candidate) => candidate.key === note.workspace?.key);
-    if (row === undefined) return;
-    if (view.find !== null) endFind();
+  /** Bring a row and its question card into view: expand, open the hibernated list. */
+  function revealRow(project: UiProjectRow, row: UiWorkspaceRow): void {
     if (project.collapsed) toggleCollapsed(project);
     const group = rowGroup(row);
     if (group === "automated") setHibernatedView(project, "all");
@@ -559,7 +527,6 @@
         const el = listEl?.querySelector(`.ws[data-key="${CSS.escape(row.key)}"]`);
         el?.scrollIntoView({ block: "nearest", behavior: animate ? "smooth" : "auto" });
         if (animate && el) highlight(el.querySelector(".note") ?? el);
-        // A row that only asks in its editor: going there is what answers it.
       },
       animate ? 330 : 0
     );
@@ -581,26 +548,42 @@
   const bottomNotes = $derived([...notifications].filter((note) => !isQuestion(note)).reverse());
   const summary = $derived({
     busy: allRows.filter((row) => rowGlyph(row) === "busy").length,
+    loading: allRows.filter((row) => rowGlyph(row) === "pending").length,
     idle: allRows.filter((row) => rowGlyph(row) === "idle").length,
-    hibernated: allRows.filter((row) => row.status === "ready" && row.hibernated).length,
+    noAgent: allRows.filter((row) => rowGlyph(row) === "none").length,
+    hibernated: allRows.filter((row) => row.status === "ready" && rowGroup(row) === "hibernated")
+      .length,
+    automated: allRows.filter((row) => row.status === "ready" && rowGroup(row) === "automated")
+      .length,
   });
+  /** The footer summary names only the counts it shows: the non-zero ones. */
+  const summaryTitle = $derived(
+    [
+      [summary.busy, "working"],
+      [summary.loading, "loading"],
+      [summary.idle, "waiting for you"],
+      [summary.noAgent, "no agent"],
+      [summary.hibernated, "hibernated"],
+      [summary.automated, "automated"],
+    ]
+      .filter(([count]) => count !== 0)
+      .map(([count, label]) => `${count} ${label}`)
+      .join(" · ")
+  );
 
   /** The rail: per expanded project its awake rows (and the active one); a dot per question. */
   const railGroups = $derived(
     projects.map((project) => {
-      const shown = project.collapsed
-        ? []
-        : project.workspaces.filter((row) => !row.hibernated || row.active);
+      const shown = project.workspaces.filter((row) =>
+        project.collapsed ? row.active : !row.hibernated || row.active
+      );
       const offRail = notifications.filter(
         (note) =>
           isQuestion(note) &&
           project.workspaces.some((row) => row.key === note.workspace?.key) &&
           !shown.some((row) => row.key === note.workspace?.key)
       );
-      const askingOffRail = project.workspaces.some(
-        (row) => row.editorQuestion === true && !shown.includes(row)
-      );
-      return { project, shown, offRail: offRail.length > 0 || askingOffRail };
+      return { project, shown, offRail: offRail.length > 0 };
     })
   );
 
@@ -673,7 +656,6 @@
               {motion}
               onToggleCollapsed={toggleCollapsed}
               onSetHibernatedView={setHibernatedView}
-              onRevealQuestion={revealQuestion}
               onCloseProject={(p) => api.emitEvent({ kind: "close-project", projectId: p.id })}
               onNewWorkspace={(p) => {
                 if (view.find !== null) endFind();
@@ -699,10 +681,17 @@
     </div>
 
     <div class="sb-foot">
-      <div class="sum" title="working · waiting for you · hibernated">
-        <i><span class="ring"></span>{summary.busy}</i>
-        <i><span class="d"></span>{summary.idle}</i>
-        <i><SidebarIcon name="moon" size={10} />{summary.hibernated}</i>
+      <div class="sum" title={summaryTitle || undefined}>
+        {#if summary.busy > 0}<i><span class="ring busy"></span>{summary.busy}</i>{/if}
+        {#if summary.loading > 0}<i class="loading"><span class="ring"></span>{summary.loading}</i
+          >{/if}
+        {#if summary.idle > 0}<i><span class="d"></span>{summary.idle}</i>{/if}
+        {#if summary.noAgent > 0}<i class="none"><span class="n"></span>{summary.noAgent}</i>{/if}
+        {#if summary.hibernated > 0}<i><SidebarIcon name="moon" size={10} />{summary.hibernated}</i
+          >{/if}
+        {#if summary.automated > 0}<i class="auto"
+            ><SidebarIcon name="alarm" size={10} />{summary.automated}</i
+          >{/if}
       </div>
       <button
         type="button"
@@ -748,14 +737,14 @@
           <span class="r-ws"
             ><span
               class="mono-av"
-              style:--pc={projectColor(group.project.name)}
+              style:--pc={projectColor(group.project.colorIndex)}
               title={group.project.name}>{group.project.name.slice(0, 1).toUpperCase()}</span
             >{#if group.offRail}<span class="rn"></span>{/if}</span
           >
           {#each group.shown as row (row.key)}
             {@const glyph = rowGlyph(row)}
             <div class="r-ws" class:active={row.active}>
-              {#if glyph === "busy"}<span class="ring"></span>
+              {#if glyph === "busy"}<span class="ring busy"></span>
               {:else if glyph === "idle"}<span class="dot idle"></span>
               {:else if glyph === "none"}<span class="dot none"></span>
               {:else if glyph === "pending"}<span class="ring pending"></span>
@@ -763,9 +752,7 @@
                   ><SidebarIcon name="warn" /></span
                 >
               {:else}<span class="moon"><SidebarIcon name="moon" /></span>{/if}
-              {#if rowQuestions(notifications, row.key).length > 0 || row.editorQuestion === true}<span
-                  class="rn"
-                ></span>{/if}
+              {#if rowQuestions(notifications, row.key).length > 0}<span class="rn"></span>{/if}
             </div>
           {/each}
         </div>
@@ -868,8 +855,19 @@
     z-index: 30;
     box-shadow: var(--ch-sb-peek-shadow);
   }
+  /* Collapsed, the card's content stays laid out at its full width but clipped
+     away and click-through, so the rows remain there for assistive tech (the
+     rail is aria-hidden) — hidden, not removed. */
   .sb.collapsed > :not(.rail) {
-    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: calc(var(--ch-sidebar-width, 288px) - 16px);
+    clip-path: inset(0 0 0 100%);
+    pointer-events: none;
+  }
+  .sb.collapsed > .sb-body {
+    bottom: 0;
   }
   .sb:not(.collapsed) > .rail {
     display: none;
@@ -1029,7 +1027,20 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
+  }
+  .sum .auto {
+    color: var(--ch-sb-auto);
+  }
+  .sum .d {
     background: var(--ch-sb-idle);
+  }
+  /* No agent: the row's hollow dot, at the summary's size. */
+  .sum .n {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    box-sizing: border-box;
+    border: 1.5px solid var(--ch-sb-fg-3);
   }
   .vsep {
     width: 1px;
@@ -1141,9 +1152,9 @@
     animation: spin 0.9s linear infinite;
     display: block;
   }
-  .ring.pending {
-    border: 2px dotted var(--ch-sb-fg-3);
-    animation-duration: 2.4s;
+  .ring.busy {
+    border-color: var(--ch-sb-busy-track);
+    border-top-color: var(--ch-sb-busy);
   }
   @keyframes spin {
     to {

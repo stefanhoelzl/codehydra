@@ -8,7 +8,12 @@
 -->
 <script lang="ts">
   import type { UiNotification, UiWorkspaceRow } from "@shared/ui-state";
-  import { isAutomated, rowGlyph, type RowAction } from "$lib/utils/sidebar-model.js";
+  import {
+    isAutomated,
+    rowGlyph,
+    rowStatusText,
+    type RowAction,
+  } from "$lib/utils/sidebar-model.js";
   import { describeHibernation } from "$lib/utils/hibernation-age.js";
   import { minuteNow } from "$lib/utils/minute-clock.svelte.js";
   import SidebarIcon from "./SidebarIcon.svelte";
@@ -18,6 +23,8 @@
 
   interface Props {
     row: UiWorkspaceRow;
+    /** The project's name, for the row's accessible name. */
+    projectName: string;
     /** Normalized Find text (marks matches); empty outside Find. */
     query: string;
     /** The Find marker is on this row. */
@@ -30,7 +37,8 @@
     onAction: (action: RowAction, row: UiWorkspaceRow) => void;
   }
 
-  const { row, query, selected, questions, shortcut, animate, onAction }: Props = $props();
+  const { row, projectName, query, selected, questions, shortcut, animate, onAction }: Props =
+    $props();
 
   const glyph = $derived(rowGlyph(row));
   const automated = $derived(isAutomated(row));
@@ -44,6 +52,16 @@
       : null
   );
   const meta = $derived(row.hibernated ? (age?.short ?? "") : glyph === "busy" ? "working" : "");
+  // The status cell is the row's button for assistive tech (a click anywhere in
+  // the row switches, see ProjectCard): "alpha in web - 1 agent idle".
+  const accessibleName = $derived(
+    `${row.name} in ${projectName} - ${rowStatusText(
+      row,
+      age === null
+        ? "Hibernated - click to wake"
+        : `Hibernated ${age.relative} (${age.date}) - click to wake`
+    )}`
+  );
   const pendingText = $derived(
     row.status === "creating"
       ? "Creating worktree…"
@@ -84,9 +102,14 @@
   title={tip}
   aria-current={row.active ? "true" : undefined}
 >
-  <div class="st">
+  <button
+    type="button"
+    class="st"
+    aria-label={accessibleName}
+    aria-current={row.active ? "true" : undefined}
+  >
     {#if glyph === "busy"}
-      <span class="ring" title="Agent working"></span>
+      <span class="ring busy" title="Agent working"></span>
     {:else if glyph === "idle"}
       <span class="dot idle" title="Agent waiting for you"></span>
     {:else if glyph === "none"}
@@ -98,7 +121,7 @@
     {:else}
       <span class="moon"><SidebarIcon name="moon" /></span>
     {/if}
-  </div>
+  </button>
   <div class="txt">
     <span class="title"><Highlighted text={label} {query} /></span>
     {#if pendingText !== null}
@@ -123,11 +146,6 @@
       </span>
     {/if}
   </div>
-  {#if row.editorQuestion === true}
-    <span class="ask" title="A question waits for you in this workspace's editor"
-      ><SidebarIcon name="help" /></span
-    >
-  {/if}
   {#if shortcut !== null}
     <span class="meta"><kbd>{shortcut}</kbd></span>
   {:else}
@@ -219,6 +237,13 @@
     display: grid;
     place-items: center;
     flex: none;
+    /* A button for assistive tech; it looks like the bare glyph. */
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: inherit;
   }
   .txt {
     flex: 1;
@@ -262,20 +287,6 @@
   .ws.idle .meta {
     color: var(--ch-sb-idle);
   }
-  .ask {
-    display: grid;
-    place-items: center;
-    height: 18px;
-    color: var(--ch-sb-ask);
-    flex: none;
-  }
-  .ask :global(.sb-icon) {
-    width: 13px;
-    height: 13px;
-  }
-  .ws:hover .ask {
-    visibility: hidden;
-  }
   .hover-acts {
     position: absolute;
     right: 6px;
@@ -314,9 +325,10 @@
   .ws.failed .sub {
     color: var(--ch-sb-danger);
   }
+  /* Dimmed, but still a click target: it opens the removal panel, where a
+     hanging hook can be cancelled. */
   .ws.deleting {
     opacity: 0.5;
-    pointer-events: none;
   }
   .ws.hibernated.auto .title,
   .ws.hibernated.auto .moon,
@@ -359,9 +371,9 @@
     display: block;
     box-sizing: border-box;
   }
-  .ring.pending {
-    border: 2px dotted var(--ch-sb-fg-3);
-    animation-duration: 2.4s;
+  .ring.busy {
+    border-color: var(--ch-sb-busy-track);
+    border-top-color: var(--ch-sb-busy);
   }
   @keyframes spin {
     to {

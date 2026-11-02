@@ -945,10 +945,8 @@ $ ch ws pick-file "Screenshot" --filters '{"Images":["png"]}' --start ./docs
   (`ui:cancel`); a dialog and a file dialog cannot be closed from code and stay until
   the user dismisses them — that late answer goes nowhere.
 - **Waiting on the user.** While a question is open the workspace reads idle
-  (`vscode:modal-changed`, `source: "editor"` for the editor's, `"sidebar"` for a card).
-  While an editor question is open the sidebar also marks the workspace's row with a
-  question mark (a toast is not a question and marks nothing).
-  Only an editor modal also holds back the terminal focus.
+  (`vscode:modal-changed`, `source: "editor"` for the editor's, `"sidebar"` for a card;
+  a toast is not a question). Only an editor modal also holds back the terminal focus.
 - `save` takes neither `many` nor `folders` (exit `2`).
 
 ### Agent messages
