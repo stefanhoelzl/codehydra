@@ -35,6 +35,28 @@ describe("ShortcutOverlay component", () => {
     });
   });
 
+  describe("C hint", () => {
+    const hint = (activeCollapsed: boolean | null): string | undefined => {
+      const { container, unmount } = render(ShortcutOverlay, {
+        props: { ...defaultProps, activeCollapsed },
+      });
+      const el = [...container.querySelectorAll(".shortcut-hint")].find(
+        (span) => span.querySelector("vscode-badge")?.textContent === "C"
+      );
+      const text = el?.classList.contains("shortcut-hint--hidden")
+        ? undefined
+        : el?.textContent?.replace("C", "").trim();
+      unmount();
+      return text;
+    };
+
+    it("offers to collapse or expand the active project, and hides without one", () => {
+      expect(hint(false)).toBe("Collapse project");
+      expect(hint(true)).toBe("Expand project");
+      expect(hint(null)).toBeUndefined();
+    });
+  });
+
   describe("accessibility", () => {
     it("should-have-role-status-attribute: Has role=status", () => {
       render(ShortcutOverlay, { props: { active: false } });

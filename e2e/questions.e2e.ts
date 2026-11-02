@@ -131,11 +131,12 @@ test("ask --sidebar puts the question on a card and answers the click", async ()
     "--sidebar",
   ]);
 
+  // A question card asks for an answer: a dialog, not a status.
   const card = app()
     .uiPage()
-    .getByRole("status", { name: /^Ship it\?/ });
+    .getByRole("dialog", { name: /^Ship it\?/ });
   await expect(card).toContainText("main is green", { timeout: 30_000 });
-  await card.locator("vscode-button", { hasText: "Ship" }).click();
+  await card.getByRole("button", { name: "Ship", exact: true }).click();
 
   expect(json(await answer)).toEqual({ answer: "Ship" });
   await expect(card).toHaveCount(0);

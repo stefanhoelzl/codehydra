@@ -225,6 +225,8 @@ export interface StartupSurfaceDeps {
   readonly scheduleUpdate: () => void;
   /** Every row in sidebar order (the startup screen ends on the topmost awake one). */
   readonly rows: () => readonly RowEntry[];
+  /** Whether a project's card is collapsed (the landing prefers an expanded project). */
+  readonly collapsed: (project: RowEntry["project"]) => boolean;
   /** Run a failed open again (the failed-open panel's Retry). */
   readonly retryOpen: (workspaceRef: WorkspaceRef) => void;
   /** The interactive remove flow (the failed-open panel's Delete). */
@@ -453,15 +455,17 @@ export function createStartupSurface(deps: StartupSurfaceDeps): StartupSurface {
   }
 
   /**
-   * Land on the topmost awake row, then hand the main view to the normal
-   * logic. Projects announce themselves in whatever order their discovery
-   * finishes, and each lands on its first workspace when nothing is active —
-   * so the one active now is whichever project was quickest. Every row is
-   * known here, which makes the choice the same on every start.
+   * Land on the topmost awake row of an expanded project (of a collapsed one
+   * only when no expanded project has one), then hand the main view to the
+   * normal logic. Projects announce themselves in whatever order their
+   * discovery finishes, and each lands on its first workspace when nothing is
+   * active — so the one active now is whichever project was quickest. Every
+   * row is known here, which makes the choice the same on every start.
    */
   async function endStartup(): Promise<void> {
     if (phase !== "running") return;
-    const top = deps.rows().find((entry) => !entry.workspace.hibernated);
+    const awake = deps.rows().filter((entry) => !entry.workspace.hibernated);
+    const top = awake.find((entry) => !deps.collapsed(entry.project)) ?? awake[0];
     if (top !== undefined && top.workspace.phase !== "creating" && !top.row.active) {
       try {
         await deps.dispatcher.dispatch<SwitchWorkspaceIntent>({

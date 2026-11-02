@@ -40,6 +40,8 @@ export interface ShortcutNavigationDeps {
    * open; else the active workspace's project's.
    */
   readonly cycleHibernatedView: () => void;
+  /** Collapse or expand the active workspace's project, as a header click does (c key). */
+  readonly toggleActiveCollapsed: () => void;
   /** Open the sidebar's Find field (f key). */
   readonly openFind: () => void;
   readonly toggleSidebarMode: () => void;
@@ -185,6 +187,9 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
         break;
       case "t":
         deps.cycleHibernatedView();
+        break;
+      case "c":
+        deps.toggleActiveCollapsed();
         break;
       case "f":
         deps.openFind();

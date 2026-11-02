@@ -621,7 +621,7 @@ export async function createWorkspace(driver: AppDriver, name: string): Promise<
   const panel = ui.getByRole("region", { name: "New workspace" });
   if (!(await panel.isVisible())) {
     await expandSidebar(ui);
-    await ui.getByRole("button", { name: "New workspace" }).click();
+    await ui.getByRole("button", { name: "New workspace", exact: true }).click();
     await expect(panel).toBeVisible();
     await collapseSidebar(ui);
   }
@@ -675,12 +675,9 @@ export function workspaceRow(ui: Page, name: string): Locator {
 /** Remove a workspace through the sidebar, confirming the dialog. */
 export async function removeWorkspace(ui: Page, name: string): Promise<void> {
   await expandSidebar(ui);
-  // The project's <li> also *contains* this workspace's row, so the filter matches
-  // both. The workspace's own <li> is the deeper (later) one.
-  const row = ui
-    .getByRole("listitem")
-    .filter({ has: workspaceRow(ui, name) })
-    .last();
+  const row = ui.locator("nav.sidebar .ws").filter({ has: workspaceRow(ui, name) });
+  // The hover actions only show while the pointer is on the row.
+  await row.hover();
   await row.getByRole("button", { name: "Remove workspace" }).click();
 
   const dialog = ui.getByRole("dialog", { name: "Remove Workspace" });

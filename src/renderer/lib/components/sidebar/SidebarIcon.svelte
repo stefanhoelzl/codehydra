@@ -18,6 +18,7 @@
     | "branch"
     | "chev"
     | "moon"
+    | "alarm"
     | "cloud"
     | "info"
     | "xcircle"
@@ -79,6 +80,10 @@
     <path d="M6 4l4 4-4 4" />
   {:else if name === "moon"}
     <path d="M12.8 9.8A5.2 5.2 0 0 1 6.2 3.2a5.2 5.2 0 1 0 6.6 6.6z" />
+  {:else if name === "alarm"}
+    <circle cx="8" cy="8.8" r="5" /><path
+      d="M8 6.3v2.6l1.7 1.1M2.4 4.2 4.4 2.4M13.6 4.2l-2-1.8M4.4 13.2l-1 1.2M11.6 13.2l1 1.2"
+    />
   {:else if name === "cloud"}
     <path d="M4.6 12.5h6.9a3 3 0 0 0 .3-6 4 4 0 0 0-7.6.9 2.6 2.6 0 0 0 .4 5.1z" />
   {:else if name === "info"}

@@ -1,27 +1,25 @@
 <!--
   ProjectCard.svelte
 
-  One project: a header bar (letter badge, name, hibernated moon or the
-  collapsed counts, a question mark for questions out of sight, close and +)
-  over its rows. Every row is always in the page and folds open or closed, so
-  collapsing, opening the hibernated list or entering Find animates.
+  One project: a header bar (letter badge, name, hibernated/automated counts
+  or the collapsed counts, close and +) over its rows. Every row is always in
+  the page and folds open or closed, so collapsing, opening the hibernated list
+  or entering Find animates.
 
   Clicks anywhere in the card are handled here, in one place: a click that is
-  not on the moon, the "Show automated workspaces" item or the question mark
-  folds the hibernated list away again.
+  not on the hibernated button or the "Show automated workspaces" item folds
+  the hibernated list away again.
 -->
 <script lang="ts">
   import type { UiNotification, UiProjectRow, UiWorkspaceRow } from "@shared/ui-state";
   import {
     automatedShown,
-    hiddenAskingRows,
-    hiddenQuestions,
-    isIdleRow,
     projectColor,
     projectFolds,
     rowGlyph,
     rowGroup,
     rowOn,
+    rowHidden,
     rowQuestions,
     type RowAction,
     type SidebarView,
@@ -46,7 +44,6 @@
     motion: RowMotion;
     onToggleCollapsed: (project: UiProjectRow) => void;
     onSetHibernatedView: (project: UiProjectRow, view: UiProjectRow["hibernatedView"]) => void;
-    onRevealQuestion: (project: UiProjectRow) => void;
     onCloseProject: (project: UiProjectRow) => void;
     onNewWorkspace: (project: UiProjectRow) => void;
     onRowClick: (row: UiWorkspaceRow) => void;
@@ -64,7 +61,6 @@
     motion,
     onToggleCollapsed,
     onSetHibernatedView,
-    onRevealQuestion,
     onCloseProject,
     onNewWorkspace,
     onRowClick,
@@ -85,26 +81,23 @@
   const automated = $derived(project.workspaces.filter((row) => rowGroup(row) === "automated"));
   const awake = $derived(project.workspaces.filter((row) => rowGroup(row) === "awake"));
   const on = (row: UiWorkspaceRow): boolean => rowOn(project, row, view);
-  const menuOn = $derived(!finding && automated.length > 0 && !automatedShown(project));
+  const menuOn = $derived(
+    !finding && folds.expanded && automated.length > 0 && !automatedShown(project)
+  );
   const delimOn = $derived(([...hibernated, ...automated].some(on) || menuOn) && awake.some(on));
   const running = $derived(project.workspaces.filter((row) => rowGlyph(row) === "busy").length);
-  const idle = $derived(project.workspaces.filter(isIdleRow).length);
-  /** Questions out of sight: cards in hidden rows, then hidden rows whose editor asks. */
-  const questionsOutOfSight = $derived([
-    ...hiddenQuestions(project, notifications, view).map((note) => note.config.title),
-    ...hiddenAskingRows(project, view).map(
-      (row) => `A question in ${row.title ?? row.name}'s editor`
-    ),
-  ]);
+  // Only an idle agent, as the row's green dot and the footer count it: a
+  // workspace with no agent (yet, e.g. during startup) is not waiting for you.
+  const idle = $derived(project.workspaces.filter((row) => rowGlyph(row) === "idle").length);
   const hibernatedOpen = $derived(project.hibernatedView !== "hidden");
-  const color = $derived(projectColor(project.name));
+  const color = $derived(projectColor(project.colorIndex));
 
   function handleClick(event: MouseEvent): void {
     const target = event.target as Element;
     // Buttons inside a card (answers, cancel, dismiss) are the card's own.
     if (target.closest(".note") !== null) return;
     const act = target.closest("[data-act]")?.getAttribute("data-act") ?? null;
-    if (act !== "hibtoggle" && act !== "autoshow" && act !== "revealnote" && hibernatedOpen) {
+    if (act !== "hibtoggle" && act !== "autoshow" && hibernatedOpen) {
       onSetHibernatedView(project, "hidden");
     }
     switch (act) {
@@ -113,9 +106,6 @@
         return;
       case "autoshow":
         onSetHibernatedView(project, "all");
-        return;
-      case "revealnote":
-        onRevealQuestion(project);
         return;
       case "closeproj":
         onCloseProject(project);
@@ -143,15 +133,21 @@
 </script>
 
 {#snippet rowFold(row: UiWorkspaceRow)}
+  {@const hidden = rowHidden(project, row, view)}
+  <!-- A folded row stays in the page (so it can animate) but is out of reach:
+       not focusable, and not there for assistive tech. -->
   <div
     class="cl rowf"
     class:open={on(row)}
+    inert={hidden}
+    aria-hidden={hidden ? "true" : undefined}
     in:arrive={{ key: row.key }}
     out:depart={{ key: row.key, projectId: project.id }}
   >
     <div class="clin">
       <WorkspaceRow
         {row}
+        projectName={project.name}
         {query}
         selected={finding && row.key === selectedKey}
         questions={rowQuestions(notifications, row.key)}
@@ -182,7 +178,7 @@
     {#if project.remote}<SidebarIcon name="cloud" class="remote" />{/if}
     {#if !folds.expanded}
       <span class="cnt" title={`${running} working · ${idle} idle`}>
-        {#if running > 0}<i><span class="ring"></span>{running}</i>{/if}
+        {#if running > 0}<i><span class="ring busy"></span>{running}</i>{/if}
         {#if idle > 0}<i><span class="dot idle"></span>{idle}</i>{/if}
       </span>
     {:else if hibernated.length + automated.length > 0}
@@ -192,20 +188,11 @@
         data-act="hibtoggle"
         aria-pressed={hibernatedOpen}
         title={`${hibernatedOpen ? "Hide" : "Show"} hibernated: ${hibernated.length} · automated: ${automated.length}`}
-        ><SidebarIcon name="moon" />{hibernated.length}{#if automated.length > 0}<span class="na"
-            >/{automated.length}</span
+        >{#if hibernated.length > 0}<span class="hib"
+            ><SidebarIcon name="moon" />{hibernated.length}</span
+          >{/if}{#if automated.length > 0}<span class="na"
+            ><SidebarIcon name="alarm" />{automated.length}</span
           >{/if}</button
-      >
-    {/if}
-    {#if questionsOutOfSight.length > 0}
-      <button
-        type="button"
-        class="hdr-note question"
-        data-act="revealnote"
-        title={`${questionsOutOfSight.join(" · ")} (click to show)`}
-        ><SidebarIcon name="help" />{questionsOutOfSight.length > 1
-          ? questionsOutOfSight.length
-          : ""}</button
       >
     {/if}
     <span class="spacer"></span>
@@ -225,7 +212,7 @@
     >
     <SidebarIcon name="chev" class="chev" />
   </div>
-  <div class="body-wrap" class:open={folds.expanded}>
+  <div class="body-wrap" class:open={folds.bodyOpen}>
     <div class="body-inner">
       {#if hibernated.length + automated.length > 0}
         <div class="hib-group" class:open={folds.hibernatedOpen}>
@@ -361,7 +348,7 @@
   .sleepers {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    gap: 7px;
     font: inherit;
     font-size: 11px;
     color: var(--ch-sb-fg-3);
@@ -386,6 +373,12 @@
     background: var(--ch-sb-s2);
     box-shadow: inset 0 0 0 1px var(--ch-sb-line-2);
   }
+  .sleepers .hib,
+  .sleepers .na {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
   .sleepers .na {
     color: var(--ch-sb-auto);
   }
@@ -409,11 +402,16 @@
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    border: 1.5px solid var(--ch-sb-spin-track);
-    border-top-color: var(--ch-sb-spin-head);
+    border: 1.5px solid var(--ch-sb-busy-track);
+    border-top-color: var(--ch-sb-busy);
     animation: spin 0.9s linear infinite;
     display: block;
     box-sizing: border-box;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .cnt .dot {
     width: 6px;
@@ -421,35 +419,6 @@
     border-radius: 50%;
     display: block;
     background: var(--ch-sb-idle);
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  .hdr-note {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    border: 0;
-    background: transparent;
-    padding: 2px 4px;
-    border-radius: 99px;
-    cursor: pointer;
-    font: inherit;
-    font-size: 10.5px;
-    font-variant-numeric: tabular-nums;
-    flex: none;
-  }
-  .hdr-note :global(.sb-icon) {
-    width: 13px;
-    height: 13px;
-  }
-  .hdr-note.question {
-    color: var(--ch-sb-ask);
-  }
-  .hdr-note:hover {
-    background: var(--ch-sb-s2);
   }
 
   .hib-group {

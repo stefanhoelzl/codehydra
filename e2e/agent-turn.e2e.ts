@@ -229,10 +229,7 @@ test("an agent takes a turn and renames its own workspace over MCP", async () =>
   // No need to expand the sidebar: it is overflow-clipped but its rows still
   // have a box, which is why `createWorkspace()` asserts on them the same way.
   await expect(workspaceRow(ui, WORKSPACE_NAME)).toBeVisible({ timeout: TURN_TIMEOUT_MS });
-  const row = ui
-    .getByRole("listitem")
-    .filter({ has: workspaceRow(ui, WORKSPACE_NAME) })
-    .last();
+  const row = ui.locator("nav.sidebar .ws").filter({ has: workspaceRow(ui, WORKSPACE_NAME) });
   await expect(row).toContainText(AGENT_SET_TITLE, { timeout: TURN_TIMEOUT_MS });
 
   // Idle, and idle because the agent finished: with permissions granted there is

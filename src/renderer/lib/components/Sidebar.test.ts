@@ -96,6 +96,32 @@ describe("Sidebar", () => {
       }
     });
 
+    it("names each row for assistive tech, and takes folded rows out of reach", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const label = (key: string): string | null =>
+        row(container, key).querySelector("button.st")!.getAttribute("aria-label");
+      expect(label("codehydra/redesign-sidebar")).toMatch(/^redesign-sidebar in codehydra - /);
+      expect(label("codehydra/opencode-mcp-timeout")).toBe(
+        "opencode-mcp-timeout in codehydra - Creating"
+      );
+      expect(label("codehydra/atomic-state-writes")).toMatch(/ - Hibernated .* - click to wake$/);
+      // The hibernated list is folded at rest; infra is collapsed.
+      const fold = (key: string) => row(container, key).closest(".cl")!;
+      expect(fold("codehydra/atomic-state-writes").hasAttribute("inert")).toBe(true);
+      expect(fold("codehydra/atomic-state-writes").getAttribute("aria-hidden")).toBe("true");
+      expect(fold("infra/ci-cache").hasAttribute("inert")).toBe(true);
+      expect(fold("codehydra/redesign-sidebar").hasAttribute("inert")).toBe(false);
+    });
+
+    it("spins for a busy row (in the busy color) and a loading one (grey)", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const busy = row(container, "codehydra/redesign-sidebar").querySelector(".st")!;
+      expect(busy.querySelector(".ring.busy")).not.toBeNull();
+      const loading = row(container, "codehydra/opencode-mcp-timeout").querySelector(".st")!;
+      expect(loading.querySelector(".ring.pending")).not.toBeNull();
+      expect(loading.querySelector(".ring.busy")).toBeNull();
+    });
+
     it("shows the age of a hibernated row and “working” on a busy one", () => {
       const { container } = setup({ projects: sampleProjects() });
       expect(
@@ -114,20 +140,49 @@ describe("Sidebar", () => {
       );
     });
 
-    it("sums working, idle and hibernated in the footer", () => {
+    it("sums working, loading, idle, no agent, hibernated and automated in the footer", () => {
       const { container } = setup({ projects: sampleProjects() });
       const sum = [...container.querySelectorAll(".sb-foot .sum i")].map((i) => i.textContent);
-      expect(sum).toEqual(["4", "4", "8"]);
+      expect(sum).toEqual(["4", "1", "4", "3", "5", "3"]);
+      // Loading is the grey spinner, working the red one; no agent the hollow dot.
+      expect(container.querySelector(".sb-foot .sum .loading .ring:not(.busy)")).not.toBeNull();
+      expect(container.querySelector(".sb-foot .sum .none .n")).not.toBeNull();
+      expect(container.querySelector(".sb-foot .sum")!.getAttribute("title")).toBe(
+        "4 working · 1 loading · 4 waiting for you · 3 no agent · 5 hibernated · 3 automated"
+      );
+    });
+
+    it("leaves a zero count out of the footer and its tooltip", () => {
+      const withAgents = sampleProjects().map((project) => ({
+        ...project,
+        workspaces: project.workspaces.filter(
+          (row) =>
+            !row.hibernated &&
+            row.status === "ready" &&
+            (row.agent.type === "busy" || row.agent.type === "idle")
+        ),
+      }));
+      const { container } = setup({ projects: withAgents });
+      const sum = container.querySelector(".sb-foot .sum")!;
+      expect(sum.querySelectorAll("i").length).toBe(2);
+      expect(sum.getAttribute("title")).toBe("4 working · 4 waiting for you");
     });
   });
 
   describe("hibernated list", () => {
-    it("is hidden at rest, and the moon shows hibernated/automated", () => {
+    it("is hidden at rest; the button counts hibernated (moon) and automated (alarm) apart", () => {
       const { container } = setup({ projects: sampleProjects() });
+      const counts = (projectId: string) => {
+        const button = card(container, projectId).querySelector(".sleepers")!;
+        return {
+          hibernated: button.querySelector(".hib")?.textContent ?? null,
+          automated: button.querySelector(".na")?.textContent ?? null,
+        };
+      };
       expect(hibGroupOpen(container, "codehydra")).toBe(false);
-      expect(card(container, "codehydra").querySelector(".sleepers")?.textContent).toBe("2/2");
-      expect(card(container, "acme-api").querySelector(".sleepers")?.textContent).toBe("1/1");
-      expect(card(container, "website").querySelector(".sleepers")?.textContent).toBe("1");
+      expect(counts("codehydra")).toEqual({ hibernated: "2", automated: "2" });
+      expect(counts("acme-api")).toEqual({ hibernated: "1", automated: "1" });
+      expect(counts("website")).toEqual({ hibernated: "1", automated: null });
     });
 
     it("the moon asks to show the list, and to hide it again", async () => {
@@ -210,7 +265,8 @@ describe("Sidebar", () => {
       const infra = card(container, "infra");
       expect(infra.classList.contains("closed")).toBe(true);
       expect(infra.querySelector(".sleepers")).toBeNull();
-      expect([...infra.querySelectorAll(".cnt i")].map((i) => i.textContent)).toEqual(["1", "2"]);
+      // k8s-autoscaling has no agent: it is not counted as idle (the footer agrees).
+      expect([...infra.querySelectorAll(".cnt i")].map((i) => i.textContent)).toEqual(["1", "1"]);
     });
 
     it("its header toggles it (and not while Find has the focus)", async () => {
@@ -281,6 +337,30 @@ describe("Sidebar", () => {
   });
 
   describe("Find", () => {
+    it("/ opens Find, but not while typing in a field — one inside a shadow root too", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const find = container.querySelector("input")!;
+
+      // A <vscode-textfield>: its <input> lives in a shadow root.
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const field = host
+        .attachShadow({ mode: "open" })
+        .appendChild(document.createElement("input"));
+      field.focus();
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "/", bubbles: true, composed: true, cancelable: true })
+      );
+      expect(document.activeElement).not.toBe(find);
+
+      field.blur();
+      const slash = new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true });
+      document.body.dispatchEvent(slash);
+      expect(slash.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(find);
+      host.remove();
+    });
+
     it("opens every project and shows hibernated (not automated) rows", async () => {
       const { container } = setup({ projects: sampleProjects() });
       const infra = card(container, "infra");
@@ -390,49 +470,25 @@ describe("Sidebar", () => {
       );
     });
 
-    it("a question out of sight puts a question mark in the header, which reveals it", async () => {
-      const ask = question("q3", "infra/ci-cache", "Run the migration?", ["Run now"]);
-      const { container } = setup({ projects: sampleProjects(), notifications: [ask] });
-      const mark = card(container, "infra").querySelector(".hdr-note.question")!;
-      expect(mark).not.toBeNull();
-      await fireEvent.click(mark);
+    it("a question arriving for a collapsed project expands it", () => {
+      const { container, rerender } = setup({ projects: sampleProjects() });
+      rerender({ notifications: [question("q3", "infra/ci-cache", "Migrate?", ["Run now"])] });
       expect(events()).toEqual([{ kind: "toggle-project-collapsed", projectId: "infra" }]);
+      expect(container.querySelector(".hdr-note")).toBeNull();
     });
 
-    it("a question in a workspace's editor puts a question mark on its row", () => {
-      const projects = sampleProjects().map((p) => ({
-        ...p,
-        workspaces: p.workspaces.map((r) =>
-          r.key === "website/blog-rss" ? { ...r, editorQuestion: true as const } : r
-        ),
-      }));
-      const { container } = setup({ projects });
-      expect(row(container, "website/blog-rss").querySelector(".ask")).not.toBeNull();
-      expect(row(container, "website/dark-mode").querySelector(".ask")).toBeNull();
-      expect(card(container, "website").querySelector(".hdr-note")).toBeNull();
-    });
-
-    it("…and on its project's header while the row is out of sight, which reveals it", async () => {
-      const projects = sampleProjects().map((p) => ({
-        ...p,
-        workspaces: p.workspaces.map((r) =>
-          r.key === "infra/k8s-autoscaling" ? { ...r, editorQuestion: true as const } : r
-        ),
-      }));
-      const { container } = setup({ projects });
-      const mark = card(container, "infra").querySelector(".hdr-note.question")!;
-      expect(mark.getAttribute("title")).toContain("k8s-autoscaling");
-      await fireEvent.click(mark);
-      expect(events()).toEqual([{ kind: "toggle-project-collapsed", projectId: "infra" }]);
-    });
-
-    it("revealing a hibernated row's question opens its list", async () => {
-      const ask = question("q4", "codehydra/ci-watch", "Retry?", ["Yes"]);
-      const { container } = setup({ projects: sampleProjects(), notifications: [ask] });
-      await fireEvent.click(card(container, "codehydra").querySelector(".hdr-note")!);
+    it("a question arriving for a hibernated row opens its list", () => {
+      const { rerender } = setup({ projects: sampleProjects() });
+      rerender({ notifications: [question("q4", "codehydra/ci-watch", "Retry?", ["Yes"])] });
       expect(events()).toEqual([
         { kind: "set-hibernated-view", projectId: "codehydra", view: "all" },
       ]);
+    });
+
+    it("a question arriving for a row in sight changes nothing", () => {
+      const { rerender } = setup({ projects: sampleProjects() });
+      rerender({ notifications: [deploy] });
+      expect(events()).toEqual([]);
     });
   });
 

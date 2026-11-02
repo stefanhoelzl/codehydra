@@ -214,6 +214,9 @@
   --ch-sb-accent-soft: rgba(108, 140, 255, 0.16);
   --ch-sb-marker: rgba(255, 255, 255, 0.88);
   --ch-sb-idle: #4ade80;
+  --ch-sb-busy: #f14c4c;
+  /* A working agent's spinner: the busy color's track (light theme too). */
+  --ch-sb-busy-track: color-mix(in srgb, var(--ch-sb-busy) 25%, transparent);
   --ch-sb-danger: #f14c4c;
   --ch-sb-hl: rgba(245, 185, 66, 0.38);
   --ch-sb-spin-track: rgba(228, 228, 232, 0.16);
@@ -242,6 +245,7 @@
   --ch-sb-accent-soft: rgba(75, 109, 232, 0.12);
   --ch-sb-marker: rgba(20, 20, 30, 0.85);
   --ch-sb-idle: #1a9a4e;
+  --ch-sb-busy: #dc3545;
   --ch-sb-danger: #dc3545;
   --ch-sb-hl: rgba(245, 185, 66, 0.45);
   --ch-sb-spin-track: rgba(26, 26, 36, 0.14);

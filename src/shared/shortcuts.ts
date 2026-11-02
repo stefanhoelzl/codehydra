@@ -34,6 +34,7 @@ export const SHORTCUT_KEYS = [
   "delete",
   "h",
   "t",
+  "c",
   "f",
   "p",
   "0",

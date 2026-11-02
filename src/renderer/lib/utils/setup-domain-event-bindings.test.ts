@@ -29,6 +29,7 @@ function makeState(workspaces: UiWorkspaceRow[]): UiState {
           name: "p",
           title: "/p",
           remote: false,
+          colorIndex: 0,
           workspaces,
           collapsed: false,
           hibernatedView: "hidden",

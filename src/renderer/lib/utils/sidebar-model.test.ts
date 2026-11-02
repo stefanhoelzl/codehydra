@@ -1,18 +1,19 @@
 import { describe, it, expect } from "vitest";
-import type { UiProjectRow } from "@shared/ui-state";
-import { question, sampleProjects } from "../components/sidebar-fixture";
+import { PROJECT_COLOR_COUNT, type UiProjectRow } from "@shared/ui-state";
+import { sampleProjects } from "../components/sidebar-fixture";
 import {
-  hiddenQuestions,
   highlightParts,
   markerRows,
   matches,
   moonToggle,
+  PROJECT_COLORS,
   projectColor,
   projectFolds,
   rowGlyph,
   rowGroup,
   rowHidden,
   rowOn,
+  rowStatusText,
   type SidebarView,
 } from "./sidebar-model";
 
@@ -71,6 +72,19 @@ describe("sidebar-model", () => {
     expect(rowOn(c, rowOf(c, "atomic-state-writes"), find("", "hidden"))).toBe(false);
   });
 
+  it("a collapsed project still shows the active row, and only it", () => {
+    const infra = project("infra");
+    expect(projectFolds(infra, REST).bodyOpen).toBe(false);
+    const withActive = {
+      ...infra,
+      workspaces: infra.workspaces.map((row) => ({ ...row, active: row.name === "ci-cache" })),
+    };
+    expect(projectFolds(withActive, REST)).toMatchObject({ expanded: false, bodyOpen: true });
+    for (const row of withActive.workspaces) {
+      expect(rowHidden(withActive, row, REST)).toBe(row.name !== "ci-cache");
+    }
+  });
+
   it("matches project, title, branch and tags", () => {
     const p = project("acme-api");
     expect(matches(p, rowOf(p, "oauth-pkce"), "pkce")).toBe(true);
@@ -84,17 +98,28 @@ describe("sidebar-model", () => {
     expect(keys).toEqual(["infra/ci-cache"]);
   });
 
-  it("finds questions whose rows are out of sight", () => {
-    const infra = project("infra");
-    const notes = [question("q", "infra/ci-cache", "Run?", ["Yes"])];
-    expect(hiddenQuestions(infra, notes, REST).length).toBe(1);
-    expect(hiddenQuestions({ ...infra, collapsed: false }, notes, REST).length).toBe(0);
+  it("words a row's status for its accessible name", () => {
+    const p = project("codehydra");
+    const text = (name: string) => rowStatusText(rowOf(p, name), "Hibernated");
+    expect(text("redesign-sidebar")).toMatch(/^\d+ agents? busy$|^\d+ idle, \d+ busy$/);
+    expect(text("hibernation-age")).toMatch(/^\d+ agents? idle$/);
+    expect(text("opencode-mcp-timeout")).toBe("Creating");
+    expect(text("e2e-flake-hunt")).toBe("Failed to open");
+    expect(text("atomic-state-writes")).toBe("Hibernated");
+    const none = { ...rowOf(p, "hibernation-age"), agent: { type: "none" as const } };
+    expect(rowStatusText(none, "Hibernated")).toBe("No agents running");
   });
 
-  it("toggles the moon and colors projects stably", () => {
+  it("toggles the moon", () => {
     expect(moonToggle("hidden")).toBe("manual");
     expect(moonToggle("all")).toBe("hidden");
-    expect(projectColor("codehydra")).toBe(projectColor("codehydra"));
+  });
+
+  it("has a distinct color for every index main assigns", () => {
+    expect(PROJECT_COLORS).toHaveLength(PROJECT_COLOR_COUNT);
+    expect(new Set(PROJECT_COLORS).size).toBe(PROJECT_COLOR_COUNT);
+    expect(projectColor(0)).toBe(PROJECT_COLORS[0]);
+    expect(projectColor(PROJECT_COLOR_COUNT - 1)).toBe(PROJECT_COLORS[PROJECT_COLOR_COUNT - 1]);
   });
 
   it("splits text around the first match", () => {

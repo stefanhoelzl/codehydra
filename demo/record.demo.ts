@@ -228,9 +228,15 @@ test("the landing-page demo", async () => {
   );
   film.caption(`Waiting on CI, flaky-test hibernates — a wakeup script watches PR #${OWN_PR}`);
   agents.open("hibernate");
-  await expect(row(ui, "flaky-test", "Hibernated")).toBeVisible({ timeout: 60_000 });
-  // Hibernating moves the view on to an idle agent; flaky-test is a row now.
-  film.spotlight(await rowBox(ui, "flaky-test"));
+  // An automated workspace folds away behind its project's alarm-clock count.
+  await expect(
+    ui.getByRole("button", {
+      name: new RegExp(`^flaky-test in \\S+ - Hibernated`),
+      includeHidden: true,
+    })
+  ).toBeAttached({ timeout: 60_000 });
+  // Hibernating moves the view on to an idle agent; flaky-test is a count now.
+  film.spotlight(await projectHeaderBox(ui, API));
   await parkPointer(ui);
   await sleep(4500);
   github.passCi();
@@ -310,9 +316,26 @@ async function cloned(ui: Page, repo: string): Promise<void> {
 
 /** A workspace's sidebar row, padded, for a spotlight. */
 async function rowBox(ui: Page, name: string): Promise<Box> {
-  const box = await workspaceRow(ui, name).boundingBox();
+  // The whole row, not just its status cell (the button that carries its name).
+  const box = await ui
+    .locator("nav.sidebar .ws")
+    .filter({ has: workspaceRow(ui, name) })
+    .boundingBox();
   if (!box) throw new Error(`no row for ${name}`);
   return { x: box.x, y: box.y - 3, width: box.width, height: box.height + 6 };
+}
+
+/**
+ * A project card's header bar, padded, for a spotlight: where the counts of its
+ * hibernated and automated workspaces sit.
+ */
+async function projectHeaderBox(ui: Page, project: string): Promise<Box> {
+  const box = await ui
+    .locator("nav.sidebar .proj-h")
+    .filter({ has: ui.getByText(project, { exact: true }) })
+    .boundingBox();
+  if (!box) throw new Error(`no project card for ${project}`);
+  return { x: box.x - 3, y: box.y - 3, width: box.width + 6, height: box.height + 6 };
 }
 
 /**

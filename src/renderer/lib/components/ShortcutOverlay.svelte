@@ -14,6 +14,11 @@
      * null hides the hint (no active workspace).
      */
     hibernatedView?: HibernatedView | null;
+    /**
+     * What C would change: whether the active workspace's project is
+     * collapsed; null hides the hint (no active workspace, or Find is open).
+     */
+    activeCollapsed?: boolean | null;
     /** Whether the sidebar is docked (drives the P hint label). */
     sidebarDocked?: boolean;
   }
@@ -26,6 +31,7 @@
     activeWorkspaceDeletionInProgress = false,
     idleWorkspaceCount = 0,
     hibernatedView = null,
+    activeCollapsed = null,
     sidebarDocked = false,
   }: Props = $props();
 
@@ -115,6 +121,16 @@
   >
     <vscode-badge>T</vscode-badge>
     {hibernatedView === null ? "" : NEXT_HIBERNATED_LABEL[hibernatedView]}
+  </span>
+  <span
+    class="shortcut-hint"
+    class:shortcut-hint--hidden={activeCollapsed === null}
+    aria-label={activeCollapsed === null
+      ? undefined
+      : `C key: ${activeCollapsed ? "expand" : "collapse"} the active project`}
+  >
+    <vscode-badge>C</vscode-badge>
+    {activeCollapsed === null ? "" : activeCollapsed ? "Expand project" : "Collapse project"}
   </span>
   <span
     class="shortcut-hint"

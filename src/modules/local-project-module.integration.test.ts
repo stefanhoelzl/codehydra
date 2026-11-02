@@ -29,10 +29,12 @@ import { projectRefFor } from "../utils/ref";
 import { describe, it, expect, vi } from "vitest";
 
 import {
+  assignColor,
   createLocalProjectModule,
   generateProjectId,
   type LocalProjectModuleDeps,
 } from "./local-project-module";
+import { PROJECT_COLOR_COUNT } from "../shared/ui-state";
 import {
   OPEN_PROJECT_OPERATION_ID,
   INTENT_OPEN_PROJECT,
@@ -453,7 +455,7 @@ describe("LocalProjectModule Integration", () => {
       expect(config.remoteUrl).toBe("https://github.com/user/repo.git");
     });
 
-    it("skips save when config already exists (#6)", async () => {
+    it("registers a project that already has a record (#6)", async () => {
       const setup = createTestSetup();
 
       // Pre-populate config in filesystem
@@ -789,7 +791,7 @@ describe("LocalProjectModule Integration", () => {
         remoteUrl: REPO_URL,
       } satisfies RegisterHookInput);
 
-      expect(readJson(setup.fs, MANAGED_RECORD)).toEqual({ remoteUrl: REPO_URL });
+      expect(readJson(setup.fs, MANAGED_RECORD)).toEqual({ remoteUrl: REPO_URL, color: 0 });
       const pathRecord = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH), "config.json");
       expect(setup.fs.$.entries.has(new Path(pathRecord).toString())).toBe(false);
     });
@@ -808,6 +810,7 @@ describe("LocalProjectModule Integration", () => {
       expect(readJson(setup.fs, pathRecord)).toEqual({
         path: new Path(PROJECT_PATH).toString(),
         remoteUrl: REPO_URL,
+        color: 0,
       });
     });
 
@@ -855,6 +858,95 @@ describe("LocalProjectModule Integration", () => {
         false
       );
       expect(setup.fs.$.entries.has(new Path(worktreesDir).toString())).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Badge colors
+  // ---------------------------------------------------------------------------
+
+  describe("badge colors", () => {
+    const pathA = projPath(new Path(PROJECT_PATH).toString());
+    const pathB = projPath(new Path("/test/second-project").toString());
+    const pathC = projPath(new Path("/test/third-project").toString());
+
+    function register(setup: TestSetup, path: ProjectPath) {
+      return setup.openHooks.collect("register", {
+        intent: openLocalIntent(path),
+        projectPath: path,
+        projectRef: projectRefFor(path),
+      } satisfies RegisterHookInput);
+    }
+    function recordOf(setup: TestSetup, path: ProjectPath): unknown {
+      const file = nodePath.join(PROJECTS_DIR, projectDirName(path), "config.json");
+      const entry = setup.fs.$.entries.get(new Path(file).toString());
+      return entry?.type === "file" ? JSON.parse(String(entry.content)) : undefined;
+    }
+    function writeRecord(setup: TestSetup, path: ProjectPath, color: number): void {
+      const dir = nodePath.join(PROJECTS_DIR, projectDirName(path));
+      setup.fs.$.setEntry(dir, { type: "directory" });
+      setup.fs.$.setEntry(nodePath.join(dir, "config.json"), {
+        type: "file",
+        content: JSON.stringify({ path, color }),
+      });
+    }
+    const colorOf = (setup: TestSetup, path: ProjectPath) =>
+      setup.module.projectColor(projectRefFor(path));
+
+    it("gives each project opened the lowest free color and stores it in its record", async () => {
+      const setup = createTestSetup();
+      await register(setup, pathA);
+      await register(setup, pathB);
+
+      expect(colorOf(setup, pathA)).toBe(0);
+      expect(colorOf(setup, pathB)).toBe(1);
+      expect(recordOf(setup, pathB)).toEqual({ path: pathB, color: 1 });
+    });
+
+    it("keeps the color a record holds", async () => {
+      const setup = createTestSetup();
+      writeRecord(setup, pathA, 5);
+      await register(setup, pathA);
+
+      expect(colorOf(setup, pathA)).toBe(5);
+      expect(recordOf(setup, pathA)).toEqual({ path: pathA, color: 5 });
+    });
+
+    it("gives a record whose color another open project has the lowest free one", async () => {
+      const setup = createTestSetup();
+      await register(setup, pathA);
+      writeRecord(setup, pathB, 0);
+      await register(setup, pathB);
+
+      expect(colorOf(setup, pathB)).toBe(1);
+      expect(recordOf(setup, pathB)).toEqual({ path: pathB, color: 1 });
+    });
+
+    it("frees a closed project's color for the next one opened", async () => {
+      const setup = createTestSetup();
+      await register(setup, pathA);
+      await register(setup, pathB);
+      await setup.closeHooks.collect("close", closeInput({ removeLocalRepo: false }));
+      await register(setup, pathC);
+
+      expect(colorOf(setup, pathA)).toBeUndefined();
+      expect(colorOf(setup, pathC)).toBe(0);
+    });
+
+    it("never gives two projects opened at once the same color", async () => {
+      const setup = createTestSetup();
+      await Promise.all([register(setup, pathA), register(setup, pathB), register(setup, pathC)]);
+
+      const colors = [pathA, pathB, pathC].map((path) => colorOf(setup, path));
+      expect(new Set(colors).size).toBe(3);
+    });
+
+    it("repeats the colors in order once every one is taken", () => {
+      const all = Array.from({ length: PROJECT_COLOR_COUNT }, (_, index) => index);
+      expect(assignColor(undefined, all)).toBe(0);
+      expect(assignColor(undefined, [...all, 0])).toBe(1);
+      expect(assignColor(3, [0, 1])).toBe(3);
+      expect(assignColor(PROJECT_COLOR_COUNT, [])).toBe(0);
     });
   });
 

@@ -92,6 +92,9 @@ Each workspace reports its agent's status:
 | **Busy**  | Working on a task                                                                              |
 | **Mixed** | Several agent sessions, some idle and some busy                                                |
 
+The sidebar shows it on every workspace row; see
+[Status indicators](#status-indicators).
+
 You'll hear a sound when an agent goes idle, so you can stay productive
 without constantly checking the screen. On macOS and Windows the app icon
 carries a badge: ● when every agent is busy, ◐ when some are done (no badge on
@@ -105,8 +108,8 @@ The sidebar is a card at the left of the window: the **Find** field on top, a
 card per project with its workspaces, notifications below them, and a footer.
 Projects are sorted by name.
 
-- **Collapsed**, it is a rail: each project's letter with the status glyphs of
-  its awake workspaces. It expands when you point at the rail, in shortcut
+- **Collapsed**, it is a rail: each project's letter with the
+  [status glyphs](#status-indicators) of its awake workspaces. It expands when you point at the rail, in shortcut
   mode, while Find, a dialog or the New workspace form is open, and whenever
   there are no workspaces.
 - **Docked**, it stays expanded beside the workspace, which shrinks to the
@@ -118,43 +121,49 @@ Projects are sorted by name.
 - **Resize** it by dragging its right edge (at least 288 px, at most 75% of the
   window); the width is saved as `sidebar.width`. Docked, the workspace
   follows the drag.
-- The **footer** counts the workspaces that are working, waiting for you and
-  hibernated, and has **+** (New workspace), the **dock** button, the **gear**
-  (settings) and **?** (this guide). Hover any sidebar icon for what it does.
+- The **footer** counts all workspaces by [status](#status-indicators), and has
+  **+** (New workspace), the **dock** button, the **gear** (settings) and **?**
+  (this guide). Hover any sidebar icon for what it does.
 
 A **project card** has a header bar with the project's letter, its name (a
 cloud marks a cloned project), and on hover a trash icon (close the project)
-and **+** (a new workspace in this project).
+and **+** (a new workspace in this project). Each open project's letter has a
+color of its own: a project you open takes the first color no other open project
+has, and keeps it until you close it, also across restarts. With more than 12
+projects open, colors repeat.
 
 - Click the header bar to **collapse** the project to its header, and again to
   expand it; each project remembers this, also after a restart. A collapsed
-  project shows how many of its workspaces are working and idle. Collapsing
+  project counts its working and waiting workspaces
+  ([status](#status-indicators)). Collapsing
   the project you are in moves you to the first awake workspace of the next
   expanded project, as <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>↓</kbd> would from its
   last workspace; there is none when every other project is collapsed, and
-  you stay. Shortcut navigation skips the workspaces of collapsed projects.
-- Its **hibernated workspaces** are folded away. The **moon** in the header
-  says how many there are, e.g. `2/1`: 2 hibernated, and after the slash 1
-  **automated** one (it has a [wakeup script](#wakeup-scripts) and wakes by
-  itself). Click the moon to show the hibernated ones at the top of the card,
+  you stay, your row still shown under the collapsed header. Shortcut
+  navigation skips the workspaces of collapsed projects.
+- Its **hibernated workspaces** are folded away. A button in the header counts
+  the hibernated and the **automated** ones (with a
+  [wakeup script](#wakeup-scripts), they wake by themselves; see
+  [status](#status-indicators)). Click it to show the hibernated ones at the top of the card,
   most recently hibernated first; a **Show automated workspaces** item, in its
   own color, shows the automated ones below them. Moving the pointer off the
   card, or clicking anything else in it, folds the list away again. The
   hibernated workspace you are on stays shown.
 - <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> steps the current project's list
   through the same three states: hidden, hibernated shown, automated shown too.
+- <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>C</kbd> collapses or expands the current
+  project, as a click on its header does.
 - Notifications (clone progress, failures, updates) stack at the bottom of the
   sidebar, newest on top; repeats merge into one card with a count. One about
   a workspace names it, and clicking the name goes there. The stack takes at
   most a third of the sidebar's height and scrolls beyond that.
-- A [question](#asking-you) waiting for you marks its workspace's row with a
-  violet **question mark**: one open in the workspace's editor (`ch ws ask`,
-  `select`, `input`, `pick-file`) shows the mark at the end of the row; a
+- A [question](#asking-you) open in a workspace's editor (`ch ws ask`,
+  `select`, `input`, `pick-file`) turns its row green
+  ([status](#status-indicators)). A
   `ch ws ask --sidebar` question is a card in the row instead, with its answers
-  as buttons and a × to cancel. While the row is out of sight (a collapsed
-  project, a folded hibernated list), the project's header shows the question
-  mark, and its header bar flashes when the question arrives; click the
-  question mark to bring the row into view.
+  as buttons and a × to cancel. When one arrives for a row out of sight, the
+  sidebar brings it into view: it expands a collapsed project and opens a
+  folded hibernated list (not while Find is open).
 
 A workspace row shows its title (or its name if it has none); with a title, the
 second line shows the branch. Tags follow, each in its color and with its label,
@@ -164,20 +173,26 @@ workspace how long it has slept. Hovering a row shows its actions: hibernate
 (moon) and remove (trash), or retry and remove for one that could not be
 opened, or remove for a hibernated one.
 
-The glyph on each row:
+#### Status indicators
 
-| Glyph        | Meaning                                                           |
-| ------------ | ----------------------------------------------------------------- |
-| Grey spinner | The agent is working                                              |
-| Green dot    | The agent is waiting for you                                      |
-| Hollow dot   | No agent running                                                  |
-| Dotted ring  | Being created, opened or removed                                  |
-| Red warning  | Could not be opened (the reason on hover), or its deletion failed |
-| Moon         | Hibernated (in the automated color for one with a wakeup script)  |
+Every workspace row starts with a status glyph, and the collapsed rail shows the
+same glyphs. Where workspaces are counted — the footer, a collapsed project's
+header, a project's hibernated button — each count carries the glyph of what it
+counts, and only counts above zero are shown; hover a count to have it named.
 
-A row also turns green while a dialog about that workspace is waiting for you —
-a hook trust question, a failed deletion — including the placeholder row of a
-workspace still being created.
+| Glyph                                                   | Meaning                                                           | Counted in                |
+| ------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------- |
+| Red spinner                                             | The agent is working                                              | footer, collapsed header  |
+| Grey spinner                                            | Being created, opened or removed                                  | footer                    |
+| Green dot                                               | The agent is waiting for you                                      | footer, collapsed header  |
+| Hollow dot                                              | No agent running (also while its agent is still starting)         | footer                    |
+| Red warning                                             | Could not be opened (the reason on hover), or its deletion failed | —                         |
+| Moon                                                    | Hibernated                                                        | footer, hibernated button |
+| Moon in the automated color (alarm clock in the counts) | Hibernated with a [wakeup script](#wakeup-scripts): automated     | footer, hibernated button |
+
+A row also turns green while a question or dialog about that workspace is
+waiting for you — a question open in its editor, a hook trust question, a failed
+deletion — including the placeholder row of a workspace still being created.
 
 ### Opening and closing projects
 
@@ -216,8 +231,9 @@ opens it again, and **Delete**.
 
 **At start** CodeHydra reopens every project it had open this way. The
 **Loading workspace...** screen only lasts until each project has listed its
-workspaces; then you land on the topmost awake workspace in the sidebar while
-the rest keep opening.
+workspaces; then you land on the topmost awake workspace of an expanded project
+(of a collapsed one only when no expanded project has one) while the rest keep
+opening.
 
 To **close** a project, hover its header and click the trash icon. By default
 its worktrees stay on disk and reappear when you open it again. The dialog
@@ -410,6 +426,7 @@ holding <kbd>Alt</kbd> while you press:
 | <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the active workspace                                                      |
 | <kbd>H</kbd>                             | Hibernate / wake the active workspace                                            |
 | <kbd>T</kbd>                             | Step the hibernated list: hidden, hibernated, automated too (Find: all projects) |
+| <kbd>C</kbd>                             | Collapse / expand the active workspace's project                                 |
 | <kbd>P</kbd>                             | Dock / undock the sidebar                                                        |
 | <kbd>S</kbd>                             | Open settings                                                                    |
 | <kbd>B</kbd>                             | Report a bug (also works while a dialog is open)                                 |
@@ -1744,8 +1761,8 @@ ch ws pick-file "Pick a screenshot" --filters '{"Images":["png","jpg"]}'
 ```
 
 - **`ws ask`** — a question with 1 to 5 buttons (50 characters each). It is a
-  dialog in the workspace's editor — the workspace's sidebar row shows a
-  question mark until you answer it — or with `--sidebar` a card in that row,
+  dialog in the workspace's editor — the workspace's sidebar row shows as
+  waiting for you until you answer it — or with `--sidebar` a card in that row,
   which you see from any workspace. **Cancel is always there** — the dialog's
   own Cancel button, the card's × — so never pass one as an option. `--detail`
   adds a second line, `--level info|warning|error` sets the dialog's icon (a
@@ -1772,8 +1789,8 @@ ch ws pick-file "Pick a screenshot" --filters '{"Images":["png","jpg"]}'
   `ask --sidebar` closes; an `ask` dialog or a file dialog cannot be closed
   from outside, so it stays until you dismiss it, and that answer goes nowhere.
 - The dialogs, lists and file pickers appear in the workspace's editor, so you
-  see them when you are on that workspace (the question mark on its row tells
-  you one is waiting); a `ws ask --sidebar` card shows in the sidebar from
+  see them when you are on that workspace (its green row tells you one is
+  waiting); a `ws ask --sidebar` card shows in the sidebar from
   anywhere. A plugin's automation cannot ask; a plugin script can run
   `ch ws ask` itself.
 

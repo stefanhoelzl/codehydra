@@ -47,6 +47,13 @@ export const HIBERNATED_VIEWS = ["hidden", "manual", "all"] as const;
 export type HibernatedView = (typeof HIBERNATED_VIEWS)[number];
 
 /**
+ * How many badge colors the sidebar's project palette has. Main hands each
+ * open project an index below this (UiProjectRow.colorIndex); the renderer
+ * owns the colors themselves.
+ */
+export const PROJECT_COLOR_COUNT = 12;
+
+/**
  * An open dialog session, render-ready. The presenter owns the registry (via
  * its internal DialogManager) and folds it into the snapshot; the renderer
  * renders each declaratively and echoes the opaque `id` back in dialog ui:events.
@@ -149,12 +156,6 @@ export interface UiWorkspaceRow {
   readonly agent: AgentStatus;
   readonly tags: readonly WorkspaceTag[];
   readonly active: boolean;
-  /**
-   * A question (`ch ws ask` without `--sidebar`, select, input, pick-file) is
-   * open in the workspace's editor and waits for the user: the row shows a
-   * question mark. Absent otherwise.
-   */
-  readonly editorQuestion?: true;
   /** Why the open failed; present while `status` is `open-failed`. */
   readonly openError?: string;
   /** Present while `status` is `deleting`/`delete-failed`; absent otherwise. */
@@ -168,6 +169,12 @@ export interface UiProjectRow {
   readonly title: string;
   /** True for projects cloned from a git URL (drives the project icon). */
   readonly remote: boolean;
+  /**
+   * The project's badge color: an index into the sidebar's palette of
+   * PROJECT_COLOR_COUNT colors. Assigned when the project is opened (the lowest
+   * index no other open project has) and kept in its record until it is closed.
+   */
+  readonly colorIndex: number;
   /**
    * Every workspace of the project, in sidebar order: the hibernated ones
    * without a wakeup script (most recently hibernated first), then the
