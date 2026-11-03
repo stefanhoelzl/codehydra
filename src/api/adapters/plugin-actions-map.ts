@@ -35,6 +35,7 @@ export const PLUGIN_ACTIONS_MAP: Readonly<Record<OperationName, PluginActionMapp
   "workspace.wakeup.set": INVOKE,
   "workspace.wakeup.clear": INVOKE,
   "workspace.wakeup.show": null,
+  "workspace.processes": null,
   "workspace.create": { kind: "create-workspace" },
   "workspace.delete": INVOKE,
   "workspace.switch": INVOKE,

@@ -23,7 +23,10 @@ import {
   type ProcessRunner,
   type SpawnedProcess,
 } from "../boundaries/platform/process";
-import { isProcessRunning } from "../boundaries/platform/process.boundary-test-utils";
+import {
+  isProcessRunning,
+  windowsProcessHelperPath,
+} from "../boundaries/platform/process.boundary-test-utils";
 import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { delay } from "@shared/test-fixtures";
@@ -47,7 +50,7 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
   let lockingProcess: SpawnedProcess | null = null;
   let lockingPid: number | undefined;
   let processRunner: ProcessRunner;
-  let scriptPath: string;
+  let helperPath: string;
 
   beforeEach(async () => {
     // Create temp directory with unique name
@@ -60,8 +63,7 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
     await fs.writeFile(lockedFile, "test content");
 
     processRunner = new ExecaProcessRunner(SILENT_LOGGER);
-    // Script path for boundary tests - relative to project root
-    scriptPath = path.join(process.cwd(), "resources", "scripts", "blocking-processes.ps1");
+    helperPath = windowsProcessHelperPath();
   });
 
   afterEach(async () => {
@@ -146,9 +148,9 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         // Detect blocking processes
         const { processes, timedOut } = await runDetectAction(
           processRunner,
-          scriptPath,
+          helperPath,
           new Path(tempDir),
-          "Detect",
+          "detect",
           createMockLogger(),
           SCAN_TIMEOUT
         );
@@ -181,9 +183,9 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         // Detect blocking processes
         const { processes } = await runDetectAction(
           processRunner,
-          scriptPath,
+          helperPath,
           new Path(tempDir),
-          "Detect",
+          "detect",
           createMockLogger(),
           SCAN_TIMEOUT
         );
@@ -205,9 +207,9 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         // No locking process, just query the empty temp dir
         const { processes } = await runDetectAction(
           processRunner,
-          scriptPath,
+          helperPath,
           new Path(tempDir),
-          "Detect",
+          "detect",
           createMockLogger(),
           SCAN_TIMEOUT
         );

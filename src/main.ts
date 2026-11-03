@@ -152,6 +152,7 @@ import { createPluginModule } from "./modules/plugin-module/module";
 import { createScripts } from "./modules/scripts/scripts";
 import { createPollModule } from "./modules/poll-module";
 import { createWakeupModule } from "./modules/wakeup-module";
+import { createProcessMonitorModule } from "./modules/process-monitor/process-monitor-module";
 import { createHookOutputSink } from "./modules/plugin-module/output-sink";
 import { createWorkspaceLogModule } from "./modules/workspace-log-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
@@ -322,8 +323,12 @@ const osNotificationLayer = new DefaultOsNotificationBoundary(notificationLogger
 
 // 4. Service construction
 
-// Process runner uses platform-native tree killing (taskkill on Windows, process.kill on Unix)
-const processRunner = new ExecaProcessRunner(loggingService.createLogger("process"));
+// Process runner uses platform-native tree killing (taskkill on Windows, process.kill on Unix).
+// On Windows, process snapshots and blocking-process detection run the bundled helper exe.
+const windowsProcessHelper = pathProvider.runtimePath("bin/codehydra-procs.exe").toNative();
+const processRunner = new ExecaProcessRunner(loggingService.createLogger("process"), {
+  windowsProcessHelper,
+});
 const networkLayer = new DefaultNetworkLayer(loggingService.createLogger("network"));
 
 // Compute platform-specific executable paths and download URLs
@@ -517,7 +522,16 @@ const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}
 let openSettings: () => void = () => {};
 let openHelp: () => void = () => {};
 let presetNewWorkspaceProject: (projectRef: ProjectRef, deselecting: boolean) => void = () => {};
+// Scans the workspaces' processes: for the sidebar's process summary (the
+// presenter turns its polling on and off) and for `workspace.processes`.
+const processMonitorModule = createProcessMonitorModule({
+  processRunner,
+  dispatcher,
+  logger: loggingService.createLogger("process"),
+  appPid: process.pid,
+});
 const presentationModule = createPresentationModule({
+  processMonitor: processMonitorModule,
   loggingService,
   viewManager,
   windowManager,
@@ -650,6 +664,7 @@ const operationRegistry = createRegistry(
     readUserGuide: () => helpModule.readUserGuide(),
     plugins: () => pluginModule.api,
     wakeups: wakeupModule.api,
+    processes: processMonitorModule,
   },
   apiLogger
 );
@@ -771,7 +786,7 @@ const pluginModule = createPluginModule({
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
   processRunner,
-  scriptPath: pathProvider.runtimePath("scripts/blocking-processes.ps1").toNative(),
+  helperPath: windowsProcessHelper,
   logger: apiLogger,
 });
 const posixProcessCleanupModule = createPosixProcessCleanupModule({
@@ -1072,6 +1087,7 @@ dispatcher.registerModule(terminalFocusModule);
 dispatcher.registerModule(pluginModule);
 dispatcher.registerModule(pollModule);
 dispatcher.registerModule(wakeupModule);
+dispatcher.registerModule(processMonitorModule);
 dispatcher.registerModule(workspaceLogModule.module);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);

@@ -158,9 +158,104 @@ export const Uri = {
   file: (fsPath: string) => fakeUri("file", "", fsPath),
 };
 
+// --- tree views ------------------------------------------------------------
+
+export const TreeItemCollapsibleState = { None: 0, Collapsed: 1, Expanded: 2 } as const;
+
+export class TreeItem {
+  id?: string;
+  description?: string;
+  tooltip?: unknown;
+  iconPath?: unknown;
+  contextValue?: string;
+  constructor(
+    public label: string,
+    public collapsibleState: number = TreeItemCollapsibleState.None
+  ) {}
+}
+
+export class ThemeIcon {
+  constructor(public readonly id: string) {}
+}
+
+export class MarkdownString {
+  constructor(public value = "") {}
+  appendMarkdown(value: string): this {
+    this.value += value;
+    return this;
+  }
+  appendText(value: string): this {
+    this.value += value;
+    return this;
+  }
+  appendCodeblock(value: string, language = ""): this {
+    this.value += `\n\`\`\`${language}\n${value}\n\`\`\`\n`;
+    return this;
+  }
+}
+
+export class EventEmitter<T> {
+  private readonly listeners = new Set<(value: T) => void>();
+  readonly event = (listener: (value: T) => void) => {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  };
+  fire(value: T): void {
+    for (const listener of this.listeners) listener(value);
+  }
+  dispose(): void {
+    this.listeners.clear();
+  }
+}
+
+/** A tree view created by `window.createTreeView`; tests drive its events. */
+export interface FakeTreeView {
+  readonly id: string;
+  readonly options: { treeDataProvider: unknown };
+  visible: boolean;
+  description: string | undefined;
+  readonly visibilityHandlers: Array<(event: { visible: boolean }) => void>;
+  readonly expandHandlers: Array<(event: { element: unknown }) => void>;
+  readonly collapseHandlers: Array<(event: { element: unknown }) => void>;
+  /** Show or hide the view, firing onDidChangeVisibility like VS Code does. */
+  setVisible(visible: boolean): void;
+  dispose: ReturnType<typeof vi.fn>;
+}
+
+export const createdTreeViews: FakeTreeView[] = [];
+
 // --- namespaces ------------------------------------------------------------
 
 export const window = {
+  createTreeView: vi.fn((id: string, options: { treeDataProvider: unknown }) => {
+    const view: FakeTreeView = {
+      id,
+      options,
+      visible: false,
+      description: undefined,
+      visibilityHandlers: [],
+      expandHandlers: [],
+      collapseHandlers: [],
+      setVisible(visible: boolean) {
+        view.visible = visible;
+        for (const handler of view.visibilityHandlers) handler({ visible });
+      },
+      dispose: vi.fn(),
+    };
+    const subscribe =
+      <E>(handlers: Array<(event: E) => void>) =>
+      (handler: (event: E) => void) => {
+        handlers.push(handler);
+        return { dispose: vi.fn() };
+      };
+    Object.assign(view, {
+      onDidChangeVisibility: subscribe(view.visibilityHandlers),
+      onDidExpandElement: subscribe(view.expandHandlers),
+      onDidCollapseElement: subscribe(view.collapseHandlers),
+    });
+    createdTreeViews.push(view);
+    return view;
+  }),
   createTerminal: vi.fn((options: { name?: string }) => {
     const terminal: FakeTerminal = {
       name: options?.name ?? "",
@@ -234,6 +329,7 @@ export function resetVscodeFake(): void {
   shellExecutionStartHandlers.length = 0;
   window.terminals.length = 0;
   createdQuickInputs.length = 0;
+  createdTreeViews.length = 0;
   mockStatusBarItem.text = "";
   mockStatusBarItem.tooltip = "";
   mockStatusBarItem.command = undefined;

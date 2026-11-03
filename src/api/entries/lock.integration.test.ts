@@ -49,6 +49,7 @@ function setup() {
       locks,
       config: createMockConfig(),
       wakeups: { set: async () => {}, show: async () => null },
+      processes: { list: async () => null },
       readUserGuide: async () => "",
       plugins: () => {
         throw new Error("this test reaches no plugins");

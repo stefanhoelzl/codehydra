@@ -188,7 +188,13 @@ describe("MainView component", () => {
 
       await pushState(
         makeUiState([PROJECT], {
-          sidebar: { projects: [PROJECT], width: 320, mode: "docked", find: null },
+          sidebar: {
+            projects: [PROJECT],
+            width: 320,
+            mode: "docked",
+            find: null,
+            processSummary: false,
+          },
         })
       );
 

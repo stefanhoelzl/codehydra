@@ -15,6 +15,7 @@ export const OPERATION_NAMES = [
   "workspace.wakeup.set",
   "workspace.wakeup.clear",
   "workspace.wakeup.show",
+  "workspace.processes",
   "workspace.create",
   "workspace.delete",
   "workspace.switch",

@@ -60,22 +60,22 @@ async function emitKeyEvent(
 // =============================================================================
 
 describe("DevtoolsModule", () => {
-  it("D toggles UI DevTools open", async () => {
+  it("I toggles UI DevTools open", async () => {
     const mock = createMockDeps();
     const module = createDevtoolsModule(mock);
 
-    await emitKeyEvent(module, "d");
+    await emitKeyEvent(module, "i");
 
     expect(mock.uiTarget.toggle).toHaveBeenCalledTimes(1);
     expect(mock.uiTarget.isOpen()).toBe(true);
   });
 
-  it("D toggles UI DevTools closed when already open", async () => {
+  it("I toggles UI DevTools closed when already open", async () => {
     const mock = createMockDeps();
     mock.uiTarget._setOpen(true);
     const module = createDevtoolsModule(mock);
 
-    await emitKeyEvent(module, "d");
+    await emitKeyEvent(module, "i");
 
     expect(mock.uiTarget.toggle).toHaveBeenCalledTimes(1);
     expect(mock.uiTarget.isOpen()).toBe(false);

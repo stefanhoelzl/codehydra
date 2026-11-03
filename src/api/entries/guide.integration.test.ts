@@ -43,6 +43,7 @@ function registry(): OperationRegistry {
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
       config: createMockConfig(),
       wakeups: { set: async () => {}, show: async () => null },
+      processes: { list: async () => null },
       readUserGuide: async () => GUIDE,
       plugins: () => {
         throw new Error("this test reaches no plugins");

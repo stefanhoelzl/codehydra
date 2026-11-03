@@ -174,6 +174,7 @@
     onRenderedWidthChange={(width) => (sidebarRenderedWidth = width)}
     sidebarMode={ui.sidebar.mode}
     find={ui.sidebar.find}
+    processSummary={ui.sidebar.processSummary}
     notifications={ui.notifications}
     {mode}
     shortcutModeActive={mode === "shortcut"}
@@ -190,6 +191,7 @@
     hibernatedView={hibernatedViewForT}
     activeCollapsed={activeCollapsedForC}
     sidebarDocked={ui.sidebar.mode === "docked"}
+    processSummary={ui.sidebar.processSummary}
   />
 
   <!-- Creation panel ("modeless"): the backend creation module's always-alive

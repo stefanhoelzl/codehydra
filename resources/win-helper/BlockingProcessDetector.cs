@@ -1,37 +1,6 @@
-# Detect processes that would block removal of a directory.
-# Usage:
-#   blocking-processes.ps1 -BasePath "C:\path\to\dir" -Action Detect
-#   blocking-processes.ps1 -BasePath "C:\path\to\dir" -Action DetectCwd
-#
-# Output: JSON object with structure:
-#   {"blocking": [...]}
-#   Error: {"error": "message"}
-#
-# -Action Detect    full scan: Restart Manager file handles + CWD
-# -Action DetectCwd CWD only. Runs BEFORE a removal is attempted, so it is on
-#                   the critical path and deliberately does less work.
-
-param(
-    [Parameter(Mandatory=$true)]
-    [string]$BasePath,
-    
-    [Parameter(Mandatory=$true)]
-    [ValidateSet('Detect', 'DetectCwd')]
-    [string]$Action
-)
-
-$ErrorActionPreference = 'Stop'
-
-# Helper function to output JSON error
-function Write-JsonError {
-    param([string]$Message)
-    @{ error = $Message } | ConvertTo-Json -Compress
-}
-
-# Note: ValidateSet already ensures exactly one valid mode is specified
-
-try {
-    Add-Type -TypeDefinition @'
+// Native process inspection for codehydra-procs.exe (Program.cs): which processes
+// hold files (Restart Manager, handle enumeration) or have their working directory
+// (PEB reads) inside a directory, and each process's command line.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -344,6 +313,101 @@ public class BlockingProcessDetector {
             string cwd = Encoding.Unicode.GetString(cwdBytes);
             // Remove trailing backslash if present
             return cwd.TrimEnd('\\');
+        } finally {
+            Marshal.FreeHGlobal(pebPtr);
+        }
+    }
+
+    // =============================================================================
+    // Environment
+    // =============================================================================
+
+    // RTL_USER_PROCESS_PARAMETERS: Environment and EnvironmentSize (Vista+).
+    private const int Environment64Offset = 0x80;
+    private const int EnvironmentSize64Offset = 0x3F0;
+    private const int Environment32Offset = 0x48;
+    private const int EnvironmentSize32Offset = 0x290;
+    // An environment block is at most 32767 characters per variable and in
+    // practice a few KB; anything larger is a misread, not an environment.
+    private const long MaxEnvironmentBytes = 4 * 1024 * 1024;
+
+    /**
+     * The value of environment variable `name` in process `pid` — its current
+     * environment block, read from the PEB. Null when it is unset, or the
+     * process refuses to be read (protected, elevated, another user's).
+     */
+    public static string GetProcessEnvironmentVariable(int pid, string name) {
+        IntPtr hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+        if (hProcess == IntPtr.Zero) return null;
+        try {
+            bool isWow64 = false;
+            IsWow64Process(hProcess, out isWow64);
+            int pointerSize = isWow64 ? 4 : 8;
+            IntPtr parameters = isWow64 ? ProcessParameters32(hProcess) : ProcessParameters64(hProcess);
+            if (parameters == IntPtr.Zero) return null;
+
+            long block = ReadPointer(hProcess, IntPtr.Add(parameters, isWow64 ? Environment32Offset : Environment64Offset), pointerSize);
+            long size = ReadPointer(hProcess, IntPtr.Add(parameters, isWow64 ? EnvironmentSize32Offset : EnvironmentSize64Offset), pointerSize);
+            if (block == 0 || size <= 0 || size > MaxEnvironmentBytes) return null;
+
+            byte[] bytes = new byte[size];
+            int bytesRead;
+            if (!ReadProcessMemory(hProcess, (IntPtr)block, bytes, (int)size, out bytesRead) || bytesRead == 0)
+                return null;
+            return FindVariable(Encoding.Unicode.GetString(bytes, 0, bytesRead - bytesRead % 2), name);
+        } catch {
+            return null;
+        } finally {
+            CloseHandle(hProcess);
+        }
+    }
+
+    // "NAME=value\0NAME=value\0\0"; names compare case-insensitively on Windows.
+    // Entries starting with '=' are the per-drive working directories ("=C:=C:\x").
+    private static string FindVariable(string block, string name) {
+        string prefix = name + "=";
+        foreach (string entry in block.Split('\0')) {
+            if (entry.Length == 0) break; // the terminating empty entry
+            if (entry.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return entry.Substring(prefix.Length);
+        }
+        return null;
+    }
+
+    private static long ReadPointer(IntPtr hProcess, IntPtr address, int pointerSize) {
+        byte[] buffer = new byte[pointerSize];
+        int bytesRead;
+        if (!ReadProcessMemory(hProcess, address, buffer, pointerSize, out bytesRead) || bytesRead != pointerSize)
+            return 0;
+        return pointerSize == 8 ? BitConverter.ToInt64(buffer, 0) : BitConverter.ToUInt32(buffer, 0);
+    }
+
+    // PEB.ProcessParameters of a 64-bit process (PEB offset 0x20).
+    private static IntPtr ProcessParameters64(IntPtr hProcess) {
+        var pbi = new PROCESS_BASIC_INFORMATION();
+        int size = Marshal.SizeOf(pbi);
+        IntPtr pbiPtr = Marshal.AllocHGlobal(size);
+        try {
+            int returnLength;
+            if (NtQueryInformationProcess(hProcess, ProcessBasicInformation, pbiPtr, size, out returnLength) != 0)
+                return IntPtr.Zero;
+            pbi = (PROCESS_BASIC_INFORMATION)Marshal.PtrToStructure(pbiPtr, typeof(PROCESS_BASIC_INFORMATION));
+        } finally {
+            Marshal.FreeHGlobal(pbiPtr);
+        }
+        if (pbi.PebBaseAddress == IntPtr.Zero) return IntPtr.Zero;
+        return (IntPtr)ReadPointer(hProcess, IntPtr.Add(pbi.PebBaseAddress, 0x20), 8);
+    }
+
+    // PEB32.ProcessParameters of a WoW64 process (PEB32 offset 0x10).
+    private static IntPtr ProcessParameters32(IntPtr hProcess) {
+        IntPtr pebPtr = Marshal.AllocHGlobal(IntPtr.Size);
+        try {
+            if (NtQueryInformationProcess(hProcess, ProcessWow64Information, pebPtr, IntPtr.Size, IntPtr.Zero) != 0)
+                return IntPtr.Zero;
+            IntPtr peb32 = Marshal.ReadIntPtr(pebPtr);
+            if (peb32 == IntPtr.Zero) return IntPtr.Zero;
+            return (IntPtr)ReadPointer(hProcess, IntPtr.Add(peb32, 0x10), 4);
         } finally {
             Marshal.FreeHGlobal(pebPtr);
         }
@@ -685,136 +749,4 @@ public class BlockingProcessDetector {
         return handles;
     }
 
-}
-'@ -ErrorAction SilentlyContinue
-
-    $workspacePath = [System.IO.Path]::GetFullPath($BasePath)
-
-    # DetectCwd mode: only scan for processes with CWD under workspace
-    if ($Action -eq 'DetectCwd') {
-        $cwdProcesses = [BlockingProcessDetector]::GetProcessesWithCwdUnder($workspacePath)
-
-        if ($cwdProcesses.Count -eq 0) {
-            @{ blocking = @() } | ConvertTo-Json -Compress -Depth 4
-            exit 0
-        }
-
-        # Enrich with command line
-        $blocking = @()
-        foreach ($proc in $cwdProcesses) {
-            $proc.CommandLine = [BlockingProcessDetector]::GetProcessCommandLine($proc.Pid)
-            if ([string]::IsNullOrEmpty($proc.CommandLine)) {
-                $proc.CommandLine = $proc.Name
-            }
-
-            # Get relative CWD
-            $cwd = [BlockingProcessDetector]::GetProcessCwd($proc.Pid)
-            if ($cwd) {
-                $normalizedCwd = [System.IO.Path]::GetFullPath($cwd).TrimEnd('\', '/')
-                $normalizedBase = $workspacePath.TrimEnd('\', '/')
-                if ($normalizedCwd.StartsWith($normalizedBase, [StringComparison]::OrdinalIgnoreCase)) {
-                    if ($normalizedCwd.Length -eq $normalizedBase.Length) {
-                        $proc.Cwd = "."
-                    } elseif ($normalizedCwd[$normalizedBase.Length] -eq '\' -or $normalizedCwd[$normalizedBase.Length] -eq '/') {
-                        $proc.Cwd = $normalizedCwd.Substring($normalizedBase.Length + 1)
-                    }
-                }
-            }
-
-            $blocking += @{
-                pid = $proc.Pid
-                name = $proc.Name
-                commandLine = $proc.CommandLine
-                files = @()
-                cwd = $proc.Cwd
-            }
-        }
-
-        @{ blocking = $blocking } | ConvertTo-Json -Compress -Depth 4
-        exit 0
-    }
-
-    # Step 1: Detect blocking processes using Restart Manager
-    $blockingProcesses = [BlockingProcessDetector]::GetBlockingProcesses($workspacePath)
-
-    # Step 1b: Also scan for CWD-based processes (always, not just when dir is empty)
-    $seenPids = New-Object 'System.Collections.Generic.HashSet[int]'
-    foreach ($proc in $blockingProcesses) {
-        [void]$seenPids.Add($proc.Pid)
-    }
-    $cwdProcesses = [BlockingProcessDetector]::GetProcessesWithCwdUnder($workspacePath)
-    foreach ($cwdProc in $cwdProcesses) {
-        if (-not $seenPids.Contains($cwdProc.Pid)) {
-            [void]$seenPids.Add($cwdProc.Pid)
-            $blockingProcesses.Add($cwdProc)
-        }
-    }
-
-    if ($blockingProcesses.Count -eq 0) {
-        @{ blocking = @() } | ConvertTo-Json -Compress -Depth 4
-        exit 0
-    }
-
-    # Get PIDs as HashSet for filtering
-    $pidSet = New-Object 'System.Collections.Generic.HashSet[int]'
-    foreach ($proc in $blockingProcesses) {
-        [void]$pidSet.Add($proc.Pid)
-    }
-
-    # Step 2: Get file handles for blocking processes
-    $fileHandles = [BlockingProcessDetector]::GetFileHandles($workspacePath, $pidSet)
-
-    # Step 3: Get command line and CWD for each process, and assign files
-    foreach ($proc in $blockingProcesses) {
-        # Get command line
-        $proc.CommandLine = [BlockingProcessDetector]::GetProcessCommandLine($proc.Pid)
-        if ([string]::IsNullOrEmpty($proc.CommandLine)) {
-            $proc.CommandLine = $proc.Name
-        }
-
-        # Get CWD and check if it's within workspace
-        $cwd = [BlockingProcessDetector]::GetProcessCwd($proc.Pid)
-        if ($cwd) {
-            $normalizedCwd = [System.IO.Path]::GetFullPath($cwd).TrimEnd('\', '/')
-            $normalizedBase = $workspacePath.TrimEnd('\', '/')
-            if ($normalizedCwd.StartsWith($normalizedBase, [StringComparison]::OrdinalIgnoreCase)) {
-                if ($normalizedCwd.Length -eq $normalizedBase.Length) {
-                    $proc.Cwd = "."
-                } elseif ($normalizedCwd[$normalizedBase.Length] -eq '\' -or $normalizedCwd[$normalizedBase.Length] -eq '/') {
-                    $proc.Cwd = $normalizedCwd.Substring($normalizedBase.Length + 1)
-                }
-            }
-        }
-
-        # Assign files to this process (max 20)
-        $procFiles = @()
-        foreach ($handle in $fileHandles) {
-            if ($handle.ProcessId -eq $proc.Pid -and $procFiles.Count -lt 20) {
-                $relative = $handle.DosPath.Substring($workspacePath.Length).TrimStart('\', '/')
-                if ($relative -and -not ($procFiles -contains $relative)) {
-                    $procFiles += $relative
-                }
-            }
-        }
-        $proc.Files = $procFiles
-    }
-
-    # Build output
-    $blocking = @()
-    foreach ($proc in $blockingProcesses) {
-        $blocking += @{
-            pid = $proc.Pid
-            name = $proc.Name
-            commandLine = $proc.CommandLine
-            files = @($proc.Files)
-            cwd = $proc.Cwd
-        }
-    }
-
-    @{ blocking = $blocking } | ConvertTo-Json -Compress -Depth 4
-    exit 0
-
-} catch {
-    Write-JsonError $_.Exception.Message
-    exit 1
 }

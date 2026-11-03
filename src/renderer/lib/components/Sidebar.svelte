@@ -41,6 +41,11 @@
   import ProjectCard from "./sidebar/ProjectCard.svelte";
   import NoteCard from "./sidebar/NoteCard.svelte";
   import SidebarIcon from "./sidebar/SidebarIcon.svelte";
+  import {
+    describeProcessSummary,
+    formatProcessBadge,
+    sumProcessSummaries,
+  } from "$lib/utils/process-summary.js";
   import { createRowMotion, highlight, noteIn, noteOut } from "./sidebar/motion";
 
   const logger = createLogger("ui");
@@ -71,6 +76,8 @@
      * shot. A docked sidebar never covers the workspace, so it ignores this.
      */
     capturing?: boolean;
+    /** Whether rows show their CPU and memory (config `sidebar.process-summary`). */
+    processSummary?: boolean;
   }
 
   let {
@@ -83,6 +90,7 @@
     mode = "workspace",
     shortcutModeActive = false,
     capturing = false,
+    processSummary = false,
   }: SidebarProps = $props();
 
   const reducedMotion =
@@ -569,6 +577,8 @@
     automated: allRows.filter((row) => row.status === "ready" && rowGroup(row) === "automated")
       .length,
   });
+  /** With the process summary on, every workspace's CPU and memory together (null otherwise). */
+  const processTotal = $derived(sumProcessSummaries(allRows.map((row) => row.processes)));
   /** The footer summary names only the counts it shows: the non-zero ones. */
   const summaryTitle = $derived(
     [
@@ -705,6 +715,12 @@
         {#if summary.automated > 0}<i class="auto"
             ><SidebarIcon name="alarm" size={10} />{summary.automated}</i
           >{/if}
+        {#if processTotal !== null}<i
+            class="proc"
+            title={`All workspaces: ${describeProcessSummary(processTotal)}`}
+            aria-label={`All workspaces: ${describeProcessSummary(processTotal)}`}
+            >{formatProcessBadge(processTotal)}</i
+          >{/if}
       </div>
       <button
         type="button"
@@ -720,8 +736,19 @@
       <button
         type="button"
         class="ib"
+        class:on={processSummary}
+        title={`${processSummary ? "Hide" : "Show"} process summary (Alt+X, P)`}
+        aria-label={processSummary ? "Hide process summary" : "Show process summary"}
+        aria-pressed={processSummary}
+        onclick={() =>
+          api.emitEvent({ kind: "set-sidebar-process-summary", enabled: !processSummary })}
+        ><SidebarIcon name="pulse" /></button
+      >
+      <button
+        type="button"
+        class="ib"
         class:on={docked}
-        title={`${docked ? "Undock" : "Dock"} sidebar (Alt+X, P)`}
+        title={`${docked ? "Undock" : "Dock"} sidebar (Alt+X, D)`}
         aria-label={docked ? "Undock sidebar" : "Dock sidebar"}
         aria-pressed={docked}
         onclick={() =>
@@ -1043,6 +1070,11 @@
   }
   .sum .auto {
     color: var(--ch-sb-auto);
+  }
+  .sum .proc {
+    color: var(--ch-sb-fg-2);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   .sum .d {
     background: var(--ch-sb-idle);

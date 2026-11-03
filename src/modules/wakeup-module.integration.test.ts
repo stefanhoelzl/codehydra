@@ -268,6 +268,7 @@ function createSetup() {
       },
       config,
       wakeups: wakeup.api,
+      processes: { list: async () => null },
       readUserGuide: async () => "",
       plugins: () => {
         throw new Error("this test reaches no plugins");

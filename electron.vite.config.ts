@@ -58,7 +58,6 @@ export default defineConfig({
       viteStaticCopy({
         targets: [
           { src: "dist/extensions/*", dest: "assets/extensions", rename: { stripBase: true } },
-          { src: "resources/scripts/*", dest: "assets/scripts", rename: { stripBase: true } },
           { src: "resources/bin/*", dest: "assets/bin", rename: { stripBase: true } },
           { src: "dist/bin/*", dest: "assets/bin", rename: { stripBase: true } },
         ],

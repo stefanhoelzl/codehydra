@@ -8,7 +8,23 @@
  * usage in actual boundary tests.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { ProcessRunner, SpawnedProcess } from "./process";
+
+/**
+ * The Windows process helper as `pnpm build:wrappers` leaves it.
+ *
+ * Throws, never skips, when it has not been built: a Windows boundary test
+ * that silently skipped would report the helper as working.
+ */
+export function windowsProcessHelperPath(): string {
+  const helper = join(process.cwd(), "dist", "bin", "codehydra-procs.exe");
+  if (!existsSync(helper)) {
+    throw new Error(`${helper} is missing: run \`pnpm build:wrappers\` first`);
+  }
+  return helper;
+}
 
 /**
  * Platform detection constant.

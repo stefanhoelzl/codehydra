@@ -52,7 +52,7 @@ export function makeUiState(
   overrides?: Partial<UiState>
 ): UiState {
   return {
-    sidebar: { projects, width: 288, mode: "overlay", find: null },
+    sidebar: { projects, width: 288, mode: "overlay", find: null, processSummary: false },
     frames: {},
     main: { kind: "creation" },
     theme: "dark",

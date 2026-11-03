@@ -38,6 +38,7 @@ import {
   type GetWorkspaceStatusIntent,
 } from "../intents/get-workspace-status";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "../intents/get-metadata";
+import { INTENT_GET_PROJECT_BASES, type GetProjectBasesIntent } from "../intents/get-project-bases";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type { Logger } from "../boundaries/platform/logging";
 import { getErrorMessage } from "../shared/error-utils";
@@ -395,15 +396,23 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     const handle = deps.ui.dialog(buildRemoveConfirmConfig(state));
     let dialogOpen = true;
 
-    // Background status check (refresh fetches remotes — slow). Never blocks
-    // the dialog; a failure warns that the status is unknown rather than
-    // silently rendering as "verified clean".
-    void (async (): Promise<void> => {
+    // Background status check, in two steps. Never blocks the dialog; a
+    // failure warns that the status is unknown rather than silently rendering
+    // as "verified clean".
+    //
+    // 1. The local status at once (no fetch), so the warnings show quickly.
+    // 2. Then fetch the remotes — project-level, it cannot fail for a removed
+    //    workspace — and re-read the status only while the dialog is still
+    //    open: the fetch can only change the unmerged count, which nobody
+    //    reads once the dialog is answered. A confirmed removal can finish
+    //    within the fetch (git fetch is slow, a removal on Windows fast), and a
+    //    status read of a workspace that is gone fails.
+    const readStatus = async (): Promise<boolean> => {
       try {
         const [status, metadata] = await Promise.all([
           deps.dispatcher.dispatch<GetWorkspaceStatusIntent>({
             type: INTENT_GET_WORKSPACE_STATUS,
-            payload: { workspaceRef: input.workspaceRef, refresh: true },
+            payload: { workspaceRef: input.workspaceRef },
           }),
           deps.dispatcher.dispatch<GetMetadataIntent>({
             type: INTENT_GET_METADATA,
@@ -418,15 +427,29 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
           unmergedCommits: status.unmergedCommits,
           base: metadata["base"],
         };
+        return true;
       } catch (error) {
         deps.logger
           .scoped({ path: input.workspacePath })
           .warn("Remove-confirm status check failed", { error: getErrorMessage(error) });
         state = { ...state, checking: false, checkFailed: true };
+        return false;
+      } finally {
+        if (dialogOpen) handle.update(buildRemoveConfirmConfig(state));
       }
-      if (dialogOpen) {
-        handle.update(buildRemoveConfirmConfig(state));
+    };
+    void (async (): Promise<void> => {
+      if (!(await readStatus()) || !dialogOpen) return;
+      try {
+        await deps.dispatcher.dispatch<GetProjectBasesIntent>({
+          type: INTENT_GET_PROJECT_BASES,
+          payload: { projectRef: input.projectRef, refresh: true, wait: true },
+        });
+      } catch {
+        // Best-effort, like get-status's own refresh: the local status stands.
+        return;
       }
+      if (dialogOpen) await readStatus();
     })();
 
     try {

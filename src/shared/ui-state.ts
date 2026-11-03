@@ -160,6 +160,20 @@ export interface UiWorkspaceRow {
   readonly openError?: string;
   /** Present while `status` is `deleting`/`delete-failed`; absent otherwise. */
   readonly deletionProgress?: UiDeletionProgress;
+  /**
+   * The workspace's processes, totalled, while `sidebar.processSummary` is on
+   * and a scan has found any. Absent when hibernated.
+   */
+  readonly processes?: UiProcessSummary;
+}
+
+/** A workspace's processes, totalled (the sidebar's process summary). */
+export interface UiProcessSummary {
+  /** Percent of one core over the last few seconds; null until a second scan. */
+  readonly cpuPercent: number | null;
+  /** Resident memory, in bytes. */
+  readonly rssBytes: number;
+  readonly count: number;
 }
 
 export interface UiProjectRow {
@@ -240,6 +254,8 @@ export interface UiState {
      * stays expanded while it is open.
      */
     readonly find: UiSidebarFind | null;
+    /** Whether rows show their workspace's CPU and memory (config `sidebar.process-summary`). */
+    readonly processSummary: boolean;
   };
   /**
    * Mounted workspace iframes: key → IDE server URL. Every workspace with a

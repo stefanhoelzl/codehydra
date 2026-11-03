@@ -47,6 +47,7 @@ import {
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_LOADING,
   WORKSPACE_ENV_DEFAULTS,
+  WORKSPACE_REF_ENV_VAR,
 } from "./open-workspace";
 import type {
   OpenWorkspaceIntent,
@@ -86,6 +87,8 @@ import type { WorkspacePath } from "./contract";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_REF = projectRefFor(PROJECT_ROOT);
+/** Every open sets this in the workspace environment. */
+const REF_ENV = { [WORKSPACE_REF_ENV_VAR]: makeWorkspaceRef(PROJECT_REF, "feature-x") };
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const WORKSPACE_BRANCH = "feature-x";
 const WORKSPACE_METADATA: Readonly<Record<string, string>> = { base: "main" };
@@ -1117,6 +1120,7 @@ describe("OpenWorkspace Operation", () => {
       // Both modules' envVars should be merged over the workspace environment
       expect(capturedEnvVars).toEqual({
         ...WORKSPACE_ENV_DEFAULTS,
+        ...REF_ENV,
         AGENT_PORT: "9090",
         BRIDGE_PORT: "15000",
       });
@@ -1176,16 +1180,24 @@ describe("OpenWorkspace Operation", () => {
       const captured = await openWithHookEnv();
 
       // setup starts the agent server; finalize hands the editor its terminal env
-      expect(captured.setup).toEqual({ GIT_OPTIONAL_LOCKS: "0" });
-      expect(captured.finalize).toEqual({ GIT_OPTIONAL_LOCKS: "0" });
+      expect(captured.setup).toEqual({ GIT_OPTIONAL_LOCKS: "0", ...REF_ENV });
+      expect(captured.finalize).toEqual({ GIT_OPTIONAL_LOCKS: "0", ...REF_ENV });
       expect(captured.agentTerminal).toMatchObject({ GIT_OPTIONAL_LOCKS: "0" });
     });
 
     it("lets the repository hook override a default", async () => {
       const captured = await openWithHookEnv({ GIT_OPTIONAL_LOCKS: "1", DATABASE_URL: "x" });
 
-      expect(captured.setup).toEqual({ GIT_OPTIONAL_LOCKS: "1", DATABASE_URL: "x" });
+      expect(captured.setup).toEqual({ GIT_OPTIONAL_LOCKS: "1", DATABASE_URL: "x", ...REF_ENV });
       expect(captured.agentTerminal).toMatchObject({ GIT_OPTIONAL_LOCKS: "1" });
+    });
+
+    it("names the workspace in every terminal's environment, over any hook", async () => {
+      const captured = await openWithHookEnv({ [WORKSPACE_REF_ENV_VAR]: "spoofed" });
+
+      // finalize's workspaceEnv is what sidekick applies to every terminal
+      expect(captured.finalize).toMatchObject(REF_ENV);
+      expect(captured.agentTerminal).toMatchObject(REF_ENV);
     });
 
     it("leaves out a default the app's own environment already sets", async () => {
@@ -1194,8 +1206,8 @@ describe("OpenWorkspace Operation", () => {
       const captured = await openWithHookEnv();
 
       // Absent, so the inherited value reaches the agent and editor unchanged
-      expect(captured.setup).toEqual({});
-      expect(captured.finalize).toEqual({});
+      expect(captured.setup).toEqual(REF_ENV);
+      expect(captured.finalize).toEqual(REF_ENV);
     });
   });
 

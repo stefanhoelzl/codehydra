@@ -19,6 +19,8 @@
      * collapsed; null hides the hint (no active workspace, or Find is open).
      */
     activeCollapsed?: boolean | null;
+    /** Whether the sidebar shows each row's CPU and memory (drives the M hint label). */
+    processSummary?: boolean;
     /** Whether the sidebar is docked (drives the P hint label). */
     sidebarDocked?: boolean;
   }
@@ -33,6 +35,7 @@
     hibernatedView = null,
     activeCollapsed = null,
     sidebarDocked = false,
+    processSummary = false,
   }: Props = $props();
 
   // When there's no active workspace (e.g. the New workspace view is the
@@ -134,10 +137,19 @@
   </span>
   <span
     class="shortcut-hint"
-    aria-label={sidebarDocked ? "P key to undock the sidebar" : "P key to dock the sidebar"}
+    aria-label={sidebarDocked ? "D key to undock the sidebar" : "D key to dock the sidebar"}
+  >
+    <vscode-badge>D</vscode-badge>
+    {sidebarDocked ? "Undock" : "Dock"}
+  </span>
+  <span
+    class="shortcut-hint"
+    aria-label={processSummary
+      ? "P key to hide the process summary"
+      : "P key to show the process summary"}
   >
     <vscode-badge>P</vscode-badge>
-    {sidebarDocked ? "Undock" : "Dock"}
+    {processSummary ? "Hide processes" : "Show processes"}
   </span>
   <span class="shortcut-hint" aria-label="S key to open settings">
     <vscode-badge>S</vscode-badge> Settings

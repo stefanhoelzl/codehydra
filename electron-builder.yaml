@@ -28,12 +28,10 @@ extraResources:
     to: icon.png
   - from: resources/icon.ico
     to: icon.ico
-  # CLI wrapper scripts and hook handler (executed by Claude Code)
+  # CLI wrapper scripts and hook handler (executed by Claude Code), and the
+  # Windows process helper codehydra-procs.exe (scripts/build-win-helper.ts)
   - from: out/main/assets/bin
     to: bin
-  # PowerShell scripts (executed by PowerShell)
-  - from: out/main/assets/scripts
-    to: scripts
   # VSIX files (installed by code-server)
   - from: out/main/assets/extensions
     to: extensions

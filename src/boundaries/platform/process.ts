@@ -2,6 +2,7 @@
  * Process spawning utilities.
  */
 
+import { readdir, readFile, readlink } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { execa } from "execa";
 import type { Logger } from "./logging";
@@ -173,6 +174,54 @@ export interface ListeningProcess {
 }
 
 /**
+ * One process in an OS-wide snapshot (`ProcessRunner.listProcesses`).
+ *
+ * Every field the OS would not report for a process is null (or 0 for `ppid`)
+ * rather than a guess: another user's process, a protected one on Windows, or
+ * one that exited mid-scan. The entry itself is still listed.
+ */
+export interface ProcessSnapshotEntry {
+  readonly pid: number;
+  /** Parent pid; 0 when the OS reported none. */
+  readonly ppid: number;
+  /** Executable name, e.g. "node". */
+  readonly name: string;
+  /** Full command line, or the bare name when the OS did not report one. */
+  readonly commandLine: string;
+  /** Working directory, null when the OS would not tell. */
+  readonly cwd: string | null;
+  /** Resident memory, in bytes. */
+  readonly rssBytes: number;
+  /** User + system CPU time used since it started, in ms; null when unreadable. */
+  readonly cpuTimeMs: number | null;
+  /**
+   * When it started, epoch ms; null when unreadable. With the pid, it tells a
+   * process apart from a later one that reuses its pid.
+   */
+  readonly startedAt: number | null;
+  /**
+   * The value of the environment variable `listProcesses` was asked about
+   * (`envVar`); null when unset, unreadable (another user's or a protected
+   * process), or no variable was asked about. Linux and macOS report the
+   * environment the process started with, Windows its current one.
+   */
+  readonly envValue: string | null;
+}
+
+/** What `listProcesses` reads besides the fixed fields. */
+export interface ListProcessesOptions {
+  /** An environment variable to read from every process (`envValue`). */
+  readonly envVar?: string;
+}
+
+/** Every process on the machine at one moment. */
+export interface ProcessSnapshot {
+  /** Epoch ms the scan finished. */
+  readonly takenAt: number;
+  readonly processes: readonly ProcessSnapshotEntry[];
+}
+
+/**
  * How long an OS-level process scan may take before it is abandoned.
  *
  * A ceiling, not a delay: a scan that answers fast is unaffected by it, and one
@@ -255,6 +304,30 @@ export interface ProcessRunner {
    * @param port - TCP port to look up on localhost.
    */
   findListeningProcesses(port: number): Promise<ListeningProcess[]>;
+
+  /**
+   * Every process on the machine, with parent, working directory, command
+   * line, memory and CPU time — what the process monitor attributes to
+   * workspaces.
+   *
+   * Linux reads /proc; macOS runs `ps` and `lsof -d cwd`; Windows runs the
+   * bundled helper exe (`codehydra-procs.exe snapshot`), which reads each
+   * process's PEB.
+   *
+   * Null when the scan failed or timed out — never an empty list, so a caller
+   * cannot mistake a failed scan for a machine running nothing.
+   */
+  listProcesses(options?: ListProcessesOptions): Promise<ProcessSnapshot | null>;
+
+  /**
+   * The TCP ports each of `pids` listens on. A pid listening on nothing, or
+   * one the OS would not tell about, is absent from the map.
+   *
+   * Scoped to the given pids because the per-process lookup is the expensive
+   * half on Linux (each process's fds are read). Best-effort like
+   * `findListeningProcesses`: an empty map when the scan failed.
+   */
+  findListeningPorts(pids: readonly number[]): Promise<ReadonlyMap<number, readonly number[]>>;
 }
 
 /**
@@ -811,6 +884,316 @@ export function parseWindowsListeners(stdout: string): ListeningProcess[] {
   return processes;
 }
 
+// ============================================================================
+// Process snapshot parsers (listProcesses / findListeningPorts)
+// ============================================================================
+
+/** Last path segment of an executable, either separator. */
+function executableName(path: string): string {
+  const segment = path.split(/[\\/]/).pop() ?? path;
+  return segment === "" ? path : segment;
+}
+
+/** The `btime` line of /proc/stat: boot time, epoch seconds → ms. */
+export function parseLinuxBootTime(procStat: string): number | null {
+  const match = /^btime\s+(\d+)$/m.exec(procStat);
+  return match ? Number(match[1]) * 1000 : null;
+}
+
+/** What the Linux snapshot needs from the system besides /proc/<pid>. */
+export interface LinuxProcContext {
+  /** Epoch ms of boot (`btime`), null when /proc/stat had none. */
+  readonly bootMs: number | null;
+  /** Clock ticks per second (`getconf CLK_TCK`, nearly always 100). */
+  readonly clockTicks: number;
+  /** Bytes per page (`getconf PAGESIZE`). */
+  readonly pageSize: number;
+}
+
+/**
+ * One process from /proc/<pid>/stat plus its cmdline and cwd link.
+ *
+ * `comm` sits in parentheses and may itself contain spaces and parentheses,
+ * so the fixed fields are read after the LAST `)`. Field numbers below are
+ * proc(5)'s, counted from 1 with `pid` and `comm` first.
+ */
+export function parseLinuxProcess(
+  stat: string,
+  cmdline: string,
+  cwd: string | null,
+  context: LinuxProcContext,
+  envValue: string | null = null
+): ProcessSnapshotEntry | null {
+  const open = stat.indexOf("(");
+  const close = stat.lastIndexOf(")");
+  if (open === -1 || close < open) return null;
+  const pid = Number(stat.slice(0, open).trim());
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const comm = stat.slice(open + 1, close);
+  // After ")": field 3 (state) is index 0, so field N is index N - 3.
+  const fields = stat
+    .slice(close + 1)
+    .trim()
+    .split(/\s+/);
+  const field = (n: number): number => Number(fields[n - 3]);
+  const ppid = field(4);
+  const utime = field(14);
+  const stime = field(15);
+  const starttime = field(22);
+  const rssPages = field(24);
+
+  const argv = cmdline.split("\0").filter((arg) => arg !== "");
+  const name = argv.length > 0 ? executableName(argv[0]!) : comm;
+  return {
+    pid,
+    ppid: Number.isInteger(ppid) && ppid > 0 ? ppid : 0,
+    name,
+    commandLine: argv.length > 0 ? argv.join(" ") : comm,
+    // A cwd removed from under the process reads as "<path> (deleted)".
+    cwd: cwd === null ? null : cwd.replace(/ \(deleted\)$/, ""),
+    rssBytes: Number.isFinite(rssPages) && rssPages > 0 ? rssPages * context.pageSize : 0,
+    cpuTimeMs:
+      Number.isFinite(utime) && Number.isFinite(stime)
+        ? ((utime + stime) * 1000) / context.clockTicks
+        : null,
+    startedAt:
+      context.bootMs !== null && Number.isFinite(starttime)
+        ? Math.round(context.bootMs + (starttime * 1000) / context.clockTicks)
+        : null,
+    envValue,
+  };
+}
+
+/** Field 22 of /proc/<pid>/stat (start time, in ticks since boot), raw; "" when malformed. */
+export function linuxStartTicks(stat: string): string {
+  const close = stat.lastIndexOf(")");
+  if (close === -1) return "";
+  return (
+    stat
+      .slice(close + 1)
+      .trim()
+      .split(/\s+/)[22 - 3] ?? ""
+  );
+}
+
+/**
+ * Listening TCP sockets in /proc/net/tcp or tcp6: socket inode → port.
+ *
+ * Each row is `sl local rem st … inode`; `local` is `<hex addr>:<hex port>`
+ * and state `0A` is LISTEN.
+ */
+export function parseProcNetTcpListeners(text: string): Map<number, number> {
+  const ports = new Map<number, number>();
+  for (const line of text.split("\n")) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 10 || fields[3] !== "0A") continue;
+    const local = fields[1]!;
+    const port = parseInt(local.slice(local.lastIndexOf(":") + 1), 16);
+    const inode = Number(fields[9]);
+    if (Number.isInteger(port) && port > 0 && Number.isInteger(inode) && inode > 0) {
+      ports.set(inode, port);
+    }
+  }
+  return ports;
+}
+
+/** The inode of a `socket:[12345]` fd link, or null for anything else. */
+export function socketInode(link: string): number | null {
+  const match = /^socket:\[(\d+)\]$/.exec(link);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * A `ps` time column — `time` (CPU) or `etime` (elapsed) — in ms.
+ *
+ * `[[dd-]hh:]mm:ss[.ff]`: macOS prints `time` as `m:ss.ff` and `etime` as
+ * `[[dd-]hh:]mm:ss`. Null for anything else.
+ */
+export function parsePsDuration(value: string): number | null {
+  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(value.trim());
+  if (!match) return null;
+  const [, days, hours, minutes, seconds] = match;
+  const total =
+    Number(days ?? 0) * 86_400 +
+    Number(hours ?? 0) * 3_600 +
+    Number(minutes) * 60 +
+    Number(seconds);
+  return Math.round(total * 1000);
+}
+
+/** Variable `name` in a NUL-separated `NAME=value` block (/proc/<pid>/environ); null when unset. */
+export function parseEnviron(environ: string, name: string): string | null {
+  const prefix = `${name}=`;
+  for (const entry of environ.split("\0")) {
+    if (entry.startsWith(prefix)) return entry.slice(prefix.length);
+  }
+  return null;
+}
+
+/**
+ * `ps -A -ww -E -o pid=,command=` output: pid → the value of `name`.
+ *
+ * macOS prints the environment after the arguments, space-separated and
+ * unquoted, so the format is ambiguous. The LAST `name=` wins (the arguments
+ * come first and could contain the text too), and the value runs up to the
+ * next ` OTHER_NAME=` or the end of the line — a value that itself contains
+ * " X=" is cut there. Processes ps shows no environment for (another user's)
+ * are absent.
+ */
+export function parsePsEnvironment(stdout: string, name: string): Map<number, string> {
+  const values = new Map<number, string>();
+  const marker = ` ${name}=`;
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*(\d+)\s(.*)$/.exec(line);
+    if (!match) continue;
+    const rest = match[2]!;
+    const at = rest.lastIndexOf(marker);
+    if (at === -1) continue;
+    const value = rest.slice(at + marker.length);
+    const next = /\s[A-Za-z_][A-Za-z0-9_]*=/.exec(value);
+    values.set(Number(match[1]), (next ? value.slice(0, next.index) : value).trimEnd());
+  }
+  return values;
+}
+
+/** `lsof -d cwd -Fpn` output: pid → working directory. */
+export function parseLsofCwds(stdout: string): Map<number, string> {
+  const cwds = new Map<number, string>();
+  let pid: number | undefined;
+  for (const line of stdout.split("\n")) {
+    if (line[0] === "p") pid = Number(line.slice(1));
+    else if (line[0] === "n" && pid !== undefined && Number.isInteger(pid)) {
+      cwds.set(pid, line.slice(1));
+    }
+  }
+  return cwds;
+}
+
+/**
+ * `lsof -iTCP -sTCP:LISTEN -Fpn` output: pid → ports.
+ *
+ * An `n` line is the local address: `*:5173`, `127.0.0.1:5173`, `[::1]:5173`.
+ */
+export function parseLsofListenPorts(stdout: string): Map<number, number[]> {
+  const ports = new Map<number, number[]>();
+  let pid: number | undefined;
+  for (const line of stdout.split("\n")) {
+    if (line[0] === "p") {
+      pid = Number(line.slice(1));
+      continue;
+    }
+    if (line[0] !== "n" || pid === undefined || !Number.isInteger(pid)) continue;
+    const port = Number(line.slice(line.lastIndexOf(":") + 1));
+    if (!Number.isInteger(port) || port <= 0) continue;
+    const list = ports.get(pid) ?? [];
+    if (!list.includes(port)) list.push(port);
+    ports.set(pid, list);
+  }
+  return ports;
+}
+
+/**
+ * The macOS snapshot from three scans:
+ * - `ps -A -o pid=,ppid=,rss=,time=,etime=,args=` (rss in KiB; args to end of line),
+ * - `ps -A -o pid=,comm=` (the executable path, which may contain spaces),
+ * - `lsof -d cwd -Fpn` (working directories).
+ */
+export function parseMacSnapshot(
+  psOut: string,
+  commOut: string,
+  cwds: ReadonlyMap<number, string>,
+  now: number,
+  envValues: ReadonlyMap<number, string> = new Map()
+): ProcessSnapshotEntry[] {
+  const names = new Map<number, string>();
+  for (const line of commOut.split("\n")) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (match) names.set(Number(match[1]), executableName(match[2]!.trim()));
+  }
+  const entries: ProcessSnapshotEntry[] = [];
+  for (const line of psOut.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*(.*)$/.exec(line);
+    if (!match) continue;
+    const [, rawPid, rawPpid, rawRss, time, etime, args] = match;
+    const pid = Number(rawPid);
+    const elapsed = parsePsDuration(etime!);
+    const name = names.get(pid) ?? executableName(args!.split(" ")[0] ?? "unknown");
+    entries.push({
+      pid,
+      ppid: Number(rawPpid),
+      name,
+      commandLine: args!.trim() === "" ? name : args!.trim(),
+      cwd: cwds.get(pid) ?? null,
+      rssBytes: Number(rawRss) * 1024,
+      cpuTimeMs: parsePsDuration(time!),
+      startedAt: elapsed === null ? null : now - elapsed,
+      envValue: envValues.get(pid) ?? null,
+    });
+  }
+  return entries;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** `codehydra-procs.exe snapshot` output; null when it is not the expected JSON. */
+export function parseWindowsSnapshot(stdout: string): ProcessSnapshotEntry[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout.trim());
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed["processes"])) return null;
+  const entries: ProcessSnapshotEntry[] = [];
+  for (const item of parsed["processes"] as unknown[]) {
+    if (!isRecord(item)) continue;
+    const pid = numberOrNull(item["pid"]);
+    if (pid === null || pid <= 0) continue;
+    const name = typeof item["name"] === "string" ? item["name"] : "unknown";
+    const commandLine = typeof item["commandLine"] === "string" ? item["commandLine"] : "";
+    entries.push({
+      pid,
+      ppid: numberOrNull(item["ppid"]) ?? 0,
+      name,
+      commandLine: commandLine === "" ? name : commandLine,
+      cwd: typeof item["cwd"] === "string" && item["cwd"] !== "" ? item["cwd"] : null,
+      rssBytes: numberOrNull(item["rssBytes"]) ?? 0,
+      cpuTimeMs: numberOrNull(item["cpuTimeMs"]),
+      startedAt: numberOrNull(item["startedAt"]),
+      envValue: typeof item["env"] === "string" ? item["env"] : null,
+    });
+  }
+  return entries;
+}
+
+/** `codehydra-procs.exe listeners` output: pid → ports. */
+export function parseWindowsListenPorts(stdout: string): Map<number, number[]> {
+  const ports = new Map<number, number[]>();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout.trim());
+  } catch {
+    return ports;
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed["listeners"])) return ports;
+  for (const item of parsed["listeners"] as unknown[]) {
+    if (!isRecord(item)) continue;
+    const pid = numberOrNull(item["pid"]);
+    const port = numberOrNull(item["port"]);
+    if (pid === null || port === null || pid <= 0 || port <= 0) continue;
+    const list = ports.get(pid) ?? [];
+    if (!list.includes(port)) list.push(port);
+    ports.set(pid, list);
+  }
+  return ports;
+}
+
 /**
  * PowerShell that looks up the name and command line of the given processes.
  *
@@ -832,8 +1215,27 @@ function windowsListenerDetailsQuery(pids: readonly number[]): string {
   );
 }
 
+export interface ExecaProcessRunnerOptions {
+  /**
+   * The bundled Windows process helper (`codehydra-procs.exe`). Without it,
+   * `listProcesses` and `findListeningPorts` find nothing on Windows.
+   */
+  readonly windowsProcessHelper?: string;
+}
+
 export class ExecaProcessRunner implements ProcessRunner {
-  constructor(private readonly logger: Logger) {}
+  /** `getconf` answers, read once: they do not change while we run. */
+  private linuxConstants: Promise<{ clockTicks: number; pageSize: number }> | undefined;
+  /**
+   * What the last Linux scan read that never changes after exec — command
+   * line and the asked-about environment variable — by `pid:starttime:var`.
+   */
+  private linuxFixed = new Map<string, { cmdline: string; envValue: string | null }>();
+
+  constructor(
+    private readonly logger: Logger,
+    private readonly options: ExecaProcessRunnerOptions = {}
+  ) {}
 
   run(command: string, args: readonly string[], options?: ProcessOptions): SpawnedProcess {
     const subprocess = execa(command, [...args], {
@@ -943,23 +1345,209 @@ export class ExecaProcessRunner implements ProcessRunner {
     }
   }
 
+  async listProcesses(options?: ListProcessesOptions): Promise<ProcessSnapshot | null> {
+    const envVar = options?.envVar;
+    try {
+      const processes =
+        process.platform === "win32"
+          ? await this.listProcessesWindows(envVar)
+          : process.platform === "darwin"
+            ? await this.listProcessesMac(envVar)
+            : await this.listProcessesLinux(envVar);
+      if (processes === null) return null;
+      return { takenAt: Date.now(), processes };
+    } catch (error) {
+      this.logger.warn("Process snapshot failed", { error: getErrorMessage(error) });
+      return null;
+    }
+  }
+
+  async findListeningPorts(
+    pids: readonly number[]
+  ): Promise<ReadonlyMap<number, readonly number[]>> {
+    if (pids.length === 0) return new Map();
+    try {
+      if (process.platform === "win32") {
+        const helper = this.options.windowsProcessHelper;
+        if (helper === undefined) return new Map();
+        const all = parseWindowsListenPorts(await this.scan(helper, ["listeners"]));
+        const wanted = new Set(pids);
+        return new Map([...all].filter(([pid]) => wanted.has(pid)));
+      }
+      if (process.platform === "darwin") {
+        // -a ANDs -p with -i; without it lsof ORs them and lists every socket.
+        // Nothing listening is the common case, and lsof then prints nothing.
+        return parseLsofListenPorts(
+          await this.scan(
+            "lsof",
+            ["-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-p", pids.join(","), "-Fpn"],
+            PROCESS_SCAN_TIMEOUT_MS,
+            true
+          )
+        );
+      }
+      return await this.findListeningPortsLinux(pids);
+    } catch (error) {
+      this.logger.warn("Listening port scan failed", { error: getErrorMessage(error) });
+      return new Map();
+    }
+  }
+
+  private async listProcessesLinux(envVar: string | undefined): Promise<ProcessSnapshotEntry[]> {
+    const [names, procStat, constants] = await Promise.all([
+      readdir("/proc"),
+      readFile("/proc/stat", "utf8"),
+      this.getLinuxConstants(),
+    ]);
+    const context: LinuxProcContext = { ...constants, bootMs: parseLinuxBootTime(procStat) };
+    const fixed = new Map<string, { cmdline: string; envValue: string | null }>();
+    const entries = await Promise.all(
+      names
+        .filter((name) => /^\d+$/.test(name))
+        .map(async (pid): Promise<ProcessSnapshotEntry | null> => {
+          try {
+            const [stat, cwd] = await Promise.all([
+              readFile(`/proc/${pid}/stat`, "utf8"),
+              // EACCES for another user's process: listed, without a cwd.
+              readlink(`/proc/${pid}/cwd`).catch(() => null),
+            ]);
+            // The command line and /proc/<pid>/environ are fixed once the
+            // process has exec'd, so they are read once per process (pid +
+            // start time), not every scan: far fewer reads on a poll that runs
+            // every few seconds.
+            const key = `${pid}:${linuxStartTicks(stat)}:${envVar ?? ""}`;
+            const known = this.linuxFixed.get(key);
+            const read = known ?? {
+              cmdline: await readFile(`/proc/${pid}/cmdline`, "utf8").catch(() => ""),
+              envValue:
+                envVar === undefined
+                  ? null
+                  : parseEnviron(
+                      // EACCES for another user's process.
+                      await readFile(`/proc/${pid}/environ`, "utf8").catch(() => ""),
+                      envVar
+                    ),
+            };
+            fixed.set(key, read);
+            return parseLinuxProcess(stat, read.cmdline, cwd, context, read.envValue);
+          } catch {
+            // It exited between readdir and the read.
+            return null;
+          }
+        })
+    );
+    // Only the processes still alive: the cache never outgrows the machine.
+    this.linuxFixed = fixed;
+    return entries.filter((entry): entry is ProcessSnapshotEntry => entry !== null);
+  }
+
+  private getLinuxConstants(): Promise<{ clockTicks: number; pageSize: number }> {
+    this.linuxConstants ??= (async () => {
+      const read = async (name: string, fallback: number): Promise<number> => {
+        const value = Number((await this.scan("getconf", [name])).trim());
+        return Number.isInteger(value) && value > 0 ? value : fallback;
+      };
+      const [clockTicks, pageSize] = await Promise.all([
+        read("CLK_TCK", 100),
+        read("PAGESIZE", 4096),
+      ]);
+      return { clockTicks, pageSize };
+    })();
+    return this.linuxConstants;
+  }
+
+  private async findListeningPortsLinux(pids: readonly number[]): Promise<Map<number, number[]>> {
+    const tables = await Promise.all(
+      ["/proc/net/tcp", "/proc/net/tcp6"].map((file) => readFile(file, "utf8").catch(() => ""))
+    );
+    const listening = new Map<number, number>();
+    for (const table of tables) {
+      for (const [inode, port] of parseProcNetTcpListeners(table)) listening.set(inode, port);
+    }
+    const result = new Map<number, number[]>();
+    if (listening.size === 0) return result;
+    await Promise.all(
+      pids.map(async (pid) => {
+        let fds: string[];
+        try {
+          fds = await readdir(`/proc/${pid}/fd`);
+        } catch {
+          return; // gone, or another user's
+        }
+        const ports: number[] = [];
+        await Promise.all(
+          fds.map(async (fd) => {
+            const inode = socketInode(await readlink(`/proc/${pid}/fd/${fd}`).catch(() => ""));
+            const port = inode === null ? undefined : listening.get(inode);
+            if (port !== undefined && !ports.includes(port)) ports.push(port);
+          })
+        );
+        if (ports.length > 0)
+          result.set(
+            pid,
+            ports.sort((a, b) => a - b)
+          );
+      })
+    );
+    return result;
+  }
+
+  private async listProcessesMac(
+    envVar: string | undefined
+  ): Promise<ProcessSnapshotEntry[] | null> {
+    const [psOut, commOut, cwdOut, envOut] = await Promise.all([
+      this.scan("ps", ["-A", "-o", "pid=,ppid=,rss=,time=,etime=,args="]),
+      this.scan("ps", ["-A", "-o", "pid=,comm="]),
+      // -w: no warnings about filesystems lsof cannot stat.
+      this.scan("lsof", ["-w", "-d", "cwd", "-Fpn"]),
+      // -E appends each process's (start-up) environment; -ww: untruncated.
+      envVar === undefined
+        ? Promise.resolve("")
+        : this.scan("ps", ["-A", "-ww", "-E", "-o", "pid=,command="]),
+    ]);
+    if (psOut.trim() === "") return null;
+    return parseMacSnapshot(
+      psOut,
+      commOut,
+      parseLsofCwds(cwdOut),
+      Date.now(),
+      envVar === undefined ? new Map() : parsePsEnvironment(envOut, envVar)
+    );
+  }
+
+  private async listProcessesWindows(
+    envVar: string | undefined
+  ): Promise<ProcessSnapshotEntry[] | null> {
+    const helper = this.options.windowsProcessHelper;
+    if (helper === undefined) {
+      this.logger.warn("Process snapshot unavailable: no Windows process helper configured");
+      return null;
+    }
+    const entries = parseWindowsSnapshot(
+      await this.scan(helper, envVar === undefined ? ["snapshot"] : ["snapshot", envVar])
+    );
+    if (entries === null) this.logger.warn("Process snapshot output did not parse");
+    return entries;
+  }
+
   /** Run a scan command, returning its stdout or "" if it failed or hung. */
   private async scan(
     command: string,
     args: readonly string[],
-    timeout = PROCESS_SCAN_TIMEOUT_MS
+    timeout = PROCESS_SCAN_TIMEOUT_MS,
+    emptyIsNormal = false
   ): Promise<string> {
     const proc = this.run(command, args);
     const result = await proc.wait(timeout);
     if (result.running) {
       await proc.kill(1000, 1000);
-      this.logger.warn("Port listener scan timed out", { command });
+      this.logger.warn("Process scan timed out", { command });
       return "";
     }
     // A scan that produces nothing is indistinguishable from a free port at the
     // call site, so say why here — a broken platform query is otherwise silent.
-    if (result.stdout.trim() === "") {
-      this.logger.warn("Port listener scan produced no output", {
+    if (result.stdout.trim() === "" && !emptyIsNormal) {
+      this.logger.warn("Process scan produced no output", {
         command,
         exitCode: result.exitCode ?? -1,
         stderr: result.stderr.slice(0, 500),

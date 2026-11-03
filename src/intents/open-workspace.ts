@@ -83,6 +83,15 @@ export const WORKSPACE_ENV_DEFAULTS: Readonly<Record<string, string>> = {
   GIT_OPTIONAL_LOCKS: "0",
 };
 
+/**
+ * The workspace environment variable naming the workspace by ref, set on every
+ * open over whatever "prepare" returned. Every terminal of the workspace gets
+ * it (sidekick applies the workspace environment), and so does everything they
+ * start: the process monitor attributes a process to the workspace that
+ * started it by it, wherever it has `cd`ed since. The agent already had it.
+ */
+export const WORKSPACE_REF_ENV_VAR = "_CH_WORKSPACE";
+
 // =============================================================================
 // Contract schemas (single source of truth)
 // =============================================================================
@@ -611,6 +620,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       workspaceEnv,
       mergeRecords(prepareResult.results, "env", "workspace:open prepare")
     );
+    workspaceEnv[WORKSPACE_REF_ENV_VAR] = workspaceRef;
 
     // Hook: "setup" — the agent (fatal)
     const setupCtx: SetupHookInput = { ...identity, workspaceEnv };

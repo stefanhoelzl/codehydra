@@ -115,6 +115,7 @@ extensions.
 - Node.js 24+
 - pnpm 10
 - Git
+- .NET SDK 8+ (optional: builds the Windows helper `codehydra-procs.exe`; required on CI and to package Windows)
 
 ### Commands
 

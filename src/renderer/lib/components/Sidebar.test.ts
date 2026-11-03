@@ -27,6 +27,7 @@ type Props = {
   sidebarMode?: "overlay" | "docked";
   mode?: "workspace" | "hover" | "shortcut" | "dialog";
   shortcutModeActive?: boolean;
+  processSummary?: boolean;
 };
 
 function setup(props: Props) {
@@ -322,13 +323,14 @@ describe("Sidebar", () => {
       ]);
     });
 
-    it("the footer opens the form, docks, opens settings and help", async () => {
+    it("the footer opens the form, shows processes, docks, opens settings and help", async () => {
       const { container } = setup({ projects: sampleProjects() });
       for (const button of container.querySelectorAll(".sb-foot button")) {
         await fireEvent.click(button);
       }
       expect(events()).toEqual([
         { kind: "open-new-workspace", projectId: null },
+        { kind: "set-sidebar-process-summary", enabled: true },
         { kind: "set-sidebar-mode", mode: "overlay" },
         { kind: "open-settings" },
         { kind: "open-help" },
@@ -572,6 +574,68 @@ describe("Sidebar", () => {
       vi.mocked(emitEvent).mockClear();
       await fireEvent.mouseEnter(nav(container));
       expect(hovers()).toEqual([{ kind: "hover", region: "sidebar" }]);
+    });
+  });
+
+  describe("process summary", () => {
+    const MIB = 1024 * 1024;
+    /** The sample projects as main sends them with the summary on: totals on the awake rows. */
+    function withProcesses(): UiProjectRow[] {
+      return sampleProjects().map((project) => ({
+        ...project,
+        workspaces: project.workspaces.map((ws) =>
+          ws.hibernated
+            ? ws
+            : { ...ws, processes: { cpuPercent: 10, rssBytes: 100 * MIB, count: 2 } }
+        ),
+      }));
+    }
+    const meta = (container: Element, key: string): string =>
+      row(container, key).querySelector(".meta")?.textContent?.trim() ?? "";
+
+    it("toggles from the footer button, which shows whether it is on", async () => {
+      // Scoped to this render: the page can still hold an earlier test's sidebar.
+      const { container, rerender } = setup({ projects: sampleProjects() });
+      const footerButton = (label: string): Element => {
+        const el = container.querySelector(`.sb-foot button[aria-label="${label}"]`);
+        if (el === null) throw new Error(`no footer button "${label}"`);
+        return el;
+      };
+      const button = footerButton("Show process summary");
+      expect(button.getAttribute("aria-pressed")).toBe("false");
+      await fireEvent.click(button);
+      expect(events()).toContainEqual({ kind: "set-sidebar-process-summary", enabled: true });
+
+      rerender({ processSummary: true, projects: withProcesses() });
+      const on = footerButton("Hide process summary");
+      expect(on.getAttribute("aria-pressed")).toBe("true");
+      expect(on.classList.contains("on")).toBe(true);
+    });
+
+    it("puts each awake row's CPU and memory where “working” was; hibernated rows keep their age", () => {
+      const { container, rerender } = setup({ projects: sampleProjects() });
+      expect(meta(container, "codehydra/redesign-sidebar")).toBe("working");
+
+      rerender({ processSummary: true, projects: withProcesses() });
+      expect(meta(container, "codehydra/redesign-sidebar")).toBe("10% 100M · 2");
+      expect(meta(container, "codehydra/hibernation-age")).toBe("10% 100M · 2");
+      expect(meta(container, "codehydra/find-workspace-dialog")).toBe("5h");
+      expect(row(container, "codehydra/hibernation-age").getAttribute("title")).toBe(
+        "10% CPU · 100M memory · 2 processes"
+      );
+    });
+
+    it("totals a collapsed project in its header, and every workspace in the footer", () => {
+      const { container, rerender } = setup({ projects: sampleProjects() });
+      expect(container.querySelector(".cnt.proc")).toBeNull();
+      expect(container.querySelector(".sum .proc")).toBeNull();
+
+      rerender({ processSummary: true, projects: withProcesses() });
+      // infra (collapsed) has three awake rows; an expanded card shows none.
+      expect(card(container, "infra").querySelector(".cnt.proc")?.textContent).toBe("30% 300M · 6");
+      expect(card(container, "website").querySelector(".cnt.proc")).toBeNull();
+      // The 13 awake rows of all four projects.
+      expect(container.querySelector(".sum .proc")?.textContent).toBe("130% 1.3G · 26");
     });
   });
 
