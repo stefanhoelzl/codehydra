@@ -2190,7 +2190,7 @@ describe("Dispatcher", () => {
     });
   });
   // ===========================================================================
-  // Concurrent hooks (experimental.concurrent-hooks)
+  // Concurrent hooks
   // ===========================================================================
 
   describe("concurrent hooks", () => {
@@ -2206,11 +2206,8 @@ describe("Dispatcher", () => {
     /** Let every queued microtask and timer callback run. */
     const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-    function setup(handlers: HookHandler[], concurrent: () => boolean = () => true) {
-      const dispatcher = new Dispatcher({
-        logger: createMockLogger(),
-        concurrentHooks: concurrent,
-      });
+    function setup(handlers: HookHandler[]) {
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       handlers.forEach((h, i) =>
         dispatcher.registerModule({
           name: h.name ?? `handler-${i}`,
@@ -2268,35 +2265,6 @@ describe("Dispatcher", () => {
       a.open();
       const result = await done;
       expect(result.errors).toEqual([]);
-    });
-
-    it("runs one at a time when the flag is off", async () => {
-      const a = gate();
-      const started: string[] = [];
-      const { run } = setup(
-        [
-          {
-            handler: async () => {
-              started.push("a");
-              await a.promise;
-            },
-          },
-          {
-            handler: async () => {
-              started.push("b");
-            },
-          },
-        ],
-        () => false
-      );
-
-      const done = run();
-      await flush();
-      expect(started).toEqual(["a"]);
-
-      a.open();
-      await done;
-      expect(started).toEqual(["a", "b"]);
     });
 
     it("starts a consumer as soon as its provider finishes, not when slow siblings do", async () => {
@@ -2425,10 +2393,7 @@ describe("Dispatcher", () => {
     it("runs an event's handlers concurrently", async () => {
       const a = gate();
       const started: string[] = [];
-      const dispatcher = new Dispatcher({
-        logger: createMockLogger(),
-        concurrentHooks: () => true,
-      });
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       dispatcher.registerModule({
         name: "slow",
         events: {
@@ -2463,43 +2428,6 @@ describe("Dispatcher", () => {
 
       a.open();
       await done;
-    });
-
-    it("reads the flag once per hook point", async () => {
-      let concurrent = false;
-      let hold = gate();
-      const started: string[] = [];
-      const { run } = setup(
-        [
-          {
-            handler: async () => {
-              started.push("a");
-              await hold.promise;
-            },
-          },
-          {
-            handler: async () => {
-              started.push("b");
-            },
-          },
-        ],
-        () => concurrent
-      );
-
-      const first = run();
-      concurrent = true; // too late for the hook point already running
-      await flush();
-      expect(started).toEqual(["a"]);
-      hold.open();
-      await first;
-
-      started.length = 0;
-      hold = gate();
-      const second = run();
-      await flush();
-      expect(started).toEqual(["a", "b"]);
-      hold.open();
-      await second;
     });
   });
 });
