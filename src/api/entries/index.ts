@@ -19,6 +19,7 @@ import { configEntries } from "./config";
 import { guideEntries } from "./guide";
 import { pluginEntries } from "./plugin";
 import { wakeupEntries } from "./wakeup";
+import { processEntries } from "./processes";
 
 export type { EntryDeps } from "./deps";
 
@@ -40,6 +41,7 @@ export function createRegistry(deps: RegistryDeps, logger: Logger): OperationReg
   box.current = new OperationRegistry([
     ...workspaceEntries(full),
     ...wakeupEntries(full),
+    ...processEntries(full),
     ...metadataEntries(full),
     ...agentEntries(full),
     ...vscodeEntries(full),

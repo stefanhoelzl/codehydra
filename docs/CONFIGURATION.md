@@ -50,7 +50,11 @@ Default `288` · `src/main.ts`. Expanded sidebar width in px, bounds 250–10000
 
 #### `sidebar.mode`
 
-Default `overlay` · `presentation-module.ts`. `overlay` (collapsed strip, expands over the workspace on hover) | `docked` (always expanded; the workspace frames/overlays start at its right edge via `--ch-workspace-left`). Written by the header dock button (`set-sidebar-mode` ui:event) and Alt+X+P; docked emits no hover events and ignores `capturing`. Live.
+Default `overlay` · `presentation-module.ts`. `overlay` (collapsed strip, expands over the workspace on hover) | `docked` (always expanded; the workspace frames/overlays start at its right edge via `--ch-workspace-left`). Written by the footer dock button (`set-sidebar-mode` ui:event) and Alt+X+D; docked emits no hover events and ignores `capturing`. Live.
+
+#### `sidebar.process-summary`
+
+Default `false` · `presentation-module.ts`. Whether each sidebar row shows its workspace's CPU and memory (`UiWorkspaceRow.processes`; none on hibernated rows). While on, the process monitor (`process-monitor/process-monitor-module.ts`) scans every 3 s; off, it scans only for `ch ws processes` and the sidekick's Processes view. Written by the footer pulse button (`set-sidebar-process-summary` ui:event) and Alt+X+P; read at every snapshot build, which starts or stops the polling to match, so a change from the settings dialog or `ch config` applies on the next push. Live.
 
 #### `silent`
 

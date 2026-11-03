@@ -218,6 +218,49 @@ export interface Wakeups {
   show(workspace: WorkspaceRef): Promise<WakeupStatus | null>;
 }
 
+/** CPU, memory and count over a set of processes. */
+export interface ProcessTotals {
+  /** Percent of one core over the last interval, summed; null before a second scan. */
+  readonly cpuPercent: number | null;
+  readonly rssBytes: number;
+  readonly count: number;
+}
+
+/** One process of a workspace, with the workspace's processes it started. */
+export interface WorkspaceProcess {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly name: string;
+  readonly commandLine: string;
+  /** Its working directory; null when the OS would not tell. */
+  readonly cwd: string | null;
+  /** Percent of one core over the last interval; null before a second scan. */
+  readonly cpuPercent: number | null;
+  readonly rssBytes: number;
+  /** ISO time it started; null when unknown. */
+  readonly startedAt: string | null;
+  /** TCP ports it listens on. */
+  readonly ports: readonly number[];
+  /** This process and everything below it. */
+  readonly subtree: ProcessTotals;
+  readonly children: readonly WorkspaceProcess[];
+}
+
+/** A workspace's processes as one scan saw them. */
+export interface WorkspaceProcesses {
+  /** ISO time of the scan. */
+  readonly scannedAt: string;
+  readonly total: ProcessTotals;
+  /** The tree's roots: processes whose parent is not the workspace's. */
+  readonly processes: readonly WorkspaceProcess[];
+}
+
+/** The process monitor, owned by the process-monitor module. */
+export interface ProcessMonitorAccess {
+  /** A workspace's processes, from a scan at most a moment old. Null when the scan failed. */
+  list(workspace: WorkspaceRef): Promise<WorkspaceProcesses | null>;
+}
+
 export interface EntryDeps {
   readonly dispatcher: Dispatcher;
   /**
@@ -266,4 +309,6 @@ export interface EntryDeps {
   readonly plugins: () => Plugins;
   /** The wakeup scripts, owned by the wakeup module. */
   readonly wakeups: Wakeups;
+  /** The process monitor, owned by the process-monitor module. */
+  readonly processes: ProcessMonitorAccess;
 }

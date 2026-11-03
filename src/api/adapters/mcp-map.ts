@@ -24,6 +24,7 @@ export const MCP_MAP: Readonly<Record<OperationName, McpMapping | null>> = {
   "workspace.wakeup.set": { tool: "workspace_set_wakeup" },
   "workspace.wakeup.clear": { tool: "workspace_clear_wakeup" },
   "workspace.wakeup.show": { tool: "workspace_get_wakeup" },
+  "workspace.processes": { tool: "workspace_list_processes" },
   "workspace.create": { tool: "workspace_create" },
   "workspace.delete": { tool: "workspace_delete" },
   "workspace.switch": { tool: "workspace_switch" },

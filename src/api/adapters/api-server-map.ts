@@ -37,6 +37,7 @@ export const API_SERVER_MAP: Readonly<Record<OperationName, ApiServerMapping | n
   "workspace.wakeup.set": { channel: "api:workspace:setWakeup" },
   "workspace.wakeup.clear": { channel: "api:workspace:clearWakeup" },
   "workspace.wakeup.show": { channel: "api:workspace:getWakeup" },
+  "workspace.processes": { channel: "api:workspace:processes" },
   "workspace.create": { channel: "api:workspace:create" },
   "workspace.delete": { channel: "api:workspace:delete" },
   "workspace.switch": { channel: "api:workspace:switch" },

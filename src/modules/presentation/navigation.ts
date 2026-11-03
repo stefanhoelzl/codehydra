@@ -45,6 +45,8 @@ export interface ShortcutNavigationDeps {
   /** Open the sidebar's Find field (f key). */
   readonly openFind: () => void;
   readonly toggleSidebarMode: () => void;
+  /** Show/hide each row's CPU and memory (`sidebar.process-summary`). */
+  readonly toggleProcessSummary: () => void;
 }
 
 /** Awake and switchable: neither hibernated nor a still-creating placeholder. */
@@ -195,6 +197,9 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
         deps.openFind();
         break;
       case "p":
+        deps.toggleProcessSummary();
+        break;
+      case "d":
         deps.toggleSidebarMode();
         break;
       default:

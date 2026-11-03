@@ -2,7 +2,7 @@
  * DevtoolsModule - Dev-only DevTools toggling via shortcut keys.
  *
  * Subscribes to shortcut:key-pressed domain event and handles:
- * - "d": Toggle DevTools on the single UI view (workspace iframes share the
+ * - "i" (inspect, like Ctrl+Shift+I): Toggle DevTools on the single UI view (workspace iframes share the
  *   instance — use the devtools frame picker to target one)
  */
 
@@ -24,7 +24,7 @@ export function createDevtoolsModule(deps: DevtoolsModuleDeps): IntentModule {
         handler: async (event): Promise<void> => {
           const { key } = event.payload;
 
-          if (key === "d") {
+          if (key === "i") {
             deps.viewManager.getUIDevtoolsTarget().toggle();
           }
         },

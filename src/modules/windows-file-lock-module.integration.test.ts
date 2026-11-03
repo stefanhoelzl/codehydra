@@ -118,7 +118,7 @@ function createFlushOperation(blockingPids: readonly number[]): Operation<Operat
 // Test Setup Helpers
 // =============================================================================
 
-const SCRIPT_PATH = testPath("/scripts/blocking-processes.ps1").toNative();
+const HELPER_PATH = testPath("/bin/codehydra-procs.exe").toNative();
 
 function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
   const dispatcher = new Dispatcher({
@@ -129,7 +129,7 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
 
   const module = createWindowsFileLockModule({
     processRunner: runner,
-    scriptPath: SCRIPT_PATH,
+    helperPath: HELPER_PATH,
     logger,
   });
   dispatcher.registerModule(module);
@@ -146,7 +146,7 @@ function createDetectSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
 
   const module = createWindowsFileLockModule({
     processRunner: runner,
-    scriptPath: SCRIPT_PATH,
+    helperPath: HELPER_PATH,
     logger,
   });
   dispatcher.registerModule(module);
@@ -167,7 +167,7 @@ function createFlushSetup(
 
   const module = createWindowsFileLockModule({
     processRunner: runner,
-    scriptPath: SCRIPT_PATH,
+    helperPath: HELPER_PATH,
     logger,
   });
   dispatcher.registerModule(module);
@@ -197,7 +197,7 @@ describe("WindowsFileLockModule Integration", () => {
         onSpawn: () => {
           callIndex++;
           if (callIndex === 1) {
-            // DetectCwd: return a blocking process
+            // detect-cwd: return a blocking process
             return {
               stdout: createDetectJson([
                 { pid: 1234, name: "node.exe", commandLine: "node server.js", cwd: "." },
@@ -214,12 +214,10 @@ describe("WindowsFileLockModule Integration", () => {
       const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent());
 
-      // Verify detection was called (powershell -Action DetectCwd)
+      // Verify detection was called (codehydra-procs.exe detect-cwd <path>)
       const detectProc = runner.$.spawned(0);
-      expect(detectProc.$.command).toBe("powershell");
-      expect(detectProc.$.args).toEqual(
-        expect.arrayContaining(["-Action", "DetectCwd", "-File", SCRIPT_PATH])
-      );
+      expect(detectProc.$.command).toBe(HELPER_PATH);
+      expect(detectProc.$.args).toEqual(expect.arrayContaining(["detect-cwd"]));
 
       // The kill goes through the boundary now, which waits for the process to
       // actually be gone rather than assuming a returning taskkill means dead.
@@ -243,7 +241,7 @@ describe("WindowsFileLockModule Integration", () => {
       const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent({ force: true }));
 
-      expect(runner.$.spawned(0).$.args).toEqual(expect.arrayContaining(["-Action", "DetectCwd"]));
+      expect(runner.$.spawned(0).$.args).toEqual(expect.arrayContaining(["detect-cwd"]));
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
@@ -296,7 +294,7 @@ describe("WindowsFileLockModule Integration", () => {
       await dispatcher.dispatch(makeDeleteIntent());
 
       // Only detection was spawned, and nothing was killed
-      expect(runner.$.spawned(0).$.command).toBe("powershell");
+      expect(runner.$.spawned(0).$.command).toBe(HELPER_PATH);
       expect(runner.$.killedPids).toEqual([]);
     });
   });
@@ -335,8 +333,8 @@ describe("WindowsFileLockModule Integration", () => {
         },
       ]);
 
-      // Verify -Action Detect was used
-      expect(runner.$.spawned(0).$.args).toEqual(expect.arrayContaining(["-Action", "Detect"]));
+      // Verify the full detect was used
+      expect(runner.$.spawned(0).$.args).toEqual(expect.arrayContaining(["detect"]));
     });
 
     it("reports 'could not determine' on timeout rather than a clean empty scan", async () => {
@@ -425,7 +423,7 @@ describe("WindowsFileLockModule Integration", () => {
       dispatcher.registerModule(
         createWindowsFileLockModule({
           processRunner: r,
-          scriptPath: SCRIPT_PATH,
+          helperPath: HELPER_PATH,
           logger: SILENT_LOGGER,
         })
       );
@@ -464,7 +462,7 @@ describe("WindowsFileLockModule Integration", () => {
       const dispatcher = createHibernateReleaseSetup(runner);
       await dispatcher.dispatch(makeHibernateIntent());
 
-      expect(runner.$.spawned(0).$.command).toBe("powershell");
+      expect(runner.$.spawned(0).$.command).toBe(HELPER_PATH);
       expect(runner.$.killedPids).toEqual([1234]);
     });
 

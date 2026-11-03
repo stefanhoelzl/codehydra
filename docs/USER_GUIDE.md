@@ -115,7 +115,7 @@ Projects are sorted by name.
   when Find or the New workspace form closes under it.
 - **Docked**, it stays expanded beside the workspace, which shrinks to the
   rest of the window instead of being covered. Toggle it with the dock button
-  in the footer (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>); the choice is
+  in the footer (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>D</kbd>); the choice is
   saved as `sidebar.mode` (`overlay`, the default, or `docked`). Docked, resting
   the pointer on the sidebar is not a hover: a workspace an agent opens in the
   background takes the view as it would with the sidebar collapsed.
@@ -123,8 +123,17 @@ Projects are sorted by name.
   window); the width is saved as `sidebar.width`. Docked, the workspace
   follows the drag.
 - The **footer** counts all workspaces by [status](#status-indicators), and has
-  **+** (New workspace), the **dock** button, the **gear** (settings) and **?**
-  (this guide). Hover any sidebar icon for what it does.
+  **+** (New workspace), the **pulse** (process summary, below), the **dock**
+  button, the **gear** (settings) and **?** (this guide). Hover any sidebar icon
+  for what it does.
+- The **process summary** shows the CPU, memory and number of processes of what
+  each workspace runs, e.g. `12% 874M · 7`: at the end of each awake row, in a
+  collapsed project's header for the whole project, and in the footer for all
+  workspaces. Toggle it with the pulse button
+  (highlighted while on) or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>; the
+  choice is saved as `sidebar.process-summary` (off by default). It refreshes
+  every few seconds, only while it is on, and hibernated workspaces have none.
+  See [Processes](#processes) for what counts as a workspace's process.
 
 A **project card** has a header bar with the project's letter, its name (a
 cloud marks a cloned project), and on hover a trash icon (close the project)
@@ -136,7 +145,8 @@ projects open, colors repeat.
 - Click the header bar to **collapse** the project to its header, and again to
   expand it; each project remembers this, also after a restart. A collapsed
   project counts its working and waiting workspaces
-  ([status](#status-indicators)). Collapsing
+  ([status](#status-indicators)), and with the process summary on shows the
+  project's CPU and memory. Collapsing
   the project you are in moves you to the first awake workspace of the next
   expanded project, as <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>↓</kbd> would from its
   last workspace; there is none when every other project is collapsed, and
@@ -169,8 +179,9 @@ projects open, colors repeat.
 A workspace row shows its title (or its name if it has none); with a title, the
 second line shows the branch. Tags follow, each in its color and with its label,
 and its description on hover. A title that does not fit ends in "…". The end
-of the row says **working** while the agent works, and for a hibernated
-workspace how long it has slept. Hovering a row shows its actions: hibernate
+of the row says **working** while the agent works (with the process summary
+on, the workspace's CPU and memory instead), and for a hibernated workspace
+how long it has slept. Hovering a row shows its actions: hibernate
 (moon) and remove (trash), or retry and remove for one that could not be
 opened, or remove for a hibernated one.
 
@@ -428,7 +439,8 @@ holding <kbd>Alt</kbd> while you press:
 | <kbd>H</kbd>                             | Hibernate / wake the active workspace                                            |
 | <kbd>T</kbd>                             | Step the hibernated list: hidden, hibernated, automated too (Find: all projects) |
 | <kbd>C</kbd>                             | Collapse / expand the active workspace's project                                 |
-| <kbd>P</kbd>                             | Dock / undock the sidebar                                                        |
+| <kbd>D</kbd>                             | Dock / undock the sidebar                                                        |
+| <kbd>P</kbd>                             | Show / hide the process summary in the sidebar                                   |
 | <kbd>S</kbd>                             | Open settings                                                                    |
 | <kbd>B</kbd>                             | Report a bug (also works while a dialog is open)                                 |
 | <kbd>Escape</kbd>                        | Leave shortcut mode                                                              |
@@ -479,6 +491,39 @@ when you set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in its
 environment (e.g. from a `before-workspace-opened` plugin hook's `env`). Agents are told about `[bg]` in their system
 prompt, and the description shows in their task list, so you can see which
 sub-agents were opted out.
+
+### Processes
+
+CodeHydra can show what is running in each workspace — the dev server an agent
+left behind, a watcher, a build — with its CPU, memory and listening ports.
+
+A process belongs to the workspace that started it. Every terminal and agent
+of a workspace carries `_CH_WORKSPACE` (the workspace's ref) in its
+environment, and everything they start inherits it — so a shell that `cd`s out
+of the worktree, or a build an agent runs in another workspace's directory,
+stays with the workspace it came from. A process without it belongs to a
+workspace when its working directory is inside the worktree, or when it was
+started by one that belongs: a `pnpm dev` brings its whole tree along, even
+after it changes directory.
+CPU is percent of one core over the last few seconds (`200%` is two cores).
+
+There are three ways to look:
+
+- **The Processes view**, in each workspace's Explorer (below the files). It
+  shows the processes as a tree: name, then pid, CPU, memory, how long it has
+  run and the ports it listens on. A collapsed row shows the totals of
+  everything below it, and the view's title the workspace's total. Hover a
+  row for its command line and directory. It refreshes every few seconds
+  while it is visible; the refresh button asks right away.
+- **The process summary** in the sidebar (see [The sidebar](#the-sidebar)):
+  every workspace's total at a glance.
+- **`ch ws processes`** (MCP `workspace_list_processes`) prints the same tree
+  as JSON, for an agent checking what it left running.
+
+They only show: to stop a process, use its terminal, or hibernate or delete
+the workspace, which stops everything in it. Processes that other users or
+the system own (and, on Windows, elevated ones) cannot be inspected, and are
+missing from the list.
 
 ## Configuration
 
@@ -1047,6 +1092,10 @@ briefly whatever the setting, and skips it when it is held.) It is a default:
 an `env` that sets `GIT_OPTIONAL_LOCKS` wins, and so does a value already in
 the environment CodeHydra was started with.
 
+It also sets `_CH_WORKSPACE` to the workspace's ref, so every terminal (and
+everything started from one) names its workspace — that is how the
+[process monitor](#processes) keeps a shell that has `cd`ed elsewhere.
+
 The environment is held in memory only: it is never written to a file, and
 nothing of it survives a restart or a hibernation — which is why this hook runs
 on every open, and why it suits short-lived values such as a freshly minted
@@ -1544,6 +1593,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | Command                                                            | Purpose                                                                                                          |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `ws status`                                                        | Dirty flag, unmerged commits, agent status and wakeup script (`--refresh` fetches first)                         |
+| `ws processes`                                                     | The [processes](#processes) running in the workspace, as a tree with CPU, memory and ports                       |
 | `ws create <name> [base]`                                          | New workspace (`--project`, `--tracking`, `--prompt`, `--agent`, `--model`, `--permission-mode`, `--agent-name`) |
 | `ws delete`                                                        | Delete the workspace (`--keep-branch`, `--ignore-warnings`, `--no-wait`)                                         |
 | `ws hibernate`, `ws wake`                                          | Hibernate (`--wakeup <script>`, `--shell`, `--env`) / wake                                                       |
@@ -1800,16 +1850,16 @@ ch ws pick-file "Pick a screenshot" --filters '{"Images":["png","jpg"]}'
 The agents reach the same operations as MCP tools (`ch mcp` is the server both
 agents launch):
 
-| Area       | Tools                                                                                                                                                                                                                                                                                                                                                |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspaces | `workspace_get_status`, `workspace_create`, `workspace_delete`, `workspace_switch`, `workspace_hibernate`, `workspace_wake`, `workspace_set_wakeup`, `workspace_clear_wakeup`, `workspace_get_wakeup`, `workspace_set_title`, `workspace_list_tags`, `workspace_set_tag`, `workspace_remove_tag`, `workspace_get_metadata`, `workspace_set_metadata` |
-| Agent      | `workspace_get_agent_session`, `workspace_restart_agent_server`, `workspace_open_agent`, `workspace_close_agent`, `workspace_send_agent_message`, `workspace_set_agent_status`                                                                                                                                                                       |
-| Editor     | `workspace_execute_command`, `ui_show_message`, `workspace_open_browser`, `workspace_open_diff`, `workspace_goto`, `workspace_preview_markdown`, `system_open_path`                                                                                                                                                                                  |
-| Questions  | `ui_ask`, `ui_select`, `ui_input`, `ui_pick_file`                                                                                                                                                                                                                                                                                                    |
-| Projects   | `project_list`, `project_open`, `project_close`                                                                                                                                                                                                                                                                                                      |
-| Locks      | `lock_take` (does not wait unless asked), `lock_release`, `lock_list`                                                                                                                                                                                                                                                                                |
-| Sidebar    | `notification_show`, `notification_close`                                                                                                                                                                                                                                                                                                            |
-| Other      | `config_get`, `config_list`, `config_set`, `config_reset`, `guide`, `log`, `report_bug`                                                                                                                                                                                                                                                              |
+| Area       | Tools                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspaces | `workspace_get_status`, `workspace_create`, `workspace_delete`, `workspace_switch`, `workspace_hibernate`, `workspace_wake`, `workspace_set_wakeup`, `workspace_clear_wakeup`, `workspace_get_wakeup`, `workspace_list_processes`, `workspace_set_title`, `workspace_list_tags`, `workspace_set_tag`, `workspace_remove_tag`, `workspace_get_metadata`, `workspace_set_metadata` |
+| Agent      | `workspace_get_agent_session`, `workspace_restart_agent_server`, `workspace_open_agent`, `workspace_close_agent`, `workspace_send_agent_message`, `workspace_set_agent_status`                                                                                                                                                                                                   |
+| Editor     | `workspace_execute_command`, `ui_show_message`, `workspace_open_browser`, `workspace_open_diff`, `workspace_goto`, `workspace_preview_markdown`, `system_open_path`                                                                                                                                                                                                              |
+| Questions  | `ui_ask`, `ui_select`, `ui_input`, `ui_pick_file`                                                                                                                                                                                                                                                                                                                                |
+| Projects   | `project_list`, `project_open`, `project_close`                                                                                                                                                                                                                                                                                                                                  |
+| Locks      | `lock_take` (does not wait unless asked), `lock_release`, `lock_list`                                                                                                                                                                                                                                                                                                            |
+| Sidebar    | `notification_show`, `notification_close`                                                                                                                                                                                                                                                                                                                                        |
+| Other      | `config_get`, `config_list`, `config_set`, `config_reset`, `guide`, `log`, `report_bug`                                                                                                                                                                                                                                                                                          |
 
 Tools that can act on another workspace take `workspace` (a name,
 `<project>::<name>` or a ref, looked up like `--workspace`: the agent's own

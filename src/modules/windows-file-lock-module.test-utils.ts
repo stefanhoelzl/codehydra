@@ -2,7 +2,7 @@
  * Test utilities for the windows-file-lock module.
  */
 
-/** The JSON the blocking-processes script prints for a `detect` run listing `blocking`. */
+/** The JSON `codehydra-procs.exe detect` prints for a run listing `blocking`. */
 export function createDetectJson(
   blocking: Array<{
     pid: number;

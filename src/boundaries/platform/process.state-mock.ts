@@ -8,6 +8,8 @@ import type {
   ProcessResult,
   KillResult,
   ListeningProcess,
+  ListProcessesOptions,
+  ProcessSnapshot,
 } from "./process";
 import type {
   MockState,
@@ -296,8 +298,13 @@ class MockProcessRunnerImpl implements MockProcessRunner {
   private readonly onSpawn: OnSpawnCallback | undefined;
   private readonly onKill: ((pid: number) => KillResult | void) | undefined;
   private readonly listeners: Map<number, ListeningProcess[]>;
+  private readonly processes:
+    ((options?: ListProcessesOptions) => ProcessSnapshot | null) | undefined;
+  private readonly listeningPorts: Readonly<Record<number, readonly number[]>>;
 
   constructor(options?: MockProcessRunnerOptions) {
+    this.processes = options?.processes;
+    this.listeningPorts = options?.listeningPorts ?? {};
     this.defaultResult = {
       exitCode: options?.defaultResult?.exitCode ?? 0,
       stdout: options?.defaultResult?.stdout ?? "",
@@ -316,6 +323,21 @@ class MockProcessRunnerImpl implements MockProcessRunner {
 
   async findListeningProcesses(port: number): Promise<ListeningProcess[]> {
     return [...(this.listeners.get(port) ?? [])];
+  }
+
+  async listProcesses(options?: ListProcessesOptions): Promise<ProcessSnapshot | null> {
+    return this.processes ? this.processes(options) : { takenAt: Date.now(), processes: [] };
+  }
+
+  async findListeningPorts(
+    pids: readonly number[]
+  ): Promise<ReadonlyMap<number, readonly number[]>> {
+    const result = new Map<number, readonly number[]>();
+    for (const pid of pids) {
+      const ports = this.listeningPorts[pid];
+      if (ports !== undefined && ports.length > 0) result.set(pid, [...ports]);
+    }
+    return result;
   }
 
   async kill(pid: number, _termTimeout?: number, _killTimeout?: number): Promise<KillResult> {
@@ -463,6 +485,16 @@ export interface MockProcessRunnerOptions {
    * the loop the IDE server's port-conflict recovery runs.
    */
   listeners?: Readonly<Record<number, readonly ListeningProcess[]>>;
+
+  /**
+   * What listProcesses(options) answers, asked on every call — so a test changes the
+   * machine between scans by closing over its own state. Return null to model
+   * a failed scan. Omitted: an empty machine.
+   */
+  processes?: (options?: ListProcessesOptions) => ProcessSnapshot | null;
+
+  /** Ports findListeningPorts(pids) reports, keyed by pid. */
+  listeningPorts?: Readonly<Record<number, readonly number[]>>;
 }
 
 /**

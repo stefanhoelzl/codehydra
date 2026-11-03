@@ -43,8 +43,9 @@
  * - delete-workspace → flush: kill PIDs collected by detect
  * - hibernate-workspace → release: CWD-only scan + kill blocking processes (best-effort)
  *
- * Detection uses blocking-processes.ps1 (Restart Manager API for file handles,
- * PEB reads for CWD); termination goes through the ProcessRunner boundary.
+ * Detection runs the bundled helper exe (`codehydra-procs.exe detect|detect-cwd`,
+ * resources/win-helper: Restart Manager API for file handles, PEB reads for
+ * CWD); termination goes through the ProcessRunner boundary.
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -67,7 +68,7 @@ import { defineHooks } from "../intents/declarations";
 // JSON Output Types
 // =============================================================================
 
-/** JSON output from the unified PowerShell script for -Action Detect mode. */
+/** JSON output of `codehydra-procs.exe detect` / `detect-cwd`. */
 interface DetectOutput {
   blocking: Array<{
     pid: number;
@@ -213,29 +214,19 @@ export interface DetectScanResult {
 }
 
 /**
- * Run a detect action using the blocking-processes.ps1 script.
+ * Run a detect action of the Windows process helper (`codehydra-procs.exe`):
+ * `detect` (file handles + CWD) or `detect-cwd` (CWD only).
  * Exported for boundary tests.
  */
 export async function runDetectAction(
   processRunner: ProcessRunner,
-  scriptPath: string,
+  helperPath: string,
   path: Path,
-  action: "Detect" | "DetectCwd",
+  action: "detect" | "detect-cwd",
   logger: Logger,
   timeoutMs: number
 ): Promise<DetectScanResult> {
-  const proc = processRunner.run("powershell", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    scriptPath,
-    "-BasePath",
-    path.toNative(),
-    "-Action",
-    action,
-  ]);
+  const proc = processRunner.run(helperPath, [action, path.toNative()]);
 
   const result = await proc.wait(timeoutMs);
 
@@ -307,7 +298,8 @@ export async function killBlockingProcesses(
 
 interface WindowsFileLockModuleDeps {
   readonly processRunner: ProcessRunner;
-  readonly scriptPath: string;
+  /** The bundled `codehydra-procs.exe`. */
+  readonly helperPath: string;
   readonly logger: Logger;
 }
 
@@ -327,9 +319,9 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
       detect: (workspacePath) =>
         runDetectAction(
           deps.processRunner,
-          deps.scriptPath,
+          deps.helperPath,
           new Path(workspacePath),
-          "DetectCwd",
+          "detect-cwd",
           deps.logger,
           DETECT_CWD_TIMEOUT_MS
         ),
@@ -351,9 +343,9 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
             try {
               const scan = await runDetectAction(
                 deps.processRunner,
-                deps.scriptPath,
+                deps.helperPath,
                 new Path(workspacePath),
-                "Detect",
+                "detect",
                 deps.logger,
                 detectHasTimedOut ? DETECT_TIMEOUT_ESCALATED_MS : DETECT_TIMEOUT_MS
               );

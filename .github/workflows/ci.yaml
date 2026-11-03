@@ -47,6 +47,7 @@ jobs:
       - uses: ./.github/actions/setup
 
       # wrapper.boundary.test.ts executes dist/bin/*.cjs and throws without it,
+      # the Windows boundary tests run dist/bin/codehydra-procs.exe (the .NET SDK comes from the setup action),
       # and server-manager.boundary.test.ts runs the hook handler built there.
       # The boundary globalSetup downloads the latest opencode once (ensure-binaries.ts).
       - run: pnpm build:wrappers

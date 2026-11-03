@@ -16,7 +16,7 @@ Concrete reference for the intent-based architecture. For conceptual overview an
 | [External System Access Rules](#external-system-access-rules)     | Required abstraction interfaces                              |
 | [Platform Abstractions](#platform-abstractions)                   | FileSystemBoundary, NetworkLayer, ProcessRunner, Path, etc.  |
 | [Shell and Platform Layers](#shell-and-platform-layers)           | Electron abstraction architecture                            |
-| [Service Patterns](#service-patterns)                             | DI, WorkspaceLockHandler, PowerShell assets                  |
+| [Service Patterns](#service-patterns)                             | DI, WorkspaceLockHandler, the Windows helper                 |
 | [Configuration](#configuration)                                   | Config service for user preferences and versions             |
 | [Mock Factories Reference](#mock-factories-reference)             | All mock factories by interface                              |
 
@@ -1346,7 +1346,7 @@ const workspaceLockHandler = createWorkspaceLockHandler(
   logger
 );
 
-// Windows: Uses Restart Manager API via PowerShell script
+// Windows: Uses Restart Manager API via the bundled codehydra-procs.exe
 // Other platforms: Returns undefined (detection steps skipped)
 ```
 
@@ -1414,99 +1414,40 @@ const module = new CoreModule(api, { ...deps, workspaceLockHandler: mockHandler 
 
 **Boundary test file:** `workspace-lock-handler.boundary.test.ts`
 
-### PowerShell Script Assets
+### Windows Native Helper (`codehydra-procs.exe`)
 
-For Windows-specific functionality requiring .NET/COM APIs, use PowerShell scripts bundled as assets:
-
-**Asset Location:**
+Windows process inspection that needs Win32 APIs — Restart Manager, handle
+enumeration, reading another process's PEB for its working directory, the TCP
+table — lives in one small C# console program, not in PowerShell:
 
 ```
-resources/scripts/          -> Source scripts
-out/main/assets/scripts/    -> Bundled (via vite-plugin-static-copy)
+resources/win-helper/*.cs          -> Source (Program.cs: commands; BlockingProcessDetector.cs: the inspection)
+resources/win-helper/*.csproj      -> .NET Framework 4.8 exe, built by the .NET SDK on any OS
+dist/bin/codehydra-procs.exe       -> pnpm build:wrappers (skipped with a warning without `dotnet`; required on CI)
+out/main/assets/bin/               -> Bundled with the other binaries; packaged as bin/
 ```
 
-**Script Structure (parameter-based modes):**
+It is compiled at build time, not at run time: no `Add-Type` (which antivirus,
+AppLocker or Constrained Language Mode can block) and no PowerShell start-up per
+call. It targets .NET Framework 4.8, which every supported Windows ships, so
+users install nothing; the .NET SDK cross-compiles it, so the shared Linux CI
+build produces it like every other bundled binary. `pnpm dist:win` makes sure
+it is in `out/main/assets/bin` and fails without the SDK rather than package
+without it.
 
-```powershell
-# blocking-processes.ps1
-param(
-    [Parameter(Mandatory=$true)]
-    [ValidateSet("Detect", "CloseHandles")]
-    [string]$Action,
+Each command prints one JSON object and exits (`{"error": "…"}` with exit 1 on
+failure):
 
-    [Parameter(Mandatory=$true)]
-    [string]$Path
-)
+| Command            | Output                                                                                                                   | Used by                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| `snapshot [<var>]` | `{"processes":[{pid, ppid, name, commandLine, cwd, rssBytes, cpuTimeMs, startedAt, env}]}` (`env`: the value of `<var>`) | `ProcessRunner.listProcesses`                     |
+| `listeners`        | `{"listeners":[{pid, port}]}`                                                                                            | `ProcessRunner.findListeningPorts`                |
+| `detect <dir>`     | `{"blocking":[{pid, name, commandLine, files, cwd}]}` (handles + CWD)                                                    | windows-file-lock-module (after a failed removal) |
+| `detect-cwd <dir>` | same, CWD only                                                                                                           | windows-file-lock-module (release)                |
 
-# Output JSON to stdout for parsing
-$result = @{ processes = @(); ... }
-$result | ConvertTo-Json -Depth 10
-```
-
-**Service Integration:**
-
-```typescript
-// Get script path from PathProvider
-const scriptPath = this.pathProvider.scriptsDir.join("blocking-processes.ps1");
-
-// Run with ProcessRunner
-const proc = this.runner.run("powershell", [
-  "-NoProfile",
-  "-ExecutionPolicy",
-  "Bypass",
-  "-File",
-  scriptPath.toNative(),
-  "-Action",
-  "Detect",
-  "-Path",
-  targetPath.toNative(),
-]);
-
-const result = await proc.wait();
-const data = JSON.parse(result.stdout);
-```
-
-**Self-Elevation Pattern:**
-
-For operations requiring admin privileges, scripts can self-elevate:
-
-```powershell
-# Check if elevated
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-if (-not $isAdmin) {
-    # Re-launch elevated, capture output via temp file
-    $tempFile = [System.IO.Path]::GetTempFileName()
-    Start-Process powershell -Verb RunAs -Wait -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", $PSCommandPath,
-        "-Action", $Action, "-Path", $Path,
-        "-OutputFile", $tempFile
-    )
-    Get-Content $tempFile
-    Remove-Item $tempFile
-    exit
-}
-```
-
-**JSON Output Schema:**
-
-Scripts should return structured JSON for parsing:
-
-```json
-{
-  "processes": [
-    {
-      "pid": 1234,
-      "name": "node.exe",
-      "commandLine": "node server.js",
-      "files": ["index.js", "lib/util.js"],
-      "cwd": "C:\\projects\\app"
-    }
-  ],
-  "error": null
-}
-```
+The path reaches its users as `runtimePath("bin/codehydra-procs.exe")`, wired in
+`main.ts`. Boundary tests find the built exe with `windowsProcessHelperPath()`
+(`process.boundary-test-utils.ts`), which throws when it has not been built.
 
 ---
 

@@ -23,7 +23,8 @@
     | "info"
     | "xcircle"
     | "close"
-    | "refresh";
+    | "refresh"
+    | "pulse";
 </script>
 
 <script lang="ts">
@@ -94,6 +95,8 @@
     <path d="M4 4l8 8M12 4l-8 8" />
   {:else if name === "refresh"}
     <path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3h-3" />
+  {:else if name === "pulse"}
+    <path d="M1.5 8.5h3l1.8-4 3 8 1.9-4h3.3" />
   {/if}
 </svg>
 

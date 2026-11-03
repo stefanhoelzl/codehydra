@@ -32,6 +32,8 @@ import type { StateService } from "../../boundaries/platform/state-service";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import { Path } from "../../utils/path/path";
+import type { ProcessTotals } from "../../api/entries/deps";
+import type { WorkspaceRef } from "../../intents/contract";
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { UiProjectRow, UiState } from "../../shared/ui-state";
 import type {
@@ -143,6 +145,32 @@ function createDeps() {
     /** Badge colors by project ref, as the local-project module would hand them out. */
     projectColors,
     projectColor: (projectRef: ProjectRef) => projectColors.get(projectRef),
+    processMonitor: createFakeProcessMonitor(),
+  };
+}
+
+/**
+ * The process monitor as the presenter sees it: totals a test sets with
+ * `publish` (which notifies like a finished scan), and whether it was told to
+ * watch.
+ */
+function createFakeProcessMonitor() {
+  let summaries = new Map<WorkspaceRef, ProcessTotals>();
+  const listeners = new Set<() => void>();
+  return {
+    watching: false,
+    summaries: (): ReadonlyMap<WorkspaceRef, ProcessTotals> => summaries,
+    onSummaries(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    setWatching(watching: boolean) {
+      this.watching = watching;
+    },
+    publish(next: Record<string, ProcessTotals>) {
+      summaries = new Map(Object.entries(next) as [WorkspaceRef, ProcessTotals][]);
+      for (const listener of listeners) listener();
+    },
   };
 }
 
@@ -503,6 +531,7 @@ describe("PresentationModule - ui:state snapshots", () => {
           width: SIDEBAR_DEFAULT_WIDTH,
           mode: "overlay",
           find: null,
+          processSummary: false,
         },
         frames: {},
         main: { kind: "starting" },
@@ -535,6 +564,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         width: SIDEBAR_DEFAULT_WIDTH,
         mode: "overlay",
         find: null,
+        processSummary: false,
       },
       frames: {},
       main: { kind: "creation" },
@@ -593,6 +623,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         width: SIDEBAR_DEFAULT_WIDTH,
         mode: "overlay",
         find: null,
+        processSummary: false,
       },
       frames: { [keyOf("main")]: "http://127.0.0.1:1/main" },
       main: { kind: "workspace", frameKey: keyOf("main") },
@@ -1474,6 +1505,70 @@ describe("PresentationModule - sidebar resize", () => {
     await flush();
 
     expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
+  });
+
+  describe("process summary", () => {
+    it("is off by default: no polling, no totals on the rows", async () => {
+      const deps = createDeps();
+      const module = await startModule(deps);
+      const ws = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
+      await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([ws]) });
+      deps.processMonitor.publish({ [ws.ref]: { cpuPercent: 5, rssBytes: 1024, count: 1 } });
+      await flush();
+
+      expect(lastSnapshot(deps).sidebar.processSummary).toBe(false);
+      expect(deps.processMonitor.watching).toBe(false);
+      expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.processes).toBeUndefined();
+    });
+
+    it("persists set-sidebar-process-summary, starts polling and re-pushes each scan's totals", async () => {
+      const deps = createDeps();
+      const module = await startModule(deps);
+      const ws = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
+      await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([ws]) });
+
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", enabled: true });
+      await flush();
+      expect(deps.configService.getEffective()["sidebar.process-summary"]).toBe(true);
+      expect(lastSnapshot(deps).sidebar.processSummary).toBe(true);
+      expect(deps.processMonitor.watching).toBe(true);
+
+      deps.processMonitor.publish({ [ws.ref]: { cpuPercent: 12, rssBytes: 2048, count: 3 } });
+      await flush();
+      expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.processes).toEqual({
+        cpuPercent: 12,
+        rssBytes: 2048,
+        count: 3,
+      });
+
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", enabled: false });
+      await flush();
+      expect(deps.processMonitor.watching).toBe(false);
+      expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.processes).toBeUndefined();
+    });
+
+    it("follows a value set elsewhere (settings, ch config) on the next push", async () => {
+      const deps = createDeps();
+      await deps.configService.set("sidebar.process-summary", true);
+      await startModule(deps);
+
+      expect(lastSnapshot(deps).sidebar.processSummary).toBe(true);
+      expect(deps.processMonitor.watching).toBe(true);
+    });
+
+    it("shows no totals on a hibernated row", async () => {
+      const deps = createDeps();
+      await deps.configService.set("sidebar.process-summary", true);
+      const module = await startModule(deps);
+      const asleep = makeWorkspace("b", { metadata: { hibernated: "true" } });
+      await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([asleep]) });
+      deps.processMonitor.publish({ [asleep.ref]: { cpuPercent: 1, rssBytes: 1024, count: 1 } });
+      await flush();
+
+      const row = lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
+      expect(row.hibernated).toBe(true);
+      expect(row.processes).toBeUndefined();
+    });
   });
 
   it("toggle-project-collapsed flips the project's flag and persists it", async () => {
@@ -2842,16 +2937,32 @@ describe("PresentationModule - shortcut navigation", () => {
     ]);
   });
 
-  it("p toggles sidebar.mode between overlay and docked", async () => {
+  it("p toggles sidebar.process-summary, and the monitor's polling with it", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
 
     await key(module, "p");
     await flush();
+    expect(lastSnapshot(deps).sidebar.processSummary).toBe(true);
+    expect(deps.configService.getEffective()["sidebar.process-summary"]).toBe(true);
+    expect(deps.processMonitor.watching).toBe(true);
+
+    await key(module, "p");
+    await flush();
+    expect(lastSnapshot(deps).sidebar.processSummary).toBe(false);
+    expect(deps.processMonitor.watching).toBe(false);
+  });
+
+  it("d toggles sidebar.mode between overlay and docked", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+
+    await key(module, "d");
+    await flush();
     expect(lastSnapshot(deps).sidebar.mode).toBe("docked");
     expect(deps.configService.getEffective()["sidebar.mode"]).toBe("docked");
 
-    await key(module, "p");
+    await key(module, "d");
     await flush();
     expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
   });

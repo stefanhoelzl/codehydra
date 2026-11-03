@@ -1,0 +1,32 @@
+<!--
+  codehydra-procs.exe, CodeHydra's Windows process helper (see Program.cs).
+
+  Targets .NET Framework 4.8, which every supported Windows 10/11 ships, so the
+  exe needs no runtime install. The .NET SDK compiles it on any OS: it pulls
+  the net48 reference assemblies (Microsoft.NETFramework.ReferenceAssemblies)
+  from NuGet when the framework is not installed. Built by
+  scripts/build-win-helper.ts; see global.json for the SDK version.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>codehydra-procs</AssemblyName>
+    <RootNamespace>CodeHydra.WinHelper</RootNamespace>
+    <!-- AnyCPU without 32-bit preference: a 64-bit process on 64-bit Windows,
+         which reading a 64-bit process's PEB requires. -->
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Optimize>true</Optimize>
+    <DebugType>none</DebugType>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- One file to ship: no app.config, no satellite resources. -->
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>

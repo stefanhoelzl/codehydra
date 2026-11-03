@@ -26,6 +26,11 @@
   } from "$lib/utils/sidebar-model.js";
   import SidebarIcon from "./SidebarIcon.svelte";
   import Highlighted from "./Highlighted.svelte";
+  import {
+    describeProcessSummary,
+    formatProcessBadge,
+    sumProcessSummaries,
+  } from "$lib/utils/process-summary.js";
   import WorkspaceRow from "./WorkspaceRow.svelte";
   import type { TransitionConfig } from "svelte/transition";
   import type { RowMotion } from "./motion";
@@ -89,6 +94,11 @@
   // Only an idle agent, as the row's green dot and the footer count it: a
   // workspace with no agent (yet, e.g. during startup) is not waiting for you.
   const idle = $derived(project.workspaces.filter((row) => rowGlyph(row) === "idle").length);
+  // With the process summary on, a collapsed card totals its rows' CPU and
+  // memory, since the rows themselves are hidden (null otherwise).
+  const processTotal = $derived(
+    sumProcessSummaries(project.workspaces.map((row) => row.processes))
+  );
   const hibernatedOpen = $derived(project.hibernatedView !== "hidden");
   const color = $derived(projectColor(project.colorIndex));
 
@@ -181,6 +191,14 @@
         {#if running > 0}<i><span class="ring busy"></span>{running}</i>{/if}
         {#if idle > 0}<i><span class="dot idle"></span>{idle}</i>{/if}
       </span>
+      {#if processTotal !== null}
+        <span
+          class="cnt proc"
+          title={`${project.name}: ${describeProcessSummary(processTotal)}`}
+          aria-label={`${project.name}: ${describeProcessSummary(processTotal)}`}
+          >{formatProcessBadge(processTotal)}</span
+        >
+      {/if}
     {:else if hibernated.length + automated.length > 0}
       <button
         type="button"
@@ -391,6 +409,9 @@
     font-variant-numeric: tabular-nums;
     flex: none;
     padding: 0 4px;
+  }
+  .cnt.proc {
+    color: var(--ch-sb-fg-2);
   }
   .cnt i {
     font-style: normal;

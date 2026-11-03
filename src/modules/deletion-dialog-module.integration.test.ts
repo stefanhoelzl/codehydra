@@ -20,6 +20,7 @@ import {
 } from "../intents/delete-workspace";
 import type { ConfirmHookResult } from "../intents/delete-workspace";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
+import { INTENT_GET_PROJECT_BASES } from "../intents/get-project-bases";
 import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { createDeletionDialogModule } from "./deletion-dialog-module";
@@ -606,6 +607,10 @@ describe("DeletionDialogModule - remove confirm", () => {
     resolveStatus(status: { isDirty: boolean; unmergedCommits: number }): void;
     resolveMetadata(metadata: Record<string, string>): void;
     rejectStatus(error: Error): void;
+    /** Settle the remote fetch (project:get-bases) the check runs after the local status. */
+    resolveBases(): void;
+    /** Every intent the check dispatched, in order. */
+    readonly dispatched: { type: string; payload?: unknown }[];
     /** Run the confirm hook (parks until the dialog answers). */
     confirm(): Promise<ConfirmHookResult>;
   }
@@ -623,11 +628,18 @@ describe("DeletionDialogModule - remove confirm", () => {
     const metadataPromise = new Promise((resolve) => {
       resolveMetadataFn = resolve;
     });
+    let resolveBasesFn!: () => void;
+    const basesPromise = new Promise<void>((resolve) => {
+      resolveBasesFn = resolve;
+    });
+    const dispatched: { type: string; payload?: unknown }[] = [];
 
     const dispatcher = {
-      dispatch: vi.fn((intent: { type: string }) => {
+      dispatch: vi.fn((intent: { type: string; payload?: unknown }) => {
+        dispatched.push(intent);
         if (intent.type === INTENT_GET_WORKSPACE_STATUS) return statusPromise;
         if (intent.type === INTENT_GET_METADATA) return metadataPromise;
+        if (intent.type === INTENT_GET_PROJECT_BASES) return basesPromise;
         return Promise.resolve();
       }),
     };
@@ -670,6 +682,8 @@ describe("DeletionDialogModule - remove confirm", () => {
       resolveStatus: (status) => resolveStatusFn(status),
       resolveMetadata: (metadata) => resolveMetadataFn(metadata),
       rejectStatus: (error) => rejectStatusFn(error),
+      resolveBases: () => resolveBasesFn(),
+      dispatched,
       confirm,
     };
   }
@@ -790,6 +804,67 @@ describe("DeletionDialogModule - remove confirm", () => {
 
     // Escape routes to Cancel (resolves canceled — covered above).
     expect(cancelRoleButtonId(handle.config)).toBe("cancel");
+  });
+
+  /** Let the background check's awaited dispatches settle. */
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+  const statusReads = (setup: ConfirmSetup): unknown[] =>
+    setup.dispatched
+      .filter((intent) => intent.type === INTENT_GET_WORKSPACE_STATUS)
+      .map((intent) => intent.payload);
+
+  it("reads the local status first, then fetches remotes and re-reads while the dialog is open", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+    const handle = setup.dialogManager.lastHandle!;
+
+    setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
+    setup.resolveMetadata({});
+    await settle();
+    // The local read fetches nothing; the fetch is the project's, not the workspace's.
+    expect(statusReads(setup)).toEqual([{ workspaceRef: WS_PATH_A }]);
+    expect(setup.dispatched).toContainEqual({
+      type: INTENT_GET_PROJECT_BASES,
+      payload: { projectRef: PROJECT_REF, refresh: true, wait: true },
+    });
+
+    setup.resolveBases();
+    await settle();
+    expect(statusReads(setup)).toHaveLength(2);
+
+    handle.emitAction("remove", { "keep-branch": "false" });
+    await pending;
+  });
+
+  it("reads nothing of the workspace once the dialog is answered, however long the fetch takes", async () => {
+    // A confirmed removal can finish within the fetch: a status read of the
+    // gone workspace would fail (and log an error).
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+    const handle = setup.dialogManager.lastHandle!;
+    setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
+    setup.resolveMetadata({});
+    await settle();
+
+    handle.emitAction("remove", { "keep-branch": "false" });
+    await pending;
+    setup.resolveBases();
+    await settle();
+
+    expect(statusReads(setup)).toHaveLength(1);
+  });
+
+  it("does not fetch when the dialog was answered before the local status landed", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+    setup.dialogManager.lastHandle!.emitAction("remove", { "keep-branch": "false" });
+    await pending;
+
+    setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
+    setup.resolveMetadata({});
+    await settle();
+
+    expect(setup.dispatched.map((intent) => intent.type)).not.toContain(INTENT_GET_PROJECT_BASES);
   });
 
   it("a status result landing after the answer does not update the closed dialog", async () => {

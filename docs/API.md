@@ -503,6 +503,7 @@ All events use acknowledgment callbacks for request/response pattern.
 | `api:workspace:setWakeup`          | `{ script, shell?, env? }`             | `ApiResult<WakeupStatus>`            |
 | `api:workspace:clearWakeup`        | None                                   | `ApiResult<null>`                    |
 | `api:workspace:getWakeup`          | None                                   | `ApiResult<WakeupStatus \| null>`    |
+| `api:workspace:processes`          | None                                   | `ApiResult<WorkspaceProcesses>`      |
 | `api:workspace:setTitle`           | `{ title: string \| null }`            | `ApiResult<void>`                    |
 | `api:workspace:listTags`           | None                                   | `ApiResult<WorkspaceTag[]>`          |
 | `api:workspace:setTag`             | `{ name: string } & TagOptions`        | `ApiResult<void>`                    |
@@ -1616,7 +1617,7 @@ These variables are set when using the Claude agent provider.
 | `_CH_CLAUDE_SYSTEM_PROMPT` | Path to the composed CodeHydra system prompt (`codehydra-prompt-claude.md`), passed to Claude as `--append-system-prompt-file`. Shared by all workspaces (runtime bin dir); required, the wrapper refuses to launch without it. OpenCode gets its own file through `instructions` in `OPENCODE_CONFIG_CONTENT`, not an env var |
 | `_CH_BRIDGE_PORT`          | HTTP bridge server port for hook notifications                                                                                                                                                                                                                                                                                 |
 | `_CH_API_TOKEN`            | Token `ch` and `ch mcp` present when connecting to the API server                                                                                                                                                                                                                                                              |
-| `_CH_WORKSPACE`            | The workspace's ref (`ch::<machine>::<project>::<name>`): how `ch mcp` presents its workspace, how the Claude hooks name it to the bridge, and how the sidekick recognises the agent terminal                                                                                                                                  |
+| `_CH_WORKSPACE`            | The workspace's ref (`ch::<machine>::<project>::<name>`), in every terminal of the workspace (the process monitor attributes processes by it): how `ch mcp` presents its workspace, how the Claude hooks name it to the bridge, and how the sidekick recognises the agent terminal                                             |
 | `_CH_INITIAL_PROMPT_FILE`  | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper.                                                                                                                                                                                |
 
 ---

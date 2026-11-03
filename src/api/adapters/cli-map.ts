@@ -47,6 +47,7 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   },
   "workspace.wakeup.clear": { path: ["ws", "wakeup", "clear"] },
   "workspace.wakeup.show": { path: ["ws", "wakeup", "show"] },
+  "workspace.processes": { path: ["ws", "processes"] },
   "workspace.create": { path: ["ws", "create"], positionals: ["name", "base"] },
   "workspace.delete": { path: ["ws", "delete"] },
   "workspace.switch": { path: ["ws", "switch"], positionals: ["workspace"] },

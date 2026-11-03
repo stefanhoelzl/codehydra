@@ -3,7 +3,7 @@
 
   One workspace in a project card: status glyph, title (or name), branch and
   tags on the second line, a short meta text at the end (the hibernation age,
-  "working"), its questions as cards, and hover actions. Clicks are reported
+  "working", or with the process summary on the workspace's CPU and memory), its questions as cards, and hover actions. Clicks are reported
   to the sidebar, which owns what they do.
 -->
 <script lang="ts">
@@ -16,6 +16,7 @@
   } from "$lib/utils/sidebar-model.js";
   import { describeHibernation } from "$lib/utils/hibernation-age.js";
   import { minuteNow } from "$lib/utils/minute-clock.svelte.js";
+  import { describeProcessSummary, formatProcessBadge } from "$lib/utils/process-summary.js";
   import SidebarIcon from "./SidebarIcon.svelte";
   import Highlighted from "./Highlighted.svelte";
   import NoteCard from "./NoteCard.svelte";
@@ -51,7 +52,15 @@
       ? describeHibernation(row.hibernatedAt, minuteNow())
       : null
   );
-  const meta = $derived(row.hibernated ? (age?.short ?? "") : glyph === "busy" ? "working" : "");
+  // An awake row with the process summary on shows its CPU and memory in
+  // place of "working" (the busy spinner still says it); a hibernated row has
+  // none and keeps its age.
+  const processBadge = $derived(
+    row.processes === undefined ? null : formatProcessBadge(row.processes)
+  );
+  const meta = $derived(
+    row.hibernated ? (age?.short ?? "") : (processBadge ?? (glyph === "busy" ? "working" : ""))
+  );
   // The status cell is the row's button for assistive tech (a click anywhere in
   // the row switches, see ProjectCard): "alpha in web - 1 agent idle".
   const accessibleName = $derived(
@@ -86,10 +95,14 @@
     retry: "Retry",
   };
   const ACTION_ICON = { hibernate: "moon", remove: "trash", retry: "refresh" } as const;
+  // Hovering the row swaps the meta text for the hover actions, so the
+  // process summary's spelled-out form is the row's tooltip instead.
   const tip = $derived(
     automated && row.wakeupScript !== undefined
       ? `Wakes automatically: ${row.wakeupScript}`
-      : undefined
+      : row.processes !== undefined
+        ? describeProcessSummary(row.processes)
+        : undefined
   );
 </script>
 
@@ -149,8 +162,10 @@
   {#if shortcut !== null}
     <span class="meta"><kbd>{shortcut}</kbd></span>
   {:else}
-    <span class="meta" title={age === null ? undefined : `Hibernated ${age.relative} (${age.date})`}
-      >{meta}</span
+    <span
+      class="meta"
+      class:proc={processBadge !== null && !row.hibernated}
+      title={age === null ? undefined : `Hibernated ${age.relative} (${age.date})`}>{meta}</span
     >
   {/if}
   <span class="enter"><kbd>↵</kbd></span>
@@ -286,6 +301,10 @@
   }
   .ws.idle .meta {
     color: var(--ch-sb-idle);
+  }
+  /* CPU and memory read as numbers, not as the row's status color. */
+  .ws .meta.proc {
+    color: var(--ch-sb-fg-2);
   }
   .hover-acts {
     position: absolute;

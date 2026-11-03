@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { mkdtemp, writeFile, chmod, rm, realpath } from "node:fs/promises";
+import { mkdtemp, writeFile, chmod, rm, realpath, readFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createServer, type Server } from "node:net";
@@ -20,6 +20,7 @@ import {
   spawnWithOutput,
   spawnWithExitCode,
   spawnWithChild,
+  windowsProcessHelperPath,
 } from "./process.boundary-test-utils";
 import { delay } from "@shared/test-fixtures";
 
@@ -348,6 +349,121 @@ describe("ExecaProcessRunner", () => {
         expect(await runner.findListeningProcesses(port)).toEqual([]);
       },
       SCAN_TEST_TIMEOUT
+    );
+  });
+
+  describe("listProcesses / findListeningPorts", () => {
+    // The real platform scan (/proc, ps + lsof, or the Windows helper exe)
+    // against a real child: started in a directory of its own, listening on a
+    // port. The parsers are tested on canned output; only this shows the
+    // scan as a whole still reports cwd, parent, memory, CPU and ports.
+    const SNAPSHOT_TEST_TIMEOUT = 30_000;
+
+    let dir: string;
+    let scanner: ProcessRunner;
+
+    beforeEach(async () => {
+      dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "snapshot-test-")));
+      scanner = new ExecaProcessRunner(
+        SILENT_LOGGER,
+        isWindows ? { windowsProcessHelper: windowsProcessHelperPath() } : {}
+      );
+    });
+
+    /** Started in `dir`: killed before it is removed, which Windows refuses while a process sits in it. */
+    const children: SpawnedProcess[] = [];
+
+    afterEach(async () => {
+      for (const child of children.splice(0)) await child.kill(0, 2000);
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    });
+
+    /** Same directory, as each OS spells it (case-insensitive on Windows). */
+    function sameDir(a: string | null, b: string): boolean {
+      if (a === null) return false;
+      const normalize = (p: string) => path.resolve(p).replace(/[\\/]+$/, "");
+      return isWindows
+        ? normalize(a).toLowerCase() === normalize(b).toLowerCase()
+        : normalize(a) === normalize(b);
+    }
+
+    it(
+      "reports a child's cwd, parent, memory, CPU, start time and listening port",
+      async () => {
+        const portFile = path.join(dir, "port");
+        const script =
+          "const s=require('net').createServer().listen(0,'127.0.0.1',()=>" +
+          "require('fs').writeFileSync('port',String(s.address().port)));setTimeout(()=>{},30000)";
+        const child = runner.run(process.execPath, ["-e", script], { cwd: dir });
+        children.push(child);
+        const pid = child.pid!;
+
+        let port: number | undefined;
+        for (let i = 0; i < 100 && port === undefined; i++) {
+          await delay(50);
+          const text = await readFile(portFile, "utf8").catch(() => "");
+          if (text !== "") port = Number(text);
+        }
+        expect(port, "child never listened").toBeDefined();
+
+        const before = Date.now();
+        const snapshot = await scanner.listProcesses();
+        expect(snapshot).not.toBeNull();
+        const entry = snapshot!.processes.find((candidate) => candidate.pid === pid);
+        expect(entry, "child missing from the snapshot").toBeDefined();
+        expect(sameDir(entry!.cwd, dir), `cwd ${entry!.cwd} is not ${dir}`).toBe(true);
+        expect(entry!.ppid).toBe(process.pid);
+        expect(entry!.commandLine).toContain("createServer");
+        expect(entry!.rssBytes).toBeGreaterThan(1024 * 1024);
+        expect(entry!.cpuTimeMs).not.toBeNull();
+        expect(entry!.startedAt).not.toBeNull();
+        expect(Math.abs(entry!.startedAt! - before)).toBeLessThan(60_000);
+
+        // And this test process itself, in its own cwd.
+        const self = snapshot!.processes.find((candidate) => candidate.pid === process.pid);
+        expect(sameDir(self?.cwd ?? null, process.cwd())).toBe(true);
+
+        const ports = await scanner.findListeningPorts([pid]);
+        expect(ports.get(pid)).toContain(port);
+      },
+      SNAPSHOT_TEST_TIMEOUT
+    );
+
+    it(
+      "reads the asked-for environment variable of each process",
+      async () => {
+        // A value with spaces and colons, as a workspace ref can have.
+        const value = `ch::test::${path.basename(dir)}::my workspace`;
+        const child = runner.run(process.execPath, ["-e", "setTimeout(()=>{},30000)"], {
+          cwd: dir,
+          env: { ...process.env, _CH_SNAPSHOT_TEST: value },
+        });
+        children.push(child);
+        const pid = child.pid!;
+        // Let it reach node's main loop, so its environment block is in place.
+        await delay(300);
+
+        const snapshot = await scanner.listProcesses({ envVar: "_CH_SNAPSHOT_TEST" });
+        const entry = snapshot?.processes.find((candidate) => candidate.pid === pid);
+        expect(entry, "child missing from the snapshot").toBeDefined();
+        expect(entry!.envValue).toBe(value);
+        // This test process does not have it.
+        const self = snapshot!.processes.find((candidate) => candidate.pid === process.pid);
+        expect(self?.envValue).toBeNull();
+
+        // Not asked: not read.
+        const plain = await scanner.listProcesses();
+        expect(plain?.processes.find((candidate) => candidate.pid === pid)?.envValue).toBeNull();
+      },
+      SNAPSHOT_TEST_TIMEOUT
+    );
+
+    it(
+      "finds no ports for a process listening on nothing",
+      async () => {
+        expect((await scanner.findListeningPorts([process.pid])).has(process.pid)).toBe(false);
+      },
+      SNAPSHOT_TEST_TIMEOUT
     );
   });
 

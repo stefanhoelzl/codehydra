@@ -20,7 +20,7 @@ import { createDetectJson } from "./windows-file-lock-module.test-utils";
 // Test Helpers
 // =============================================================================
 
-const SCRIPT_PATH = "/scripts/blocking-processes.ps1";
+const HELPER_PATH = "/bin/codehydra-procs.exe";
 
 // =============================================================================
 // parseDetectOutput
@@ -227,9 +227,9 @@ describe("runDetectAction", () => {
 
     const result = await runDetectAction(
       runner,
-      SCRIPT_PATH,
+      HELPER_PATH,
       testPath,
-      "Detect",
+      "detect",
       createMockLogger(),
       8_000
     );
@@ -246,35 +246,35 @@ describe("runDetectAction", () => {
     ]);
   });
 
-  it("calls script with correct action", async () => {
+  it("runs the helper with the action and path", async () => {
     const runner = createMockProcessRunner({
       defaultResult: { stdout: createDetectJson([]) },
     });
 
-    await runDetectAction(runner, SCRIPT_PATH, testPath, "Detect", createMockLogger(), 8_000);
+    await runDetectAction(runner, HELPER_PATH, testPath, "detect", createMockLogger(), 8_000);
 
     expect(runner).toHaveSpawned([
       {
-        command: "powershell",
-        args: expect.arrayContaining(["-File", SCRIPT_PATH, "-Action", "Detect"]),
+        command: HELPER_PATH,
+        args: ["detect", testPath.toNative()],
       },
     ]);
   });
 
   it("returns empty array on non-zero exit code", async () => {
     const runner = createMockProcessRunner({
-      defaultResult: { exitCode: 1, stderr: "PowerShell error" },
+      defaultResult: { exitCode: 1, stderr: "helper error" },
     });
     const logger = createMockLogger();
 
-    const result = await runDetectAction(runner, SCRIPT_PATH, testPath, "Detect", logger, 8_000);
+    const result = await runDetectAction(runner, HELPER_PATH, testPath, "detect", logger, 8_000);
 
     // A non-zero exit is a real answer ("the scan ran and failed"), not the
     // same state as never finding out — only a timeout sets timedOut.
     expect(result).toEqual({ processes: [], timedOut: false });
     expect(logger.warn).toHaveBeenCalledWith(
       "Blocking process detection failed",
-      expect.objectContaining({ exitCode: 1, stderr: "PowerShell error" })
+      expect.objectContaining({ exitCode: 1, stderr: "helper error" })
     );
   });
 
@@ -284,7 +284,7 @@ describe("runDetectAction", () => {
     });
     const logger = createMockLogger();
 
-    const result = await runDetectAction(runner, SCRIPT_PATH, testPath, "Detect", logger, 8_000);
+    const result = await runDetectAction(runner, HELPER_PATH, testPath, "detect", logger, 8_000);
 
     // The distinction that matters: an empty list from a timed-out scan must
     // NOT be reported as "nothing is blocking".
