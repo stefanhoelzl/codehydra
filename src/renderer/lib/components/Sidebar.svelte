@@ -327,15 +327,28 @@
     }
   }
 
+  function takeHover(): void {
+    logger.debug("sidebar hover: expand");
+    isHovering = true;
+    api.emitEvent({ kind: "hover", region: "sidebar" });
+  }
+
   function armExpansion(): void {
-    if (isHovering || docked || mode !== "workspace") return;
+    if (isHovering || docked) return;
+    // Already expanded at hover level — the creation panel, Find, or this
+    // sidebar's own hover whose collapse main has not echoed back yet: take the
+    // hover at once, there is nothing to expand. Dropping the enter instead
+    // would collapse the sidebar under a pointer that just entered it.
+    if (mode === "hover") {
+      clearOpenTimeout();
+      takeHover();
+      return;
+    }
+    if (mode !== "workspace") return;
     if (openTimeout) return;
     openTimeout = setTimeout(() => {
       openTimeout = null;
-      if (mode !== "workspace") return;
-      logger.debug("sidebar hover: expand");
-      isHovering = true;
-      api.emitEvent({ kind: "hover", region: "sidebar" });
+      if (mode === "workspace" || mode === "hover") takeHover();
     }, HOVER_DELAY_MS);
   }
 

@@ -537,6 +537,44 @@ describe("Sidebar", () => {
     });
   });
 
+  describe("hover expansion", () => {
+    const nav = (container: Element): Element => container.querySelector("nav.sidebar")!;
+    const hovers = (): unknown[] =>
+      events().filter((event) => (event as { kind: string }).kind === "hover");
+
+    it("expands after the hover delay", async () => {
+      const { container } = setup({
+        projects: sampleProjects(),
+        sidebarMode: "overlay",
+        mode: "workspace",
+      });
+      await fireEvent.mouseEnter(nav(container));
+      expect(hovers()).toEqual([]);
+      vi.advanceTimersByTime(150);
+      expect(hovers()).toEqual([{ kind: "hover", region: "sidebar" }]);
+    });
+
+    it("an enter before main echoed the collapse takes the hover back", async () => {
+      const { container, rerender } = setup({
+        projects: sampleProjects(),
+        sidebarMode: "overlay",
+        mode: "workspace",
+      });
+      await fireEvent.mouseEnter(nav(container));
+      vi.advanceTimersByTime(150);
+      rerender({ mode: "hover" });
+
+      await fireEvent.mouseLeave(nav(container));
+      vi.advanceTimersByTime(150);
+      expect(hovers().at(-1)).toEqual({ kind: "hover", region: null });
+
+      // Main has not pushed mode "workspace" yet: the sidebar still shows expanded.
+      vi.mocked(emitEvent).mockClear();
+      await fireEvent.mouseEnter(nav(container));
+      expect(hovers()).toEqual([{ kind: "hover", region: "sidebar" }]);
+    });
+  });
+
   describe("collapsed rail", () => {
     it("overlay and not hovered: the rail shows awake rows of expanded projects", () => {
       const { container } = setup({
