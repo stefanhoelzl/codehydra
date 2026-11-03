@@ -22,7 +22,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 
 ### Where keys are defined
 
-- Each module registers its keys with `Config.register()` in its factory and keeps the returned typed `PersistedAccessor`; keys no single module owns (`agent`, `telemetry.enabled`, `help`, `version.claude`, `version.opencode`, `download-binaries`, `sidebar.width`, `experimental.concurrent-hooks`) are registered in `src/main.ts` and their accessors threaded in.
+- Each module registers its keys with `Config.register()` in its factory and keeps the returned typed `PersistedAccessor`; keys no single module owns (`agent`, `telemetry.enabled`, `help`, `version.claude`, `version.opencode`, `download-binaries`, `sidebar.width`) are registered in `src/main.ts` and their accessors threaded in.
 - Service: `src/boundaries/platform/config.ts`. Key definitions (`PersistedKeyDefinition`) and the `store*` builders: `src/boundaries/platform/store-definition.ts`.
 - A key's `settingsControl` (attached by the typed builders) puts it in the settings dialog; `applies: "live" | "restart"` (absent = restart) drives the dialog's "Restart to apply" note.
 - `isUserSetting` (`config.ts`) — not deprecated, has a `settingsControl`, not `help`/`download-binaries` — decides which keys the settings dialog and `ch config` both expose.
@@ -131,10 +131,6 @@ Default `null` · `electron-lifecycle-module.ts`. Electron switches (e.g. `--dis
 #### `electron.disabled-features`
 
 Default `null` · `electron-lifecycle-module.ts`. Comma-separated Chromium features for `--disable-features`. `null` = curated defaults (`DEFAULT_DISABLED_FEATURES`); `""` = nothing disabled; any value fully replaces the defaults. Settings control: checkbox-guarded text (`guarded-text`).
-
-#### `experimental.concurrent-hooks`
-
-Default `false` · `src/main.ts`. Run a hook point's (and an event's) ready handlers concurrently instead of one at a time — eager, capability-driven (`requires`/`provides`). Read once per hook point, so it applies live. A lone handler always runs the sequential path.
 
 #### `debug.blocking-pids`
 

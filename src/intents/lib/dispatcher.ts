@@ -285,23 +285,15 @@ export class Dispatcher implements IDispatcher {
   private readonly initialCapabilities: Readonly<Record<string, unknown>>;
   private readonly logger: Logger;
   private readonly logScope: LogScopeStore;
-  private readonly concurrentHooks: () => boolean;
 
   constructor(options: {
     logger: Logger;
     initialCapabilities?: Readonly<Record<string, unknown>>;
     /** The logging service's scope store; without it, lines carry no dispatch scope. */
     logScope?: LogScopeStore;
-    /**
-     * Whether a hook point's ready handlers run concurrently rather than one at
-     * a time. Read once per hook point, so a change applies from the next one.
-     * Defaults to sequential.
-     */
-    concurrentHooks?: () => boolean;
   }) {
     this.logger = options.logger;
     this.logScope = options.logScope ?? NO_LOG_SCOPE;
-    this.concurrentHooks = options.concurrentHooks ?? ((): boolean => false);
     this.initialCapabilities = Object.freeze({ ...options.initialCapabilities });
   }
 
@@ -450,10 +442,8 @@ export class Dispatcher implements IDispatcher {
    * Run a hook point's handlers. Each runs once its `requires` are satisfied;
    * one whose requirements never are is skipped.
    *
-   * Sequential (the default): handlers run one at a time, in registration
-   * order within each pass. Concurrent (`concurrentHooks`): every handler
-   * whose requirements are met starts at once, and each completion re-checks
-   * the ones still waiting. Either way every handler runs to completion,
+   * Every handler whose requirements are met starts at once, and each
+   * completion re-checks the ones still waiting. Every handler runs to completion,
    * `results[]` carries no order a caller may rely on, and nothing guarantees
    * one handler starts before another unless a capability says so.
    */
@@ -550,9 +540,21 @@ export class Dispatcher implements IDispatcher {
     const ready = (entry: HookHandler): boolean =>
       requirementsSatisfied(entry.requires ?? {}, capabilities);
 
-    // A lone handler has nothing to overlap with: it takes the sequential path,
-    // whose timing (no extra microtask hops) is the same in both modes.
-    if (hookHandlers.length > 1 && this.concurrentHooks()) {
+    // A lone handler has nothing to overlap with: it runs directly, with no
+    // extra microtask hops (that preserves emit/dispatch timing).
+    if (hookHandlers.length === 1) {
+      const [entry] = hookHandlers as [HookHandler];
+      if (ready(entry)) {
+        pending = [];
+        const ctx = contextFor();
+        try {
+          absorb((await invoke(entry, ctx)) ?? {});
+        } catch (err) {
+          errors.push(toError(err));
+        }
+        if (entry.name) ran.push(entry.name);
+      }
+    } else {
       // Eager: start everything ready, wait for any one to finish, repeat.
       // A handler's synchronous part runs as it starts; `settle` never rejects.
       const settle = async (entry: HookHandler, ctx: HookContext): Promise<void> => {
@@ -575,29 +577,6 @@ export class Dispatcher implements IDispatcher {
         }
         if (inFlight.size === 0) break;
         await Promise.race(inFlight);
-      }
-    } else {
-      while (pending.length > 0) {
-        let progressMade = false;
-        const nextPending: HookHandler[] = [];
-
-        for (const entry of pending) {
-          if (ready(entry)) {
-            const ctx = contextFor();
-            try {
-              absorb((await invoke(entry, ctx)) ?? {});
-            } catch (err) {
-              errors.push(toError(err));
-            }
-            if (entry.name) ran.push(entry.name);
-            progressMade = true;
-          } else {
-            nextPending.push(entry);
-          }
-        }
-
-        pending = nextPending;
-        if (!progressMade) break;
       }
     }
 
