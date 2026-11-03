@@ -437,21 +437,22 @@ export async function readLogs(options: ReadLogsOptions = {}): Promise<string> {
  */
 export async function expandSidebarOn(ui: Page): Promise<void> {
   const nav = ui.locator("nav.sidebar");
-  const settings = ui.getByRole("button", { name: "Settings" });
-  // Re-sent until it takes: an enter that lands just after a collapse fired,
-  // but before the collapsed state reached the renderer, is not eligible to
-  // expand, and a synthetic enter brings no mousemove to arm it again.
+  // The expanded class, not a button's visibility: collapsed, the card keeps
+  // its content laid out and only clips it, which Playwright counts as visible.
+  const expanded = ui.locator("nav.sidebar.expanded");
+  // Re-sent until it takes: an enter that lands while a dialog or the shortcut
+  // overlay holds the UI is not eligible to expand, and a synthetic enter
+  // brings no mousemove to arm it again.
   const deadline = Date.now() + 15_000;
   for (;;) {
     try {
-      // A real MouseEvent, at the window's left edge: the sidebar reads
-      // clientX, and a bare event's would be undefined.
+      // A real MouseEvent, at the window's left edge, as a pointer arriving.
       await nav.evaluate(
         (el) => el.dispatchEvent(new MouseEvent("mouseenter", { clientX: 0, clientY: 100 })),
         undefined,
         { timeout: 1_000 }
       );
-      await settings.waitFor({ state: "visible", timeout: 1_000 });
+      await expanded.waitFor({ state: "attached", timeout: 1_000 });
       break;
     } catch (error) {
       if (Date.now() >= deadline) throw new Error("the sidebar never expanded", { cause: error });

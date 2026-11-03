@@ -111,7 +111,8 @@ Projects are sorted by name.
 - **Collapsed**, it is a rail: each project's letter with the
   [status glyphs](#status-indicators) of its awake workspaces. It expands when you point at the rail, in shortcut
   mode, while Find, a dialog or the New workspace form is open, and whenever
-  there are no workspaces.
+  there are no workspaces. While the pointer is on it, it stays expanded, also
+  when Find or the New workspace form closes under it.
 - **Docked**, it stays expanded beside the workspace, which shrinks to the
   rest of the window instead of being covered. Toggle it with the dock button
   in the footer (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>); the choice is
