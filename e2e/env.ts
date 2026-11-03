@@ -208,13 +208,38 @@ export function packagedExecutable(): string {
   return exe;
 }
 
-export function freePort(): Promise<number> {
+/**
+ * Below every OS's ephemeral range (Linux from 32768, macOS and Windows from
+ * 49152), where a bind to port 0 never lands.
+ */
+const FIXED_PORT_RANGE = { min: 20_000, max: 32_767 } as const;
+
+/** Whether `port` can be bound on 127.0.0.1 right now. */
+function canBind(port: number): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address() as { port: number };
-      server.close(() => resolve(port));
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE" || error.code === "EACCES") resolve(false);
+      else reject(error);
     });
-    server.on("error", reject);
+    server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)));
   });
+}
+
+/**
+ * A free port for the app to listen on later, as `--ide-server.port`.
+ *
+ * Not one the OS hands out for port 0: the app binds its API server to port 0
+ * before the IDE server starts, and Linux can return a port just released —
+ * the IDE server then finds its own app holding its port and offers to
+ * terminate it. A port outside the ephemeral range can only be taken on purpose.
+ */
+export async function freePort(): Promise<number> {
+  const span = FIXED_PORT_RANGE.max - FIXED_PORT_RANGE.min + 1;
+  const start = Math.floor(Math.random() * span);
+  for (let offset = 0; offset < span; offset++) {
+    const port = FIXED_PORT_RANGE.min + ((start + offset) % span);
+    if (await canBind(port)) return port;
+  }
+  throw new Error(`No free port in ${FIXED_PORT_RANGE.min}-${FIXED_PORT_RANGE.max} on 127.0.0.1`);
 }
