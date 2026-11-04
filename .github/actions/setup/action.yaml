@@ -1,5 +1,12 @@
 name: Setup
-description: Setup pnpm with caching, and the .NET SDK
+description: Setup pnpm with caching, the .NET SDK and the Rust toolchain
+
+inputs:
+  rust:
+    description: >-
+      Install the Rust toolchain that builds the native addon. "false" for jobs
+      that only reuse build output (packaging, e2e).
+    default: "true"
 
 runs:
   using: composite
@@ -23,6 +30,21 @@ runs:
     - uses: actions/setup-dotnet@v5
       with:
         dotnet-version: 10.0.x
+
+    # Rust builds the native addon (native/, scripts/build-native.ts). rustup is
+    # on every GitHub-hosted image; this installs the toolchain that
+    # native/rust-toolchain.toml pins, rather than leaving it to the first cargo.
+    - if: inputs.rust == 'true'
+      shell: bash
+      working-directory: native
+      run: rustup toolchain install
+
+    # Same restore-always/save-only-on-main rule as the pnpm store below.
+    - if: inputs.rust == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: native
+        save-if: ${{ github.ref == 'refs/heads/main' }}
 
     # Tell pnpm where its store is rather than asking: `pnpm store path` is a
     # cold pnpm start that took ~9-13s on Windows just to print a path. pnpm

@@ -4,10 +4,6 @@
 // scripts/build-win-helper.ts with the .NET SDK on any OS, and bundled as
 // bin/codehydra-procs.exe. Every command prints one JSON object and exits:
 //
-//   codehydra-procs.exe snapshot [<var>]   every process: pid, ppid, name, commandLine,
-//                                          cwd, rssBytes, cpuTimeMs, startedAt, and with
-//                                          <var> "env": that environment variable's value
-//                                          {"processes":[...]}
 //   codehydra-procs.exe listeners          listening TCP sockets {"listeners":[{pid,port}]}
 //   codehydra-procs.exe detect <dir>       processes blocking removal of <dir>: Restart
 //                                          Manager file handles + CWD {"blocking":[...]}
@@ -21,7 +17,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -32,9 +27,6 @@ public static class Program {
         try {
             string command = args.Length > 0 ? args[0] : "";
             switch (command) {
-                case "snapshot":
-                    Console.Out.Write(Snapshot(args.Length > 1 ? args[1] : null));
-                    return 0;
                 case "listeners":
                     Console.Out.Write(Listeners());
                     return 0;
@@ -55,84 +47,8 @@ public static class Program {
     }
 
     private static int Usage() {
-        Console.Error.WriteLine("usage: codehydra-procs.exe snapshot [<var>] | listeners | detect <dir> | detect-cwd <dir>");
+        Console.Error.WriteLine("usage: codehydra-procs.exe listeners | detect <dir> | detect-cwd <dir>");
         return 2;
-    }
-
-    // =========================================================================
-    // snapshot
-    // =========================================================================
-
-    private const int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
-
-    [DllImport("ntdll.dll")]
-    private static extern int NtQueryInformationProcess(
-        IntPtr processHandle, int processInformationClass,
-        ref BlockingProcessDetector.PROCESS_BASIC_INFORMATION processInformation,
-        int processInformationLength, out int returnLength);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr OpenProcess(int desiredAccess, bool inheritHandle, int processId);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CloseHandle(IntPtr handle);
-
-    /** Parent pid from PROCESS_BASIC_INFORMATION.InheritedFromUniqueProcessId; 0 when unreadable. */
-    private static long ParentPid(int pid) {
-        IntPtr handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-        if (handle == IntPtr.Zero) return 0;
-        try {
-            var pbi = new BlockingProcessDetector.PROCESS_BASIC_INFORMATION();
-            int returned;
-            int status = NtQueryInformationProcess(handle, 0, ref pbi, Marshal.SizeOf(pbi), out returned);
-            return status == 0 ? pbi.Reserved3.ToInt64() : 0;
-        } finally {
-            CloseHandle(handle);
-        }
-    }
-
-    private static readonly DateTime Epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-
-    private static string Snapshot(string envVar) {
-        var json = new Json();
-        json.Raw("{\"processes\":[");
-        bool first = true;
-        foreach (var proc in Process.GetProcesses()) {
-            try {
-                int pid = proc.Id;
-                if (pid == 0) continue; // the System Idle Process
-                string name = proc.ProcessName;
-                long rss = 0;
-                try { rss = proc.WorkingSet64; } catch { }
-                // Protected and other users' processes refuse these; null, not 0.
-                double? cpu = null;
-                try { cpu = proc.TotalProcessorTime.TotalMilliseconds; } catch { }
-                double? started = null;
-                try { started = Math.Round((proc.StartTime.ToUniversalTime() - Epoch).TotalMilliseconds); } catch { }
-                string cwd = BlockingProcessDetector.GetProcessCwd(pid);
-                string commandLine = BlockingProcessDetector.GetProcessCommandLine(pid);
-                string env = envVar == null ? null : BlockingProcessDetector.GetProcessEnvironmentVariable(pid, envVar);
-
-                if (!first) json.Raw(",");
-                first = false;
-                json.Raw("{\"pid\":").Number(pid)
-                    .Raw(",\"ppid\":").Number(ParentPid(pid))
-                    .Raw(",\"name\":").String(name)
-                    .Raw(",\"commandLine\":").String(commandLine)
-                    .Raw(",\"cwd\":").String(cwd)
-                    .Raw(",\"rssBytes\":").Number(rss)
-                    .Raw(",\"cpuTimeMs\":").Number(cpu)
-                    .Raw(",\"startedAt\":").Number(started)
-                    .Raw(",\"env\":").String(env)
-                    .Raw("}");
-            } catch {
-                // It exited mid-scan.
-            } finally {
-                proc.Dispose();
-            }
-        }
-        json.Raw("]}");
-        return json.ToString();
     }
 
     // =========================================================================

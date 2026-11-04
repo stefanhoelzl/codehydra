@@ -26,6 +26,7 @@ import { ElectronLog, type Logging } from "./boundaries/platform/logging";
 import { DefaultFileSystemBoundary } from "./boundaries/platform/filesystem";
 import { DefaultNetworkLayer } from "./boundaries/platform/network";
 import { ExecaProcessRunner } from "./boundaries/platform/process";
+import { loadNativeAddon, nativeAddonFileName } from "./boundaries/platform/native-addon";
 import { GitWorktreeProvider } from "./boundaries/platform/git-worktree-provider";
 import { SimpleGitClient } from "./boundaries/platform/simple-git-client";
 import { DefaultConfig } from "./boundaries/platform/config";
@@ -325,10 +326,12 @@ const osNotificationLayer = new DefaultOsNotificationBoundary(notificationLogger
 // 4. Service construction
 
 // Process runner uses platform-native tree killing (taskkill on Windows, process.kill on Unix).
-// On Windows, process snapshots and blocking-process detection run the bundled helper exe.
+// Process snapshots come from the bundled native addon; on Windows, listening
+// ports and blocking-process detection still run the bundled helper exe.
 const windowsProcessHelper = pathProvider.runtimePath("bin/codehydra-procs.exe").toNative();
 const processRunner = new ExecaProcessRunner(loggingService.createLogger("process"), {
   windowsProcessHelper,
+  native: loadNativeAddon(pathProvider.runtimePath(`bin/${nativeAddonFileName()}`).toNative()),
 });
 const networkLayer = new DefaultNetworkLayer(loggingService.createLogger("network"));
 

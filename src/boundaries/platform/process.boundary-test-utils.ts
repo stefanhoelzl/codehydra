@@ -11,6 +11,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcessRunner, SpawnedProcess } from "./process";
+import { loadNativeAddon, nativeAddonFileName, type NativeAddon } from "./native-addon";
 
 /**
  * The Windows process helper as `pnpm build:wrappers` leaves it.
@@ -24,6 +25,20 @@ export function windowsProcessHelperPath(): string {
     throw new Error(`${helper} is missing: run \`pnpm build:wrappers\` first`);
   }
   return helper;
+}
+
+/**
+ * The native addon for this platform as `pnpm build:wrappers` leaves it.
+ *
+ * Throws, never skips, when it has not been built: a boundary test that
+ * silently skipped would report the process scan as working.
+ */
+export function nativeAddon(): NativeAddon {
+  const file = join(process.cwd(), "dist", "bin", nativeAddonFileName());
+  if (!existsSync(file)) {
+    throw new Error(`${file} is missing: run \`pnpm build:wrappers\` first`);
+  }
+  return loadNativeAddon(file);
 }
 
 /**
