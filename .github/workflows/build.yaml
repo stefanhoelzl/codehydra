@@ -16,57 +16,73 @@ on:
         value: ${{ jobs.prepare.outputs.is_base_version }}
 
 jobs:
-  # The native addon for the platforms Linux cannot build it for, each on its
-  # own OS. `prepare` builds once on Linux and every package job reuses its
-  # output, so that output must carry the addon of every platform
-  # (scripts/build-native.ts); `prepare` builds the Linux one itself.
-  native:
-    name: Native addon (${{ matrix.target }})
-    runs-on: ${{ matrix.runs-on }}
+  # Build and test on every OS. Each leg builds the native addon for its
+  # platform, runs the whole suite against it — the process boundary tests load
+  # exactly that file — and uploads it as `native-<os>`. `prepare` bundles those
+  # files instead of building its own: it builds once on Linux and every package
+  # job reuses its output, so it needs the addon of every platform, and taking
+  # them from here means what ships is what these tests ran against. macOS
+  # runners are arm64; the x86_64 addon is cross-built on the same runner (built,
+  # not tested), so a run costs one macOS runner, not one per architecture.
+  test:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runs-on: macos-26
-            target: aarch64-apple-darwin
-          - runs-on: macos-26
-            target: x86_64-apple-darwin
-          - runs-on: windows-2025
-            target: x86_64-pc-windows-msvc
-    defaults:
-      run:
-        shell: bash
+        os: [ubuntu-24.04, windows-2025, macos-26]
+
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
 
-      # Node runs the build script as it is (type stripping): no pnpm install needed.
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
+      # wrapper.boundary.test.ts executes dist/bin/*.cjs and throws without it,
+      # the process boundary tests load dist/bin/codehydra-native.*.node (Rust comes from the setup action),
+      # and server-manager.boundary.test.ts runs the hook handler built there.
+      # The boundary globalSetup downloads the latest opencode once (ensure-binaries.ts).
+      - run: pnpm build:wrappers
 
-      - name: Install the Rust toolchain
-        working-directory: native
+      - name: Cross-build the x86_64 macOS addon
+        if: runner.os == 'macOS'
+        shell: bash
         run: |
-          rustup toolchain install
-          rustup target add ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-          key: ${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - run: node scripts/build-native.ts --target ${{ matrix.target }}
+          (cd native && rustup target add x86_64-apple-darwin)
+          node scripts/build-native.ts --target x86_64-apple-darwin
 
       - uses: actions/upload-artifact@v7
         with:
-          name: native-${{ matrix.target }}
+          name: native-${{ matrix.os }}
           path: dist/bin/codehydra-native.*.node
           retention-days: 1
           if-no-files-found: error
 
+      # server-manager.boundary.test.ts launches Claude for real, against a local
+      # mock model — no login, no key, no network. It throws rather than skipping
+      # when `claude` is absent, so a missing install fails the job instead of
+      # silently dropping the coverage.
+      #
+      # Deliberately unpinned, like the e2e job: a release that changes which
+      # hooks Claude emits should turn CI red here rather than go unnoticed.
+      - name: Install the Claude CLI
+        uses: ./.github/actions/install-claude
+
+      - run: pnpm check
+      - run: pnpm test
+      - run: git diff --exit-code
+
+      # Per-file and per-test durations (vitest's JSON reporter, CI only), for
+      # finding slow files and tests running close to their timeout.
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-timings-${{ matrix.os }}
+          path: test-results/vitest.json
+          retention-days: 14
+          if-no-files-found: warn
+
   prepare:
-    needs: native
+    needs: test
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -128,8 +144,12 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          # No Rust: every addon, Linux's included, comes from the test job.
+          rust: "false"
 
-      # Before the build: build-native.ts keeps these and builds only Linux's.
+      # Before the build: build-native.ts finds them newer than the sources and
+      # builds nothing (without them it would fail: there is no cargo here).
       - name: Download native addons
         uses: actions/download-artifact@v8
         with:
