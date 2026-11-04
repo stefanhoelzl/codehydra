@@ -5,6 +5,7 @@
  * Tests verify: dispatcher -> operation -> release/detect/flush hooks -> ProcessRunner calls.
  */
 
+import { AsyncLogScopeStore } from "../boundaries/platform/log-scope";
 import { describe, it, expect, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
@@ -122,6 +123,7 @@ const HELPER_PATH = testPath("/bin/codehydra-procs.exe").toNative();
 
 function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
   const dispatcher = new Dispatcher({
+    logScope: new AsyncLogScopeStore(),
     logger: createMockLogger(),
     initialCapabilities: { platform: "win32" },
   });
@@ -139,6 +141,7 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
 
 function createDetectSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
   const dispatcher = new Dispatcher({
+    logScope: new AsyncLogScopeStore(),
     logger: createMockLogger(),
     initialCapabilities: { platform: "win32" },
   });
@@ -160,6 +163,7 @@ function createFlushSetup(
   logger = SILENT_LOGGER
 ) {
   const dispatcher = new Dispatcher({
+    logScope: new AsyncLogScopeStore(),
     logger: createMockLogger(),
     initialCapabilities: { platform: "win32" },
   });
@@ -416,6 +420,7 @@ describe("WindowsFileLockModule Integration", () => {
 
     function createHibernateReleaseSetup(r: MockProcessRunner) {
       const dispatcher = new Dispatcher({
+        logScope: new AsyncLogScopeStore(),
         logger: createMockLogger(),
         initialCapabilities: { platform: "win32" },
       });

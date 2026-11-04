@@ -67,7 +67,7 @@ describe("setupDomainEventBindings (chime from snapshots)", () => {
   let notificationService: AgentNotificationService;
 
   beforeEach(() => {
-    notificationService = new AgentNotificationService();
+    notificationService = new AgentNotificationService(vi.fn());
     vi.spyOn(notificationService, "handleStatusChange");
     vi.spyOn(notificationService, "removeWorkspace");
   });

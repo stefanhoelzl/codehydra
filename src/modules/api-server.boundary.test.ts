@@ -143,9 +143,8 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     it("tracks a workspace's socket from connect to disconnect", async () => {
       const workspace = wsPath("/test/workspace");
 
-      // Before: the server is listening, so `isReady` would say yes. The
-      // question a command actually needs is this one, and the answer is no.
-      expect(env.apiServer.isReady()).toBe(true);
+      // Before: the server is listening, but no workspace socket is, and that
+      // is the question a command actually needs.
       expect(env.apiServer.isConnected(testWorkspaceRef(workspace))).toBe(false);
 
       const client = createClient(workspace);
@@ -265,7 +264,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     it("rejects client with missing workspacePath property", async () => {
       // Client with auth object that has no workspacePath property at all
       const client = ioClient(`http://127.0.0.1:${env.port}`, {
-        transports: ["polling"],
+        transports: ["websocket"],
         autoConnect: false,
         auth: {
           otherProp: "someValue",

@@ -167,13 +167,8 @@ export interface ApiServerModuleDeps {
   /** Tells a folder from a file when revealing a path in the file manager. */
   readonly fileSystem: Pick<FileSystemBoundary, "readdir">;
   readonly logger: Logger;
-  /**
-   * Registry-backed operations, mounted for every connection.
-   *
-   * Optional so existing callers (and the boundary tests) can stand the server
-   * up without one; when absent, only the hand-written channels are served.
-   */
-  readonly registry?: OperationRegistry;
+  /** Registry-backed operations, mounted for every CLI and MCP connection. */
+  readonly registry: OperationRegistry;
   /**
    * The shared secret `ch` and the MCP shim must present.
    *
@@ -181,13 +176,11 @@ export interface ApiServerModuleDeps {
    * constructed. Returning null refuses every non-sidekick connection, which is
    * the correct posture before a token exists.
    */
-  readonly cliToken?: () => string | null;
+  readonly cliToken: () => string | null;
   readonly options?: ApiServerOptions;
 }
 
 export interface ApiServerOptions {
-  /** Socket.IO transports to use. Default: ["websocket"] */
-  readonly transports?: readonly ("polling" | "websocket")[];
   /** Whether the app is running in development mode. Default: false */
   readonly isDevelopment?: boolean;
   /** Logger for extension-side logs. Default: SILENT_LOGGER */
@@ -199,33 +192,21 @@ export interface ApiServerOptions {
 // =============================================================================
 
 /**
- * The module plus its runtime readiness probes.
+ * The module plus its runtime readiness probe, `isConnected`.
  *
- * These exist for callers that fire a *best-effort* vscode command and already
+ * It exists for callers that fire a *best-effort* vscode command and already
  * treat "not connected" as normal — terminal focus on first idle, notably.
  * Dispatching anyway works, but the intent rejects and the dispatcher logs that
  * rejection at error level, so an expected condition ends up in the log (and in
  * every bug report) looking like a fault. Asking first keeps the log honest; the
- * caller's own retry-on-next-trigger still covers it.
+ * caller's own retry-on-next-trigger still covers it. A command is delivered to
+ * one workspace's socket or not at all, so the probe is per workspace.
  *
- * Ask `isConnected` for that, not `isReady`. A listening server says nothing
- * about the workspace you are about to address, and a command is delivered to
- * one workspace's socket or not at all.
- *
- * Do NOT use either to pre-check a command whose failure actually matters — the
+ * Do NOT use it to pre-check a command whose failure actually matters — the
  * hook still throws, and that error is the real signal.
  */
 export interface ApiServerModuleHandle {
   readonly module: IntentModule;
-  /**
-   * True once the Socket.IO server is listening — workspaces may still be
-   * connecting, or already gone.
-   *
-   * Almost never the question you want: it is true for a workspace that has
-   * never connected and for one whose extension host was just disposed. Use
-   * `isConnected` to guard a command aimed at a particular workspace.
-   */
-  isReady(): boolean;
   /**
    * True when this workspace has a live socket right now — the condition a
    * `vscode:command` for it actually needs.
@@ -282,9 +263,6 @@ const SERVER_DISCONNECT_REASONS: ReadonlySet<string> = new Set([
 
 export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModuleHandle {
   const { portManager, dispatcher, appLayer, fileSystem, logger } = deps;
-  const transports: readonly ("polling" | "websocket")[] = deps.options?.transports ?? [
-    "websocket",
-  ];
   const isDevelopment = deps.options?.isDevelopment ?? false;
   const extensionLogger: Logger = deps.options?.extensionLogger ?? SILENT_LOGGER;
 
@@ -338,7 +316,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     httpServer = createServer();
     io = new Server(httpServer, {
-      transports: [...transports],
+      transports: ["websocket"],
       cors: { origin: false },
     });
 
@@ -353,7 +331,20 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     // Bind and discover in one step; a port discovered up front can be lost
     // again before listen() reaches it.
-    const assignedPort = await portManager.listenOnFreePort(httpServer, "127.0.0.1");
+    let assignedPort: number;
+    try {
+      assignedPort = await portManager.listenOnFreePort(httpServer, "127.0.0.1");
+    } catch (error) {
+      // Nothing is listening: undo the setup, so no half-started server is
+      // left behind, still subscribed and forwarding events to nobody.
+      for (const unsubscribe of eventSubscriptions) unsubscribe();
+      eventSubscriptions = [];
+      const failed = io;
+      io = null;
+      httpServer = null;
+      await failed.close();
+      throw error;
+    }
     port = assignedPort;
     logger.info("Started", { port: assignedPort });
 
@@ -784,7 +775,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     // The token is what separates a deliberate caller from any local process
     // that guessed the port. Its absence refuses the connection outright rather
     // than degrading to a workspace-less one.
-    const expected = deps.cliToken?.() ?? null;
+    const expected = deps.cliToken();
     if (expected === null) {
       return { error: "this CodeHydra is not accepting CLI connections" };
     }
@@ -937,16 +928,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     // Registry operations are mounted for every kind of client. Which operations
     // that is, and what they are called, follows the client kind.
-    const connection: ApiServerConnection = deps.registry
-      ? attachApiServerAdapter({
-          socket: socket as unknown as Parameters<typeof attachApiServerAdapter>[0]["socket"],
-          registry: deps.registry,
-          workspaceRef: resolved,
-          cwd: handshake.cwd ?? null,
-          logger,
-          kind: handshake.kind,
-        })
-      : { concerns: () => false };
+    const connection: ApiServerConnection = attachApiServerAdapter({
+      socket: socket as unknown as Parameters<typeof attachApiServerAdapter>[0]["socket"],
+      registry: deps.registry,
+      workspaceRef: resolved,
+      cwd: handshake.cwd ?? null,
+      logger,
+      kind: handshake.kind,
+    });
 
     // A CLI or MCP client is a guest: it never becomes the workspace's
     // registered socket, so it cannot displace the sidekick, and teardown's wait
@@ -1707,7 +1696,6 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
   return {
     module,
-    isReady: () => io !== null,
     isConnected,
     port: () => port,
     appendOutput,

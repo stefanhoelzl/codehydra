@@ -23,6 +23,7 @@
  * than the schema's tolerance.
  */
 
+import { AsyncLogScopeStore } from "../../boundaries/platform/log-scope";
 import { describe, it, expect } from "vitest";
 import { z } from "zod/v4";
 import { Dispatcher } from "./dispatcher";
@@ -127,7 +128,7 @@ function createProbeOperation(controls: ProbeControls = {}): Operation<typeof sc
 }
 
 function createDispatcher(controls?: ProbeControls): Dispatcher {
-  const dispatcher = new Dispatcher({ logger: SILENT_LOGGER });
+  const dispatcher = new Dispatcher({ logger: SILENT_LOGGER, logScope: new AsyncLogScopeStore() });
   dispatcher.registerOperation(createProbeOperation(controls));
   return dispatcher;
 }

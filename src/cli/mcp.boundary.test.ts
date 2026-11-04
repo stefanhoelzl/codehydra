@@ -11,37 +11,21 @@
  * side of the contract is covered with hand-built handshakes
  * (api-server-cli.boundary.test.ts); this pins the side the shim sends.
  *
- * The compiled bundle rather than `connect()` in-process: under vitest,
- * `require("ws")` resolves to ws's browser stub, so Socket.IO's websocket
- * transport — the only one `ch` uses — cannot run inside the test process.
+ * The compiled bundle rather than `connect()` in-process: it is what agents
+ * launch.
  */
 
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server as HttpServer } from "node:http";
-import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { AddressInfo } from "node:net";
-import { Server, type ServerOptions } from "socket.io";
+import { Server } from "socket.io";
 import { assertCompiledScript } from "../modules/agent-module/wrapper-boundary-test-utils";
 
 const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../dist/bin/ch.cjs");
 const TOKEN = "test-token";
 const WORKSPACE = "ch::local::/repo::feature";
-
-/**
- * The `ws` server engine, loaded by file: engine.io's own `require("ws")` gets
- * the browser stub here too, which has no server.
- */
-function wsEngine(): ServerOptions["wsEngine"] {
-  // Through socket.io: engine.io is its dependency, not ours, so pnpm does not
-  // link it at the root.
-  const fromRoot = createRequire(join(process.cwd(), "package.json"));
-  const fromSocketIo = createRequire(fromRoot.resolve("socket.io"));
-  const fromEngine = createRequire(fromSocketIo.resolve("engine.io"));
-  const wsRoot = dirname(fromEngine.resolve("ws/package.json"));
-  return fromEngine(join(wsRoot, "lib", "websocket-server.js")) as ServerOptions["wsEngine"];
-}
 
 let http: HttpServer | undefined;
 let io: Server | undefined;
@@ -59,7 +43,7 @@ afterEach(async () => {
 async function recordingServer(): Promise<{ port: number; auths: unknown[] }> {
   const auths: unknown[] = [];
   http = createServer();
-  io = new Server(http, { transports: ["websocket"], wsEngine: wsEngine() });
+  io = new Server(http, { transports: ["websocket"] });
   io.on("connection", (socket) => auths.push(socket.handshake.auth));
   await new Promise<void>((done) => http!.listen(0, "127.0.0.1", done));
   return { port: (http.address() as AddressInfo).port, auths };

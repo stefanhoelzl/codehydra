@@ -34,6 +34,14 @@ function getHook(module: IntentModule, operationId: string, hookId: string): Hoo
   return hook as HookHandler;
 }
 
+/** A module for tests that never look at the notifications it raises. */
+function createModule(configService: Config): IntentModule {
+  return createDebugModule({
+    configService,
+    dispatcher: createMockNotificationManager().dispatcher,
+  });
+}
+
 function makeHookContext(): HookContext {
   return { intent: { type: "test", payload: {} } };
 }
@@ -59,7 +67,7 @@ async function collectSetupFrames(hook: HookHandler): Promise<SetupProgressPaylo
 describe("DebugModule Integration", () => {
   describe("module metadata", () => {
     it("has name 'debug' and requires development", () => {
-      const module = createDebugModule({ configService: createMockConfig() });
+      const module = createModule(createMockConfig());
       expect(module.name).toBe("debug");
       expect(module.requires).toEqual({ development: true });
     });
@@ -72,14 +80,14 @@ describe("DebugModule Integration", () => {
         registered.push(key);
         return createMockAccessor(key, false);
       }) as Config["register"];
-      createDebugModule({ configService: config });
+      createModule(config);
       expect(registered).toEqual(["debug.blocking-pids", "debug.setup", "debug.update"]);
     });
   });
 
   describe("blocking PIDs (inactive)", () => {
     it("delete hook returns empty object", async () => {
-      const module = createDebugModule({ configService: createMockConfig() });
+      const module = createModule(createMockConfig());
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "delete");
       const result = ((await hook.handler(makeHookContext())) as HookOutput<DeleteHookResult>)
         .result!;
@@ -87,7 +95,7 @@ describe("DebugModule Integration", () => {
     });
 
     it("detect hook returns empty object", async () => {
-      const module = createDebugModule({ configService: createMockConfig() });
+      const module = createModule(createMockConfig());
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "detect");
       const result = ((await hook.handler(makeHookContext())) as HookOutput<DetectHookResult>)
         .result!;
@@ -112,9 +120,7 @@ describe("DebugModule Integration", () => {
     }
 
     it("delete hook returns simulated error and captures workspace identity", async () => {
-      const module = createDebugModule({
-        configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
-      });
+      const module = createModule(createMockConfig({ defaults: { "debug.blocking-pids": true } }));
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "delete");
       const result = (
         (await hook.handler(
@@ -128,9 +134,7 @@ describe("DebugModule Integration", () => {
     });
 
     it("detect hook returns fake blocking processes", async () => {
-      const module = createDebugModule({
-        configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
-      });
+      const module = createModule(createMockConfig({ defaults: { "debug.blocking-pids": true } }));
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "detect");
       const result = ((await hook.handler(makeHookContext())) as HookOutput<DetectHookResult>)
         .result!;
@@ -145,9 +149,7 @@ describe("DebugModule Integration", () => {
     });
 
     it("resolve hook returns cached identity after delete captures it", async () => {
-      const module = createDebugModule({
-        configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
-      });
+      const module = createModule(createMockConfig({ defaults: { "debug.blocking-pids": true } }));
 
       // Run delete hook to capture workspace identity
       const deleteHook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "delete");
@@ -175,9 +177,7 @@ describe("DebugModule Integration", () => {
     });
 
     it("resolve hook returns empty for unknown workspace", async () => {
-      const module = createDebugModule({
-        configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
-      });
+      const module = createModule(createMockConfig({ defaults: { "debug.blocking-pids": true } }));
       const resolveHook = getHook(module, RESOLVE_WORKSPACE_OPERATION_ID, "resolve");
       const ctx = {
         intent: { type: "workspace:resolve", payload: {} },
@@ -190,7 +190,7 @@ describe("DebugModule Integration", () => {
 
   describe("setup (inactive)", () => {
     it("check-deps returns empty object", async () => {
-      const module = createDebugModule({ configService: createMockConfig() });
+      const module = createModule(createMockConfig());
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
       const result = ((await hook.handler(makeHookContext())) as HookOutput<CheckDepsResult>)
         .result!;
@@ -200,7 +200,7 @@ describe("DebugModule Integration", () => {
     it("binary hook yields nothing when inactive", async () => {
       vi.useFakeTimers();
       try {
-        const module = createDebugModule({ configService: createMockConfig() });
+        const module = createModule(createMockConfig());
         const hook = getHook(module, SETUP_OPERATION_ID, "binary");
         const frames = await collectSetupFrames(hook);
         expect(frames).toHaveLength(0);
@@ -212,9 +212,7 @@ describe("DebugModule Integration", () => {
 
   describe("setup (active)", () => {
     it("check-deps returns missingBinaries", async () => {
-      const module = createDebugModule({
-        configService: createMockConfig({ defaults: { "debug.setup": true } }),
-      });
+      const module = createModule(createMockConfig({ defaults: { "debug.setup": true } }));
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
       const result = ((await hook.handler(makeHookContext())) as HookOutput<CheckDepsResult>)
         .result!;
@@ -224,9 +222,7 @@ describe("DebugModule Integration", () => {
     it("binary hook yields progress increments", async () => {
       vi.useFakeTimers();
       try {
-        const module = createDebugModule({
-          configService: createMockConfig({ defaults: { "debug.setup": true } }),
-        });
+        const module = createModule(createMockConfig({ defaults: { "debug.setup": true } }));
         const hook = getHook(module, SETUP_OPERATION_ID, "binary");
 
         const frames = await collectSetupFrames(hook);
@@ -339,11 +335,11 @@ describe("DebugModule Integration", () => {
 
   describe("combined setup + update", () => {
     it("check-deps returns missingBinaries when debug.setup is on", async () => {
-      const module = createDebugModule({
-        configService: createMockConfig({
+      const module = createModule(
+        createMockConfig({
           defaults: { "debug.setup": true, "debug.update": "pending" },
-        }),
-      });
+        })
+      );
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
       const result = ((await hook.handler(makeHookContext())) as HookOutput<CheckDepsResult>)
         .result!;

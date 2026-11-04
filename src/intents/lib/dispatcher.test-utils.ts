@@ -1,6 +1,7 @@
 /**
  * Test utilities for Dispatcher.
  */
+import { AsyncLogScopeStore } from "../../boundaries/platform/log-scope";
 import { Dispatcher } from "./dispatcher";
 import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
 
@@ -9,5 +10,5 @@ import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
  * don't care about log output.
  */
 export function createMockDispatcher(): Dispatcher {
-  return new Dispatcher({ logger: createMockLogger() });
+  return new Dispatcher({ logger: createMockLogger(), logScope: new AsyncLogScopeStore() });
 }

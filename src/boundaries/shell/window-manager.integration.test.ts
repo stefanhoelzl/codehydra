@@ -37,8 +37,8 @@ function createWindowManagerDeps(
  */
 function createWindowManager(
   deps: WindowManagerDeps,
-  title?: string,
-  iconPath?: string
+  title = "CodeHydra",
+  iconPath = testPath("/app/resources/icon.png").toNative()
 ): WindowManager {
   const manager = new WindowManager(deps, title, iconPath);
   manager.create();
@@ -147,19 +147,6 @@ describe("WindowManager", () => {
           testPath("/app/resources/icon.png").toNative()
         )
       ).not.toThrow();
-    });
-
-    it("does not attempt to load icon when iconPath is not provided", () => {
-      const deps = createWindowManagerDeps();
-      const mockImageBoundary = {
-        ...deps.imageLayer,
-        createFromPath: vi.fn(),
-      };
-      const depsWithMockImage = { ...deps, imageLayer: mockImageBoundary };
-
-      createWindowManager(depsWithMockImage, "CodeHydra");
-
-      expect(mockImageBoundary.createFromPath).not.toHaveBeenCalled();
     });
   });
 

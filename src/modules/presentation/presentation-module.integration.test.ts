@@ -146,6 +146,9 @@ function createDeps() {
     projectColors,
     projectColor: (projectRef: ProjectRef) => projectColors.get(projectRef),
     processMonitor: createFakeProcessMonitor(),
+    onOpenSettings: vi.fn<() => void>(),
+    onOpenHelp: vi.fn<() => void>(),
+    onOpenNewWorkspace: vi.fn<(projectRef: ProjectRef | null, deselecting: boolean) => void>(),
   };
 }
 
@@ -1733,9 +1736,27 @@ describe("PresentationModule - sidebar resize", () => {
     expect(lastSnapshot(deps).mode).toBe("workspace");
   });
 
+  it("open-settings opens the settings dialog", async () => {
+    const deps = createDeps();
+    await startModule(deps);
+
+    emitUiEvent(deps, { kind: "open-settings" });
+
+    expect(deps.onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("open-help opens the help dialog", async () => {
+    const deps = createDeps();
+    await startModule(deps);
+
+    emitUiEvent(deps, { kind: "open-help" });
+
+    expect(deps.onOpenHelp).toHaveBeenCalledTimes(1);
+  });
+
   it("open-new-workspace deselects and presets the project", async () => {
-    const onOpenNewWorkspace = vi.fn();
-    const deps = { ...createDeps(), onOpenNewWorkspace };
+    const deps = createDeps();
+    const { onOpenNewWorkspace } = deps;
     const module = await startModule(deps);
     const a = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
     await openProject(module, makeProject([a]));

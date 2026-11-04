@@ -108,7 +108,11 @@ function collectingOp(intentType: string, id: string, hookPoint: string) {
 function createDispatcher(
   options?: Partial<{ logger: Logger; initialCapabilities: Record<string, unknown> }>
 ): Dispatcher {
-  return new Dispatcher({ logger: options?.logger ?? createMockLogger(), ...options });
+  return new Dispatcher({
+    logger: options?.logger ?? createMockLogger(),
+    ...options,
+    logScope: new AsyncLogScopeStore(),
+  });
 }
 
 // =============================================================================
@@ -1601,6 +1605,7 @@ describe("Dispatcher", () => {
     ) {
       const log = logger ?? createMockLogger();
       const dispatcher = new Dispatcher({
+        logScope: new AsyncLogScopeStore(),
         logger: log,
         ...(initialCapabilities && { initialCapabilities }),
       });
@@ -2018,6 +2023,7 @@ describe("Dispatcher", () => {
       const ran: string[] = [];
 
       const dispatcher = new Dispatcher({
+        logScope: new AsyncLogScopeStore(),
         logger: createMockLogger(),
         initialCapabilities: { platform: "linux" },
       });
@@ -2207,7 +2213,10 @@ describe("Dispatcher", () => {
     const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
     function setup(handlers: HookHandler[]) {
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = new Dispatcher({
+        logger: createMockLogger(),
+        logScope: new AsyncLogScopeStore(),
+      });
       handlers.forEach((h, i) =>
         dispatcher.registerModule({
           name: h.name ?? `handler-${i}`,
@@ -2393,7 +2402,10 @@ describe("Dispatcher", () => {
     it("runs an event's handlers concurrently", async () => {
       const a = gate();
       const started: string[] = [];
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = new Dispatcher({
+        logger: createMockLogger(),
+        logScope: new AsyncLogScopeStore(),
+      });
       dispatcher.registerModule({
         name: "slow",
         events: {

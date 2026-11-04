@@ -17,6 +17,7 @@
  *   resolve and get-active-workspace report it, delete and hibernate clear it
  */
 
+import { AsyncLogScopeStore } from "../boundaries/platform/log-scope";
 import { describe, it, expect } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import type { IntentModule } from "../intents/lib/module";
@@ -77,7 +78,7 @@ const CLAIMED = { [WORKSPACE_CLAIMED_CAPABILITY]: ANY_VALUE };
  * registration order, is what puts them after it.
  */
 function setup(options?: { deleteError?: string; hibernateShutdownError?: string }) {
-  const dispatcher = new Dispatcher({ logger: SILENT_LOGGER });
+  const dispatcher = new Dispatcher({ logger: SILENT_LOGGER, logScope: new AsyncLogScopeStore() });
   dispatcher.registerOperation(new DeleteWorkspaceOperation());
   dispatcher.registerOperation(new HibernateWorkspaceOperation());
   // Hibernation records the hibernated flag in workspace metadata.

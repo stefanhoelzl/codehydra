@@ -129,8 +129,6 @@ export interface AgentBinaryResolver {
    * Null until this launch has resolved, so nothing is swept on a guess.
    */
   bundleVersionsInUse(): readonly string[] | null;
-  /** Settles when no background download is in flight (for tests and shutdown). */
-  idle(): Promise<void>;
 }
 
 /** Timeout for resolving a channel: a small text/redirect request. */
@@ -230,7 +228,6 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
   let pending: Pending | null = null;
   /** In-flight downloads by version, so concurrent requests share one. */
   const inFlight = new Map<string, Promise<void>>();
-  let background: Promise<void> | null = null;
 
   function versionDir(version: string): Path {
     return pathProvider.bundlePath(`${descriptor.name}/${version}`);
@@ -367,7 +364,7 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
       name: descriptor.name,
       version,
     });
-    background = downloadVersion(version)
+    void downloadVersion(version)
       .then(() => {
         // Only a download-sourced binary is replaced: a pin or system install
         // resolved meanwhile is not ours to override.
@@ -385,9 +382,6 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
           version,
           error: getErrorMessage(error),
         });
-      })
-      .finally(() => {
-        background = null;
       });
   }
 
@@ -491,12 +485,6 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
       const keep = new Set(inFlight.keys());
       if (currentBinary?.version) keep.add(currentBinary.version);
       return [...keep];
-    },
-
-    async idle() {
-      while (background !== null) {
-        await background;
-      }
     },
   };
 }

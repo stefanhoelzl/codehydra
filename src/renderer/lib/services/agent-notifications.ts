@@ -37,10 +37,10 @@ export class AgentNotificationService {
 
   /**
    * Create a new notification service.
-   * @param playChime - Optional chime player function (defaults to playChimeSound)
+   * @param playChime - Chime player function (see createChimePlayer)
    */
-  constructor(playChime?: ChimePlayer) {
-    this.playChime = playChime ?? playChimeSound;
+  constructor(playChime: ChimePlayer) {
+    this.playChime = playChime;
   }
 
   /**
@@ -68,13 +68,6 @@ export class AgentNotificationService {
    */
   removeWorkspace(workspacePath: string): void {
     this.previousCounts.delete(workspacePath);
-  }
-
-  /**
-   * Reset all state (useful for testing).
-   */
-  reset(): void {
-    this.previousCounts.clear();
   }
 }
 

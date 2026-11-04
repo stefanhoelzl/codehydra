@@ -12,8 +12,9 @@
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { createAppBoundaryMock } from "../boundaries/shell/app.state-mock";
+import { createBehavioralDialogBoundary } from "../boundaries/shell/dialog.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { Dispatcher } from "../intents/lib/dispatcher";
+import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
@@ -40,12 +41,21 @@ import { testPath } from "../shared/test-fixtures";
 import type { ProjectPath } from "../intents/contract";
 
 // =============================================================================
-// Mock IViewManager
+// Deps
 // =============================================================================
 
-/** The window/menu/UI-page deps every ViewModule gets in production. */
-function createLifecycleDeps() {
+const UI_HTML_PATH = "file:///app/ui.html";
+const UI_PRELOAD_PATH = "/app/preload/index.cjs";
+
+/** Everything a ViewModule gets in production, as behavioral mocks. */
+function createDeps() {
   return {
+    viewManager: createMockViewManager(),
+    logger: SILENT_LOGGER,
+    viewLayer: { dispose: vi.fn().mockResolvedValue(undefined) },
+    windowLayer: { dispose: vi.fn().mockResolvedValue(undefined) },
+    sessionLayer: { dispose: vi.fn().mockResolvedValue(undefined) },
+    dialogLayer: createBehavioralDialogBoundary() as ViewModuleDeps["dialogLayer"],
     menuLayer: { setApplicationMenu: vi.fn() },
     windowManager: {
       create: vi.fn(),
@@ -53,19 +63,19 @@ function createLifecycleDeps() {
       focus: vi.fn(),
       present: vi.fn(),
     },
-    uiHtmlPath: "file:///app/ui.html",
-  } satisfies Pick<ViewModuleDeps, "menuLayer" | "windowManager" | "uiHtmlPath">;
+    appLayer: createAppBoundaryMock(),
+    uiHtmlPath: UI_HTML_PATH,
+    uiPreloadPath: UI_PRELOAD_PATH,
+  };
 }
 
-function createMockShellLayers() {
-  return {
-    viewLayer: {
-      dispose: vi.fn().mockResolvedValue(undefined),
-      loadURL: vi.fn().mockResolvedValue(undefined),
-    },
-    windowLayer: { dispose: vi.fn().mockResolvedValue(undefined) },
-    sessionLayer: { dispose: vi.fn().mockResolvedValue(undefined) },
-  };
+type Deps = ReturnType<typeof createDeps>;
+
+function buildModule(deps: Deps): IntentModule {
+  return createViewModule({
+    ...deps,
+    viewManager: deps.viewManager as unknown as ViewModuleDeps["viewManager"],
+  });
 }
 
 // =============================================================================
@@ -92,54 +102,47 @@ function minimalSelectFolder(): Operation<OperationSchemas> {
   );
 }
 
+/** Runs "init" with the app ready. */
+function minimalInit(): Operation<OperationSchemas> {
+  return createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
+    hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
+  });
+}
+
+/** A no-op quit hook, so the shutdown operation has every hook point it needs. */
+const QUIT_MODULE: IntentModule = {
+  name: "test",
+  hooks: {
+    [APP_SHUTDOWN_OPERATION_ID]: {
+      quit: { handler: async () => {} },
+    },
+  },
+};
+
 // =============================================================================
 // Test Setup
 // =============================================================================
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  viewManager: ReturnType<typeof createMockViewManager>;
-  layers: ReturnType<typeof createMockShellLayers>;
+  deps: Deps;
   module: IntentModule;
 }
 
-function createTestSetup<S extends OperationSchemas = OperationSchemas>(
-  operationOverride?: { intentType: string; operation: Operation<S> },
-  options?: {
-    nullLayers?: boolean;
-    dialogLayer?: ViewModuleDeps["dialogLayer"];
-  }
+function createTestSetup(
+  operations: readonly Operation<OperationSchemas>[] = [],
+  overrides: Partial<Deps> = {}
 ): TestSetup {
   const dispatcher = createMockDispatcher();
+  const deps = { ...createDeps(), ...overrides };
+  const module = buildModule(deps);
 
-  const viewManager = createMockViewManager();
-  const layers = createMockShellLayers();
-
-  const deps: ViewModuleDeps = {
-    viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-    logger: SILENT_LOGGER,
-    viewLayer: options?.nullLayers
-      ? null
-      : (layers.viewLayer as unknown as ViewModuleDeps["viewLayer"]),
-    windowLayer: options?.nullLayers
-      ? null
-      : (layers.windowLayer as unknown as ViewModuleDeps["windowLayer"]),
-    sessionLayer: options?.nullLayers
-      ? null
-      : (layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"]),
-    ...(options?.dialogLayer !== undefined && { dialogLayer: options.dialogLayer }),
-    ...createLifecycleDeps(),
-  };
-
-  const module = createViewModule(deps);
-
-  if (operationOverride) {
-    dispatcher.registerOperation(operationOverride.operation);
+  for (const operation of operations) {
+    dispatcher.registerOperation(operation);
   }
-
   dispatcher.registerModule(module);
 
-  return { dispatcher, viewManager, layers, module };
+  return { dispatcher, deps, module };
 }
 
 // =============================================================================
@@ -152,7 +155,7 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   describe("ide-server:restarted", () => {
     it("asks the view manager to reload frames", async () => {
-      const { viewManager, module } = createTestSetup();
+      const { deps, module } = createTestSetup();
 
       const event: IdeServerRestartedEvent = {
         type: EVENT_IDE_SERVER_RESTARTED,
@@ -160,7 +163,7 @@ describe("ViewModule Integration", () => {
       };
       await module.events![EVENT_IDE_SERVER_RESTARTED]!.handler(event);
 
-      expect(viewManager.reloadFrames).toHaveBeenCalledTimes(1);
+      expect(deps.viewManager.reloadFrames).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -171,7 +174,7 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   describe("ide-server:sessions-stale", () => {
     it("asks the view manager to reload frames", async () => {
-      const { viewManager, module } = createTestSetup();
+      const { deps, module } = createTestSetup();
 
       const event: IdeServerSessionsStaleEvent = {
         type: EVENT_IDE_SERVER_SESSIONS_STALE,
@@ -179,7 +182,7 @@ describe("ViewModule Integration", () => {
       };
       await module.events![EVENT_IDE_SERVER_SESSIONS_STALE]!.handler(event);
 
-      expect(viewManager.reloadFrames).toHaveBeenCalledTimes(1);
+      expect(deps.viewManager.reloadFrames).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -187,84 +190,23 @@ describe("ViewModule Integration", () => {
   // app-shutdown/stop → viewManager.destroy() + layers disposed
   // -------------------------------------------------------------------------
   describe("app-shutdown/stop", () => {
-    it("calls viewManager.destroy() and disposes shell layers", async () => {
-      // Need a quit module to prevent missing handler error
-      const quitModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [APP_SHUTDOWN_OPERATION_ID]: {
-            quit: { handler: async () => {} },
-          },
-        },
-      };
-
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-      const layers = createMockShellLayers();
-
-      dispatcher.registerOperation(new AppShutdownOperation());
-
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
-        windowLayer: layers.windowLayer as unknown as ViewModuleDeps["windowLayer"],
-        sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
-        ...createLifecycleDeps(),
-      });
-
-      dispatcher.registerModule(module);
-      dispatcher.registerModule(quitModule);
+    it("destroys the UI view, then disposes the view, window and session layers in order", async () => {
+      const { dispatcher, deps } = createTestSetup([new AppShutdownOperation()]);
+      dispatcher.registerModule(QUIT_MODULE);
 
       await dispatcher.dispatch<AppShutdownIntent>({
         type: INTENT_APP_SHUTDOWN,
         payload: {},
       });
 
-      expect(viewManager.destroy).toHaveBeenCalled();
-      expect(layers.viewLayer.dispose).toHaveBeenCalled();
-      expect(layers.windowLayer.dispose).toHaveBeenCalled();
-      expect(layers.sessionLayer.dispose).toHaveBeenCalled();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Null layers - shutdown succeeds when layers are null
-  // -------------------------------------------------------------------------
-  describe("app-shutdown with null layers", () => {
-    it("does not throw when layers are null", async () => {
-      const quitModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [APP_SHUTDOWN_OPERATION_ID]: {
-            quit: { handler: async () => {} },
-          },
-        },
-      };
-
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(new AppShutdownOperation());
-
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        ...createLifecycleDeps(),
-      });
-
-      dispatcher.registerModule(module);
-      dispatcher.registerModule(quitModule);
-
-      await expect(
-        dispatcher.dispatch<AppShutdownIntent>({
-          type: INTENT_APP_SHUTDOWN,
-          payload: {},
-        })
-      ).resolves.not.toThrow();
+      const order = [
+        deps.viewManager.destroy,
+        deps.viewLayer.dispose,
+        deps.windowLayer.dispose,
+        deps.sessionLayer.dispose,
+      ].map((fn) => vi.mocked(fn).mock.invocationCallOrder[0]);
+      expect(order.every((n) => n !== undefined)).toBe(true);
+      expect(order).toEqual([...order].sort((a, b) => a! - b!));
     });
   });
 
@@ -273,145 +215,62 @@ describe("ViewModule Integration", () => {
   // instance to come forward.
   // -------------------------------------------------------------------------
   describe("reactivation", () => {
-    function createWindowManager() {
-      return createLifecycleDeps().windowManager;
-    }
-
     it("presents the window when another launch asks it to come forward", async () => {
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-      const windowManager = createWindowManager();
-      const appLayer = createAppBoundaryMock();
-
-      dispatcher.registerOperation(
-        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
-          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
-        })
-      );
-      dispatcher.registerModule(
-        createViewModule({
-          viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-          logger: SILENT_LOGGER,
-          viewLayer: null,
-          windowLayer: null,
-          sessionLayer: null,
-          ...createLifecycleDeps(),
-          windowManager,
-          appLayer,
-        })
-      );
+      const { dispatcher, deps } = createTestSetup([minimalInit()]);
 
       await dispatcher.dispatch<AppStartIntent>({ type: INTENT_APP_START, payload: {} });
 
       // present(), not focus(): the window is typically minimized or buried
       // when a second launch arrives, and focus() alone would not surface it.
-      expect(windowManager.present).not.toHaveBeenCalled();
-      appLayer.$.triggerReactivate();
-      expect(windowManager.present).toHaveBeenCalledTimes(1);
+      expect(deps.windowManager.present).not.toHaveBeenCalled();
+      deps.appLayer.$.triggerReactivate();
+      expect(deps.windowManager.present).toHaveBeenCalledTimes(1);
     });
 
-    it("ignores a reactivation that arrives before the window exists", async () => {
+    it("ignores a reactivation that arrives before the window exists", () => {
       // The lock is claimed in before-ready but the window is only created in
       // init, so a launch landing in that gap has nothing to present.
-      const windowManager = createWindowManager();
-      const appLayer = createAppBoundaryMock();
-
-      createViewModule({
-        viewManager: createMockViewManager() as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        ...createLifecycleDeps(),
-        windowManager,
-        appLayer,
-      });
+      const { deps } = createTestSetup();
 
       expect(() => {
-        appLayer.$.triggerReactivate();
+        deps.appLayer.$.triggerReactivate();
       }).not.toThrow();
-      expect(windowManager.present).not.toHaveBeenCalled();
+      expect(deps.windowManager.present).not.toHaveBeenCalled();
     });
 
     it("stops presenting once the app has shut down", async () => {
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-      const windowManager = createWindowManager();
-      const appLayer = createAppBoundaryMock();
-
-      dispatcher.registerOperation(
-        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
-          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
-        })
-      );
-      dispatcher.registerOperation(new AppShutdownOperation());
-      dispatcher.registerModule(
-        createViewModule({
-          viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-          logger: SILENT_LOGGER,
-          viewLayer: null,
-          windowLayer: null,
-          sessionLayer: null,
-          ...createLifecycleDeps(),
-          windowManager,
-          appLayer,
-        })
-      );
-      dispatcher.registerModule({
-        name: "test",
-        hooks: { [APP_SHUTDOWN_OPERATION_ID]: { quit: { handler: async () => {} } } },
-      });
+      const { dispatcher, deps } = createTestSetup([minimalInit(), new AppShutdownOperation()]);
+      dispatcher.registerModule(QUIT_MODULE);
 
       await dispatcher.dispatch<AppStartIntent>({ type: INTENT_APP_START, payload: {} });
       await dispatcher.dispatch<AppShutdownIntent>({ type: INTENT_APP_SHUTDOWN, payload: {} });
 
-      appLayer.$.triggerReactivate();
-      expect(windowManager.present).not.toHaveBeenCalled();
+      deps.appLayer.$.triggerReactivate();
+      expect(deps.windowManager.present).not.toHaveBeenCalled();
     });
   });
 
   // -------------------------------------------------------------------------
-  // Test 17: app-start/init → creates window/views, maximizes, loads UI, focuses
+  // app-start/init → creates window/views, maximizes, loads UI, focuses
   // -------------------------------------------------------------------------
   describe("app-start/init", () => {
     it("calls menuLayer, windowManager, viewManager, and viewLayer in order", async () => {
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-      const layers = createMockShellLayers();
-
-      dispatcher.registerOperation(
-        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
-          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
-        })
-      );
-
-      const { menuLayer, windowManager } = createLifecycleDeps();
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
-        windowLayer: null,
-        sessionLayer: null,
-        menuLayer,
-        windowManager,
-        uiHtmlPath: "file:///app/ui.html",
-      });
-
-      dispatcher.registerModule(module);
+      const { dispatcher, deps } = createTestSetup([minimalInit()]);
 
       await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
       });
 
-      // Verify call sequence
-      expect(menuLayer.setApplicationMenu).toHaveBeenCalledWith(null);
-      expect(windowManager.create).toHaveBeenCalled();
-      expect(viewManager.create).toHaveBeenCalled();
-      expect(windowManager.maximizeAsync).toHaveBeenCalled();
-      expect(windowManager.focus).toHaveBeenCalled();
-      expect(viewManager.loadUIContent).toHaveBeenCalledWith("file:///app/ui.html");
-      expect(viewManager.focus).toHaveBeenCalled();
+      expect(deps.menuLayer.setApplicationMenu).toHaveBeenCalledWith(null);
+      expect(deps.windowManager.create).toHaveBeenCalledWith(
+        expect.objectContaining({ preload: UI_PRELOAD_PATH })
+      );
+      expect(deps.viewManager.create).toHaveBeenCalled();
+      expect(deps.windowManager.maximizeAsync).toHaveBeenCalled();
+      expect(deps.windowManager.focus).toHaveBeenCalled();
+      expect(deps.viewManager.loadUIContent).toHaveBeenCalledWith(UI_HTML_PATH);
+      expect(deps.viewManager.focus).toHaveBeenCalled();
     });
   });
 
@@ -420,17 +279,14 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   describe("open-project/select-folder", () => {
     it("returns selected folder path from dialog", async () => {
-      const mockDialogBoundary = {
+      const dialogLayer = {
         showDialog: vi.fn().mockResolvedValue({
           canceled: false,
           filePaths: [{ toString: () => testPath("/selected/project").toNative() }],
         }),
       };
 
-      const { dispatcher } = createTestSetup(
-        { intentType: INTENT_OPEN_PROJECT, operation: minimalSelectFolder() },
-        { dialogLayer: mockDialogBoundary }
-      );
+      const { dispatcher } = createTestSetup([minimalSelectFolder()], { dialogLayer });
 
       const result = (await dispatcher.dispatch({
         type: INTENT_OPEN_PROJECT,
@@ -438,37 +294,14 @@ describe("ViewModule Integration", () => {
       })) as SelectFolderHookResult;
 
       expect(result.folderPath).toBe(testPath("/selected/project").toNative());
-      expect(mockDialogBoundary.showDialog).toHaveBeenCalledWith({
+      expect(dialogLayer.showDialog).toHaveBeenCalledWith({
         properties: ["openDirectory"],
       });
     });
 
     it("returns null when dialog canceled", async () => {
-      const mockDialogBoundary = {
-        showDialog: vi.fn().mockResolvedValue({
-          canceled: true,
-          filePaths: [],
-        }),
-      };
-
-      const { dispatcher } = createTestSetup(
-        { intentType: INTENT_OPEN_PROJECT, operation: minimalSelectFolder() },
-        { dialogLayer: mockDialogBoundary }
-      );
-
-      const result = (await dispatcher.dispatch({
-        type: INTENT_OPEN_PROJECT,
-        payload: {},
-      })) as SelectFolderHookResult;
-
-      expect(result.folderPath).toBeNull();
-    });
-
-    it("returns null when no dialogLayer provided", async () => {
-      const { dispatcher } = createTestSetup({
-        intentType: INTENT_OPEN_PROJECT,
-        operation: minimalSelectFolder(),
-      });
+      // The behavioral dialog boundary answers "canceled" by default.
+      const { dispatcher } = createTestSetup([minimalSelectFolder()]);
 
       const result = (await dispatcher.dispatch({
         type: INTENT_OPEN_PROJECT,

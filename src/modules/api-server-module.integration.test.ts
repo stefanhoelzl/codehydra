@@ -29,6 +29,7 @@ import type {
   DeleteHookResult,
 } from "../intents/delete-workspace";
 import { createApiServerModule, type ApiServerModuleDeps } from "./api-server-module";
+import { OperationRegistry } from "../api/registry";
 import { createPortManagerMock } from "../boundaries/platform/port-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 
@@ -90,10 +91,16 @@ function createMinimalDeleteOperation() {
 function createMockDeps(overrides?: Partial<ApiServerModuleDeps>): ApiServerModuleDeps {
   return {
     portManager: createPortManagerMock(),
-    dispatcher: { dispatch: vi.fn() } as unknown as ApiServerModuleDeps["dispatcher"],
+    dispatcher: {
+      dispatch: vi.fn(),
+      subscribe: vi.fn(() => () => {}),
+    } as unknown as ApiServerModuleDeps["dispatcher"],
     appLayer: { openPath: vi.fn().mockResolvedValue(undefined) },
     fileSystem: createFileSystemMock(),
     logger: SILENT_LOGGER,
+    registry: new OperationRegistry([]),
+    // No token yet: the pre-app:start posture, refusing every CLI client.
+    cliToken: () => null,
     ...overrides,
   };
 }
@@ -153,31 +160,29 @@ describe("ApiServerModule", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // isReady — the probe best-effort callers use instead of dispatching blind
-  // ---------------------------------------------------------------------------
-
-  describe("isReady", () => {
-    it("is false before start", () => {
-      const { apiServer } = createTestSetup();
-      expect(apiServer.isReady()).toBe(false);
-    });
-
-    it("stays false when the server failed to start", async () => {
-      // The failure path a caller must not dispatch into: the start hook
-      // degrades to a null port rather than throwing, so "app started" is not
-      // the same question as "the API server is up".
+  describe("failed start", () => {
+    it("releases its event subscriptions when the port cannot be bound", async () => {
+      const listenOnFreePort = vi.fn().mockRejectedValue(new Error("bind failed"));
+      const live = new Set<string>();
       const deps = createMockDeps({
-        portManager: {
-          listenOnFreePort: vi.fn().mockRejectedValue(new Error("bind failed")),
-        },
+        portManager: { listenOnFreePort },
+        dispatcher: {
+          dispatch: vi.fn(),
+          subscribe: vi.fn((type: string) => {
+            live.add(type);
+            return () => live.delete(type);
+          }),
+        } as unknown as ApiServerModuleDeps["dispatcher"],
       });
-      const { dispatcher, apiServer } = createTestSetup(deps);
+      const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(createMinimalStartOperation());
 
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      expect(await dispatcher.dispatch({ type: "app:start", payload: {} })).toBeNull();
 
-      expect(apiServer.isReady()).toBe(false);
+      // The bind was reached (not an earlier failure), and nothing it set up
+      // outlives it: no server is left forwarding events to nobody.
+      expect(listenOnFreePort).toHaveBeenCalledTimes(1);
+      expect(live.size).toBe(0);
     });
   });
 

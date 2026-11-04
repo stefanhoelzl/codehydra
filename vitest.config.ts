@@ -73,12 +73,7 @@ for (const key of Object.keys(process.env)) {
 }
 
 export default defineConfig({
-  plugins: [svelte(), svelteTesting()],
-  // Externalize socket.io ecosystem for proper ESM/CJS interop in Node tests
-  // Fixes "this.opts.wsEngine is not a constructor" error in boundary tests
-  ssr: {
-    external: ["socket.io", "socket.io-client", "engine.io", "engine.io-client", "ws"],
-  },
+  plugins: [svelte()],
   test: {
     globals: true,
     // Test files in a worker share one module registry, so each module is
@@ -117,6 +112,9 @@ export default defineConfig({
         // Renderer tests: happy-dom environment with vscode-elements setup
         // Note: setup-matchers.ts excluded - it imports Node.js-only code (filesystem.state-mock)
         extends: true,
+        // Renderer only: it puts the `browser` resolve condition first, which in
+        // the node projects resolves `ws` to its server-less browser stub.
+        plugins: [svelteTesting()],
         test: {
           name: "renderer",
           environment: "happy-dom",

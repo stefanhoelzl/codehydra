@@ -54,12 +54,12 @@ export class WindowManager {
   private readonly appLayer: Pick<AppBoundary, "shouldUseDarkColors" | "onThemeUpdated">;
   private readonly logger: Logger;
   private readonly title: string;
-  private readonly iconPath: string | undefined;
+  private readonly iconPath: string;
   private readonly themeChangeCallbacks: Set<(theme: Theme) => void> = new Set();
   private windowHandle!: WindowHandle;
   private currentTheme: Theme = "dark";
 
-  constructor(deps: WindowManagerDeps, title: string = "CodeHydra", iconPath?: string) {
+  constructor(deps: WindowManagerDeps, title: string, iconPath: string) {
     this.windowLayer = deps.windowLayer;
     this.imageLayer = deps.imageLayer;
     this.appLayer = deps.appLayer;
@@ -110,17 +110,15 @@ export class WindowManager {
     });
 
     // Set the window icon for taskbar/dock display
-    if (this.iconPath) {
-      try {
-        const iconHandle = this.imageLayer.createFromPath(this.iconPath);
-        if (!this.imageLayer.isEmpty(iconHandle)) {
-          this.windowLayer.setIcon(this.windowHandle, iconHandle);
-        }
-        this.imageLayer.release(iconHandle);
-      } catch {
-        // Icon loading failed, continue without icon
-        // This is non-critical - the window will use the default icon
+    try {
+      const iconHandle = this.imageLayer.createFromPath(this.iconPath);
+      if (!this.imageLayer.isEmpty(iconHandle)) {
+        this.windowLayer.setIcon(this.windowHandle, iconHandle);
       }
+      this.imageLayer.release(iconHandle);
+    } catch {
+      // Icon loading failed, continue without icon
+      // This is non-critical - the window will use the default icon
     }
 
     // Resize/maximize events are logged for diagnostics only.

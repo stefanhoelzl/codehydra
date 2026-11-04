@@ -190,12 +190,12 @@ export interface PresentationModuleDeps {
    * gear). Wired in the composition root to the settings module's openSettings;
    * the presenter itself stays agnostic of the settings dialog.
    */
-  readonly onOpenSettings?: () => void;
+  readonly onOpenSettings: () => void;
   /**
    * Called when the renderer emits the `open-help` ui event (the sidebar
    * question mark). Wired in the composition root to the help module.
    */
-  readonly onOpenHelp?: () => void;
+  readonly onOpenHelp: () => void;
   /**
    * Called when the renderer emits the `open-new-workspace` ui event (a
    * sidebar + button), after the switch to the creation panel is dispatched.
@@ -204,7 +204,7 @@ export interface PresentationModuleDeps {
    * switch is still landing. Wired in the composition root to the creation
    * module.
    */
-  readonly onOpenNewWorkspace?: (projectRef: ProjectRef | null, deselecting: boolean) => void;
+  readonly onOpenNewWorkspace: (projectRef: ProjectRef | null, deselecting: boolean) => void;
   /**
    * The process monitor. The presenter owns `sidebar.process-summary`: it turns
    * the monitor's polling on while the summary shows, and puts each
@@ -1170,10 +1170,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         scheduleUpdate();
         return;
       case "open-settings":
-        deps.onOpenSettings?.();
+        deps.onOpenSettings();
         return;
       case "open-help":
-        deps.onOpenHelp?.();
+        deps.onOpenHelp();
         return;
       case "toggle-project-collapsed": {
         const project = knownProject(event.kind, event.projectId);
@@ -1194,7 +1194,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         if (event.projectId !== null && project === undefined) return;
         const deselecting = model.activeRef !== null;
         dispatchDetached({ type: INTENT_SWITCH_WORKSPACE, payload: { workspaceRef: null } });
-        deps.onOpenNewWorkspace?.(project?.ref ?? null, deselecting);
+        deps.onOpenNewWorkspace(project?.ref ?? null, deselecting);
         return;
       }
       case "set-sidebar-mode":

@@ -38,8 +38,8 @@ import { defineHooks } from "../intents/declarations";
 
 interface DebugModuleDeps {
   readonly configService: Config;
-  /** Raises the simulated update cards; without it the update simulation is off. */
-  readonly dispatcher?: Pick<Dispatcher, "dispatch">;
+  /** Raises the simulated update cards. */
+  readonly dispatcher: Pick<Dispatcher, "dispatch">;
 }
 
 export function createDebugModule(deps: DebugModuleDeps): IntentModule {
@@ -156,7 +156,7 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
         start: {
           handler: async (): Promise<void> => {
             const mode = updateMode();
-            if (mode === null || !deps.dispatcher) return;
+            if (mode === null) return;
             const version = "99.0.0-debug";
             if (mode === "downloaded") {
               notify(deps.dispatcher, readyConfig(version));

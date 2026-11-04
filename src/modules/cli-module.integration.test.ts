@@ -7,6 +7,7 @@
  * the API server sees when it asks for the token.
  */
 
+import { AsyncLogScopeStore } from "../boundaries/platform/log-scope";
 import { describe, it, expect } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
@@ -31,7 +32,10 @@ async function startWith(apiPort: number | null) {
   const state = createMockState();
   const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = new Dispatcher({
+    logger: createMockLogger(),
+    logScope: new AsyncLogScopeStore(),
+  });
   dispatcher.registerModule(handle.module);
   dispatcher.registerOperation(
     createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
@@ -87,7 +91,10 @@ async function startThenStop(apiPort: number) {
   const state = createMockState();
   const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = new Dispatcher({
+    logger: createMockLogger(),
+    logScope: new AsyncLogScopeStore(),
+  });
   dispatcher.registerModule(handle.module);
   dispatcher.registerOperation(
     createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
@@ -153,7 +160,10 @@ describe("CliModule", () => {
       // observable intermediate state has to respect that.
       const { state, snapshots } = createObservingState();
       const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = new Dispatcher({
+        logger: createMockLogger(),
+        logScope: new AsyncLogScopeStore(),
+      });
       dispatcher.registerModule(handle.module);
       dispatcher.registerOperation(
         createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {

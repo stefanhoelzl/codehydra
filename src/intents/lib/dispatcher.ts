@@ -88,14 +88,6 @@ export interface DispatchOptions {
   readonly api?: string;
 }
 
-/** A store that keeps no scope: for a dispatcher built without logging. */
-const NO_LOG_SCOPE: LogScopeStore = {
-  run: (_read, fn) => fn(),
-  current: () => undefined,
-  nameWorkspace: () => {},
-  workspaceAt: () => undefined,
-};
-
 /**
  * One dispatch's identity for logging: created when it is dispatched, mutated
  * once its target is known, read by every line written while it runs.
@@ -289,11 +281,11 @@ export class Dispatcher implements IDispatcher {
   constructor(options: {
     logger: Logger;
     initialCapabilities?: Readonly<Record<string, unknown>>;
-    /** The logging service's scope store; without it, lines carry no dispatch scope. */
-    logScope?: LogScopeStore;
+    /** The logging service's scope store, which carries each dispatch's scope to its lines. */
+    logScope: LogScopeStore;
   }) {
     this.logger = options.logger;
-    this.logScope = options.logScope ?? NO_LOG_SCOPE;
+    this.logScope = options.logScope;
     this.initialCapabilities = Object.freeze({ ...options.initialCapabilities });
   }
 

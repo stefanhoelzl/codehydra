@@ -41,16 +41,15 @@ import { defineEvents, defineHooks } from "../intents/declarations";
 /**
  * Dependencies for ViewModule.
  *
- * Shell layers are nullable because they may not exist in test environments
- * or when the app quits before full initialization.
+ * The view, window and session layers are only disposed here, at shutdown.
  */
 export interface ViewModuleDeps {
   readonly viewManager: IViewManager & { create(): void };
   readonly logger: Logger;
-  readonly viewLayer: ViewBoundary | null;
-  readonly windowLayer: WindowBoundary | null;
-  readonly sessionLayer: SessionBoundary | null;
-  readonly dialogLayer?: Pick<DialogBoundary, "showDialog"> | null;
+  readonly viewLayer: Pick<ViewBoundary, "dispose">;
+  readonly windowLayer: Pick<WindowBoundary, "dispose">;
+  readonly sessionLayer: Pick<SessionBoundary, "dispose">;
+  readonly dialogLayer: Pick<DialogBoundary, "showDialog">;
   readonly menuLayer: MenuBoundary;
   readonly windowManager: {
     create(webPreferences?: WebPreferences): void;
@@ -59,10 +58,10 @@ export interface ViewModuleDeps {
     present(): void;
   };
   /** App layer, for the "another launch wants us in front" subscription. */
-  readonly appLayer?: Pick<AppBoundary, "onReactivate"> | null;
+  readonly appLayer: Pick<AppBoundary, "onReactivate">;
   readonly uiHtmlPath: string;
   /** Preload script for the UI page hosted directly by the window. */
-  readonly uiPreloadPath?: string | null;
+  readonly uiPreloadPath: string;
 }
 
 // =============================================================================
@@ -107,7 +106,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               contextIsolation: true,
               sandbox: true,
               partition: GLOBAL_SESSION_PARTITION,
-              ...(deps.uiPreloadPath ? { preload: deps.uiPreloadPath } : {}),
+              preload: deps.uiPreloadPath,
             });
             viewManager.create();
 
@@ -125,13 +124,11 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             // instance to come forward. Subscribed here, after the window
             // exists — the lock is claimed in before-ready, so a launch landing
             // in that gap finds no window to present and is simply dropped.
-            if (deps.appLayer) {
-              const windowManager = deps.windowManager;
-              unsubscribeReactivate = deps.appLayer.onReactivate(() => {
-                deps.logger.info("Another launch asked us to come forward");
-                windowManager.present();
-              });
-            }
+            const windowManager = deps.windowManager;
+            unsubscribeReactivate = deps.appLayer.onReactivate(() => {
+              deps.logger.info("Another launch asked us to come forward");
+              windowManager.present();
+            });
 
             return { provides: { "ui-ready": true } };
           },
@@ -144,9 +141,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [OPEN_PROJECT_OPERATION_ID]: {
         "select-folder": {
           handler: async (): Promise<HookOutput<SelectFolderHookResult>> => {
-            if (!deps.dialogLayer) {
-              return { result: { folderPath: null } };
-            }
             const result = await deps.dialogLayer.showDialog({
               properties: ["openDirectory"] as const,
             });
@@ -175,15 +169,9 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             viewManager.destroy();
 
             // Dispose layers in reverse initialization order
-            if (deps.viewLayer) {
-              await deps.viewLayer.dispose();
-            }
-            if (deps.windowLayer) {
-              await deps.windowLayer.dispose();
-            }
-            if (deps.sessionLayer) {
-              await deps.sessionLayer.dispose();
-            }
+            await deps.viewLayer.dispose();
+            await deps.windowLayer.dispose();
+            await deps.sessionLayer.dispose();
           },
         },
       },
