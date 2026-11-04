@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import { flushSync } from "svelte";
 import type { Api } from "@shared/electron-api";
-import type { UiNotification, UiProjectRow } from "@shared/ui-state";
+import type { UiNotification, UiProcessTotals, UiProjectRow } from "@shared/ui-state";
 import { createMockApi } from "../test-utils";
 import { NOW, question, sampleProjects } from "./sidebar-fixture";
 
@@ -28,6 +28,7 @@ type Props = {
   mode?: "workspace" | "hover" | "shortcut" | "dialog";
   shortcutModeActive?: boolean;
   processSummary?: boolean;
+  processTotals?: UiProcessTotals;
 };
 
 function setup(props: Props) {
@@ -625,17 +626,41 @@ describe("Sidebar", () => {
       );
     });
 
-    it("totals a collapsed project in its header, and every workspace in the footer", () => {
+    it("totals a collapsed project in its header", () => {
       const { container, rerender } = setup({ projects: sampleProjects() });
       expect(container.querySelector(".cnt.proc")).toBeNull();
-      expect(container.querySelector(".sum .proc")).toBeNull();
 
       rerender({ processSummary: true, projects: withProcesses() });
       // infra (collapsed) has three awake rows; an expanded card shows none.
       expect(card(container, "infra").querySelector(".cnt.proc")?.textContent).toBe("30% 300M · 6");
       expect(card(container, "website").querySelector(".cnt.proc")).toBeNull();
-      // The 13 awake rows of all four projects.
-      expect(container.querySelector(".sum .proc")?.textContent).toBe("130% 1.3G · 26");
+    });
+
+    it("shows all of CodeHydra in the footer, split in its tooltip, not the rows' sum", () => {
+      const totals: UiProcessTotals = {
+        all: { cpuPercent: 150, rssBytes: 2048 * MIB, count: 40 },
+        workspaces: { cpuPercent: 130, rssBytes: 1536 * MIB, count: 26 },
+        codehydra: { cpuPercent: 20, rssBytes: 512 * MIB, count: 14 },
+      };
+      const { container, rerender } = setup({ projects: sampleProjects(), processTotals: totals });
+      // Off: no badge, even with totals still around.
+      expect(container.querySelector(".sum .proc")).toBeNull();
+
+      rerender({ processSummary: true, projects: withProcesses() });
+      const badge = container.querySelector(".sum .proc");
+      expect(badge?.textContent).toBe("150% 2.0G · 40");
+      expect(badge?.getAttribute("title")).toBe(
+        [
+          "All of CodeHydra: 150% CPU · 2.0G memory · 40 processes",
+          "Workspaces: 130% CPU · 1.5G memory · 26 processes",
+          "CodeHydra itself: 20% CPU · 512M memory · 14 processes",
+        ].join("\n")
+      );
+    });
+
+    it("shows no footer badge before the first scan", () => {
+      const { container } = setup({ projects: withProcesses(), processSummary: true });
+      expect(container.querySelector(".sum .proc")).toBeNull();
     });
   });
 

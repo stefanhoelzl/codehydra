@@ -525,7 +525,8 @@ let openSettings: () => void = () => {};
 let openHelp: () => void = () => {};
 let presetNewWorkspaceProject: (projectRef: ProjectRef, deselecting: boolean) => void = () => {};
 // Scans the workspaces' processes: for the sidebar's process summary (the
-// presenter turns its polling on and off) and for `workspace.processes`.
+// presenter turns its polling on and off), for `workspace.processes`, and for
+// what hibernate and delete stop (the cleanup modules' release sweep).
 const processMonitorModule = createProcessMonitorModule({
   processRunner,
   dispatcher,
@@ -797,10 +798,12 @@ const pluginModule = createPluginModule({
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
   processRunner,
+  processMonitor: processMonitorModule,
   logger: apiLogger,
 });
 const posixProcessCleanupModule = createPosixProcessCleanupModule({
   processRunner,
+  processMonitor: processMonitorModule,
   logger: apiLogger,
 });
 const windowTitleModule = createWindowTitleModule({

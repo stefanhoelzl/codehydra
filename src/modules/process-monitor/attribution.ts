@@ -15,6 +15,11 @@
  * Inheritance stops at CodeHydra itself. The app is the ancestor of every
  * workspace's IDE server, terminals and agents, so a process that only reaches
  * a workspace through the app — the IDE server, its helpers — belongs to none.
+ * Those count only in CodeHydra's own totals (codeHydraTotals: the app's
+ * process tree and every workspace's processes, the sidebar footer).
+ *
+ * The same attribution decides what hibernating or deleting a workspace stops
+ * (teardownProcesses).
  */
 
 import type { ProcessSnapshot, ProcessSnapshotEntry } from "../../boundaries/platform/process";
@@ -122,6 +127,137 @@ export function attributeProcesses(
     if (owner !== null) result.set(entry.pid, owner);
   }
   return result;
+}
+
+/** The children of each pid, through plausible parents only. */
+function childrenByPid(processes: readonly ProcessSnapshotEntry[]): Map<number, number[]> {
+  const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
+  const children = new Map<number, number[]>();
+  for (const entry of processes) {
+    const parent = byPid.get(entry.ppid);
+    if (parent === undefined || !isPlausibleParent(entry, parent)) continue;
+    const siblings = children.get(parent.pid) ?? [];
+    siblings.push(entry.pid);
+    children.set(parent.pid, siblings);
+  }
+  return children;
+}
+
+/**
+ * CodeHydra's own process tree: the app and every process descending from it
+ * (its Electron helpers, the IDE server, the terminals and agents). Empty when
+ * the app is not in the snapshot.
+ */
+export function appTreePids(
+  processes: readonly ProcessSnapshotEntry[],
+  appPid: number
+): Set<number> {
+  const tree = new Set<number>();
+  if (!processes.some((entry) => entry.pid === appPid)) return tree;
+  const children = childrenByPid(processes);
+  const pending = [appPid];
+  while (pending.length > 0) {
+    const pid = pending.pop() as number;
+    if (tree.has(pid)) continue;
+    tree.add(pid);
+    pending.push(...(children.get(pid) ?? []));
+  }
+  return tree;
+}
+
+/**
+ * The app and its ancestors: what teardown must never kill. A CodeHydra
+ * started from a terminal (`pnpm dev` in another CodeHydra's workspace) has
+ * ancestors whose working directory can be inside a worktree it monitors.
+ */
+function appAndAncestors(processes: readonly ProcessSnapshotEntry[], appPid: number): Set<number> {
+  const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
+  const result = new Set<number>([appPid]);
+  let entry = byPid.get(appPid);
+  while (entry !== undefined) {
+    const parent = byPid.get(entry.ppid);
+    if (parent === undefined || result.has(parent.pid) || !isPlausibleParent(entry, parent)) break;
+    result.add(parent.pid);
+    entry = parent;
+  }
+  return result;
+}
+
+/** Whether `entry`'s working directory is `root` or inside it. */
+function cwdInside(entry: ProcessSnapshotEntry, root: Path): boolean {
+  if (entry.cwd === null) return false;
+  try {
+    return new Path(entry.cwd).startsWith(root);
+  } catch {
+    return false; // not an absolute path
+  }
+}
+
+/** A process teardown stops. */
+export interface TeardownProcess {
+  readonly pid: number;
+  readonly name: string;
+}
+
+/**
+ * The processes to stop when `workspace` is torn down: every process attributed
+ * to it and, with `cwdInside`, every process whose working directory is in its
+ * worktree whoever it belongs to (a deletion: the directory is going away). The
+ * app and its ancestors are never in it.
+ */
+export function teardownProcesses(
+  processes: readonly ProcessSnapshotEntry[],
+  owners: ReadonlyMap<number, WorkspaceRef>,
+  workspace: MonitoredWorkspace,
+  appPid: number,
+  options: { readonly cwdInside: boolean }
+): TeardownProcess[] {
+  const spared = appAndAncestors(processes, appPid);
+  const root = new Path(workspace.path);
+  return processes
+    .filter(
+      (entry) =>
+        !spared.has(entry.pid) &&
+        (owners.get(entry.pid) === workspace.ref || (options.cwdInside && cwdInside(entry, root)))
+    )
+    .map((entry) => ({ pid: entry.pid, name: entry.name }));
+}
+
+/** Every process CodeHydra accounts for, totalled (the sidebar footer). */
+export interface CodeHydraTotals {
+  /** `workspaces` and `codehydra` together. */
+  readonly all: ProcessTotals;
+  /** Every process attributed to a workspace, wherever it runs. */
+  readonly workspaces: ProcessTotals;
+  /** The rest of the app's process tree: the app, its helpers, the IDE server. */
+  readonly codehydra: ProcessTotals;
+}
+
+/**
+ * The footer's totals from one scan: the app's process tree and every process
+ * attributed to a workspace, each counted once.
+ */
+export function codeHydraTotals(
+  processes: readonly ProcessSnapshotEntry[],
+  owners: ReadonlyMap<number, WorkspaceRef>,
+  cpu: ReadonlyMap<number, number> | null,
+  appPid: number
+): CodeHydraTotals {
+  const tree = appTreePids(processes, appPid);
+  let workspaces = EMPTY_TOTALS;
+  let codehydra = EMPTY_TOTALS;
+  for (const entry of processes) {
+    const inWorkspace = owners.has(entry.pid);
+    if (!inWorkspace && !tree.has(entry.pid)) continue;
+    const own: ProcessTotals = {
+      cpuPercent: cpu === null ? null : (cpu.get(entry.pid) ?? null),
+      rssBytes: entry.rssBytes,
+      count: 1,
+    };
+    if (inWorkspace) workspaces = addTotals(workspaces, own);
+    else codehydra = addTotals(codehydra, own);
+  }
+  return { all: addTotals(workspaces, codehydra), workspaces, codehydra };
 }
 
 /**

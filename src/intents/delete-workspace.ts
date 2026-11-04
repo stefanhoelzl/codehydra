@@ -12,7 +12,8 @@
  * 4b. "pre-delete" hook — the repository's own gate (HooksModule), on a quiesced
  *     workspace but before the reap, so "release" cleans up after it. Skipped in
  *     force mode. A refusal stops the pipeline with the worktree still on disk.
- * 5. "release" hook — WindowsLockModule (detect CWD + kill) [Windows-only]
+ * 5. "release" hook — WindowsFileLockModule / PosixProcessCleanupModule (kill
+ *    what the workspace runs and what has its CWD inside it)
  * 6. If blockingPids provided (retry): "flush" hook — kill provided PIDs
  * 7. "delete" hook — WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file)
  *
@@ -158,8 +159,8 @@ export const preflightResultSchema = z
  *
  * The last gate before the worktree is removed, and the only one a repository's
  * own hook can reach. It runs on a quiesced workspace — terminals killed, agent
- * server stopped, VS Code view closed — but *before* "release", so the CWD scan
- * and kill still cleans up anything a handler left holding the directory.
+ * server stopped, VS Code view closed — but *before* "release", so the release
+ * sweep still cleans up anything a handler left holding the directory.
  *
  * Same two-signal split as "preflight": `blocked` with a `reason` is a policy
  * decision, while a handler that throws could not tell and fails the gate closed.
@@ -699,7 +700,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     }
 
     // --- Pre-delete (the repository's own gate) ---
-    // Runs before "release" on purpose: the CWD scan and kill that follows is
+    // Runs before "release" on purpose: the release sweep that follows is
     // what cleans up after a handler that left a process holding the worktree.
     // Skipped in force mode — force is how the user escapes a gate that refuses
     // or hangs, and the progress panel's Dismiss button takes exactly that path.
@@ -735,7 +736,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       }
     }
 
-    // --- Release (CWD scan + kill) ---
+    // --- Release (kill what still runs in the workspace) ---
     const { results: releaseResults, errors: releaseCollectErrors } = await ctx.hooks.collect(
       "release",
       pipelineCtx

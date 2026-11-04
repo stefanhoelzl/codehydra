@@ -1,13 +1,21 @@
 // @vitest-environment node
 /**
  * Focused tests for process attribution: which workspace each process belongs
- * to, CPU from two snapshots, and the per-workspace trees.
+ * to, CPU from two snapshots, the per-workspace trees, CodeHydra's own totals
+ * and what tearing a workspace down stops.
  */
 
 import { describe, it, expect } from "vitest";
 import type { ProcessSnapshot, ProcessSnapshotEntry } from "../../boundaries/platform/process";
 import type { WorkspaceRef } from "../../intents/contract";
-import { attributeProcesses, buildWorkspaceProcesses, cpuPercents } from "./attribution";
+import {
+  appTreePids,
+  attributeProcesses,
+  buildWorkspaceProcesses,
+  codeHydraTotals,
+  cpuPercents,
+  teardownProcesses,
+} from "./attribution";
 
 const APP = 100;
 const ALPHA = "ch::m::p::alpha" as WorkspaceRef;
@@ -267,5 +275,110 @@ describe("buildWorkspaceProcesses", () => {
     expect(buildWorkspaceProcesses(snapshot, owners, null, new Map()).get(ALPHA)!.total.count).toBe(
       2
     );
+  });
+});
+
+describe("appTreePids", () => {
+  it("is the app and everything descending from it, and nothing else", () => {
+    const tree = appTreePids(
+      [
+        proc(APP, 1, "/"),
+        proc(101, APP, "/"), // a GPU helper
+        proc(102, 101, "/"), // one of its children
+        proc(200, 1, "/ws/alpha"), // an orphan, re-parented to init
+      ],
+      APP
+    );
+    expect([...tree].sort((a, b) => a - b)).toEqual([APP, 101, 102]);
+  });
+
+  it("does not adopt a process through a parent pid reused by a newer process", () => {
+    const tree = appTreePids(
+      [proc(APP, 1, "/"), proc(101, APP, "/", { startedAt: 50 })], // started before the app
+      APP
+    );
+    expect([...tree]).toEqual([APP]);
+  });
+
+  it("is empty when the snapshot does not contain the app", () => {
+    expect(appTreePids([proc(101, APP, "/")], APP).size).toBe(0);
+  });
+});
+
+describe("codeHydraTotals", () => {
+  it("counts the app's tree and every workspace's processes once, split between them", () => {
+    const processes = [
+      proc(APP, 1, "/", { rssBytes: 1 }),
+      proc(101, APP, "/", { rssBytes: 2 }), // IDE server: CodeHydra itself
+      proc(102, APP, "/ws/alpha", { rssBytes: 4 }), // a terminal: alpha's
+      proc(200, 1, "/ws/beta", { rssBytes: 8 }), // an orphan: beta's, outside the tree
+      proc(300, 1, "/home", { rssBytes: 16 }), // someone else's: not counted
+    ];
+    const owners = attributeProcesses(processes, WORKSPACES, APP);
+    const cpu = new Map([
+      [APP, 1],
+      [101, 2],
+      [102, 4],
+      [200, 8],
+      [300, 16],
+    ]);
+
+    expect(codeHydraTotals(processes, owners, cpu, APP)).toEqual({
+      all: { cpuPercent: 15, rssBytes: 15, count: 4 },
+      workspaces: { cpuPercent: 12, rssBytes: 12, count: 2 },
+      codehydra: { cpuPercent: 3, rssBytes: 3, count: 2 },
+    });
+  });
+
+  it("leaves CPU null before a second scan", () => {
+    const totals = codeHydraTotals([proc(APP, 1, "/")], new Map(), null, APP);
+    expect(totals.all).toEqual({ cpuPercent: null, rssBytes: 1000, count: 1 });
+  });
+});
+
+describe("teardownProcesses", () => {
+  const alpha = WORKSPACES[0]!;
+
+  it("is every process attributed to the workspace, wherever it runs now", () => {
+    const processes = [
+      proc(APP, 1, "/"),
+      proc(10, APP, "/ws/alpha"), // its terminal
+      proc(11, 10, "/tmp"), // a build it started elsewhere
+      proc(20, 1, "/srv", { envValue: ALPHA }), // a detached dev server carrying its ref
+      proc(30, APP, "/ws/beta"), // beta's
+    ];
+    const owners = attributeProcesses(processes, WORKSPACES, APP);
+
+    expect(teardownProcesses(processes, owners, alpha, APP, { cwdInside: false })).toEqual([
+      { pid: 10, name: "p10" },
+      { pid: 11, name: "p11" },
+      { pid: 20, name: "p20" },
+    ]);
+  });
+
+  it("adds another workspace's process in the worktree only with cwdInside (a deletion)", () => {
+    // beta's agent running a build in alpha's worktree.
+    const processes = [proc(APP, 1, "/"), proc(40, 1, "/ws/alpha/pkg", { envValue: BETA })];
+    const owners = attributeProcesses(processes, WORKSPACES, APP);
+
+    expect(teardownProcesses(processes, owners, alpha, APP, { cwdInside: false })).toEqual([]);
+    expect(teardownProcesses(processes, owners, alpha, APP, { cwdInside: true })).toEqual([
+      { pid: 40, name: "p40" },
+    ]);
+  });
+
+  it("never includes the app or its ancestors", () => {
+    // A CodeHydra started by `pnpm dev` in a terminal sitting in the worktree.
+    const processes = [
+      proc(50, 1, "/ws/alpha"), // the shell
+      proc(60, 50, "/ws/alpha"), // pnpm dev
+      proc(APP, 60, "/ws/alpha"),
+      proc(70, APP, "/ws/alpha"), // a terminal of its own in the worktree
+    ];
+    const owners = attributeProcesses(processes, WORKSPACES, APP);
+
+    expect(teardownProcesses(processes, owners, alpha, APP, { cwdInside: true })).toEqual([
+      { pid: 70, name: "p70" },
+    ]);
   });
 });

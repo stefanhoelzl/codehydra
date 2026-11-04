@@ -37,16 +37,18 @@
  *   waits for the process to actually be gone and reports the ones that aren't.
  *
  * Hooks:
- * - delete-workspace → release: CWD-only scan + kill blocking processes (best-effort;
- *   flow and error policy shared with posix-process-cleanup-module, see cwd-release-kill)
+ * - delete-workspace → release: kill what the workspace started and what has
+ *   its CWD inside it (best-effort; flow and error policy shared with
+ *   posix-process-cleanup-module, see release-sweep)
  * - delete-workspace → detect: full handle detection, after a failed removal
  * - delete-workspace → flush: kill PIDs collected by detect
- * - hibernate-workspace → release: CWD-only scan + kill blocking processes (best-effort)
+ * - hibernate-workspace → release: kill what the workspace started (best-effort)
  *
- * Detection and termination both go through the ProcessRunner boundary:
- * `findDirectoryHolders` (the native addon: working directories from the
- * process list; with `files`, Restart Manager and the system handle table for
- * the files held open) and `kill`.
+ * The release sweep's processes come from the process monitor's attribution
+ * (`teardownProcesses`); detect is `ProcessRunner.findDirectoryHolders` with
+ * `files` (the native addon: working directories from the process list,
+ * Restart Manager and the system handle table for the files held open);
+ * termination is `ProcessRunner.kill`.
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -60,7 +62,8 @@ import {
   type FlushHookResult,
 } from "../intents/delete-workspace";
 import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../intents/hibernate-workspace";
-import { createCwdReleaseHandlers } from "./cwd-release-kill";
+import type { ProcessMonitorModule } from "./process-monitor/process-monitor-module";
+import { createReleaseSweepHandlers } from "./release-sweep";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/error-utils";
 import { defineHooks } from "../intents/declarations";
@@ -94,19 +97,6 @@ const DETECT_TIMEOUT_MS = 8_000;
  */
 const DETECT_TIMEOUT_ESCALATED_MS = 45_000;
 
-/**
- * Timeout for the pre-emptive CWD scan in the "release" hook.
- *
- * Deliberately generous, and NOT the same budget as the post-failure Detect
- * above. Nothing is waiting on a dialog here — this runs before the removal is
- * attempted, and its whole job is to find the processes that would make that
- * removal fail. Returning empty because the clock ran out doesn't save the user
- * any time; it just moves the failure later and strips the explanation. Since
- * the timeout only bounds a scan that is genuinely stuck, a larger one costs
- * nothing on a machine where the scan completes.
- */
-const DETECT_CWD_TIMEOUT_MS = 45_000;
-
 /** Wait after signalling a blocking process before declaring it a survivor. */
 const KILL_TIMEOUT_MS = 5_000;
 
@@ -129,28 +119,27 @@ export interface DetectScanResult {
 }
 
 /**
- * Find the processes holding the workspace directory:
- * `detect` (open files + CWD) or `detect-cwd` (CWD only).
+ * Find the processes holding the workspace directory: open files and working
+ * directories.
  *
  * A scan that cannot run throws, so its hook reports it rather than mistaking
  * it for a workspace nothing holds.
  * Exported for boundary tests.
  */
 export async function runDetectAction(
-  processRunner: ProcessRunner,
+  processRunner: Pick<ProcessRunner, "findDirectoryHolders">,
   path: Path,
-  action: "detect" | "detect-cwd",
   logger: Logger,
   timeoutMs: number
 ): Promise<DetectScanResult> {
   const scan = await processRunner.findDirectoryHolders(path.toNative(), {
-    files: action === "detect",
+    files: true,
     timeoutMs,
   });
   if (scan.timedOut) {
     logger
       .scoped({ path: path.toString() })
-      .warn("Blocking process detection timed out", { action, timeoutMs });
+      .warn("Blocking process detection timed out", { timeoutMs });
     return { processes: [], timedOut: true };
   }
   return { processes: [...scan.holders], timedOut: false };
@@ -204,6 +193,7 @@ export async function killBlockingProcesses(
 
 interface WindowsFileLockModuleDeps {
   readonly processRunner: ProcessRunner;
+  readonly processMonitor: Pick<ProcessMonitorModule, "teardownProcesses">;
   readonly logger: Logger;
 }
 
@@ -218,16 +208,9 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
    */
   let detectHasTimedOut = false;
 
-  const { deleteRelease, hibernateRelease } = createCwdReleaseHandlers(
+  const { deleteRelease, hibernateRelease } = createReleaseSweepHandlers(
     {
-      detect: (workspacePath) =>
-        runDetectAction(
-          deps.processRunner,
-          new Path(workspacePath),
-          "detect-cwd",
-          deps.logger,
-          DETECT_CWD_TIMEOUT_MS
-        ),
+      processMonitor: deps.processMonitor,
       kill: (pids) => killBlockingProcesses(deps.processRunner, pids, deps.logger),
     },
     deps.logger
@@ -247,7 +230,6 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
               const scan = await runDetectAction(
                 deps.processRunner,
                 new Path(workspacePath),
-                "detect",
                 deps.logger,
                 detectHasTimedOut ? DETECT_TIMEOUT_ESCALATED_MS : DETECT_TIMEOUT_MS
               );

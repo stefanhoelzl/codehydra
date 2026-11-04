@@ -33,6 +33,7 @@ import type { PersistedAccessor } from "../../boundaries/platform/store-definiti
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import { Path } from "../../utils/path/path";
 import type { ProcessTotals } from "../../api/entries/deps";
+import type { CodeHydraTotals } from "../process-monitor/attribution";
 import type { WorkspaceRef } from "../../intents/contract";
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { UiProjectRow, UiState } from "../../shared/ui-state";
@@ -159,10 +160,12 @@ function createDeps() {
  */
 function createFakeProcessMonitor() {
   let summaries = new Map<WorkspaceRef, ProcessTotals>();
+  let totals: CodeHydraTotals | null = null;
   const listeners = new Set<() => void>();
   return {
     watching: false,
     summaries: (): ReadonlyMap<WorkspaceRef, ProcessTotals> => summaries,
+    totals: (): CodeHydraTotals | null => totals,
     onSummaries(listener: () => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -170,8 +173,9 @@ function createFakeProcessMonitor() {
     setWatching(watching: boolean) {
       this.watching = watching;
     },
-    publish(next: Record<string, ProcessTotals>) {
+    publish(next: Record<string, ProcessTotals>, nextTotals: CodeHydraTotals | null = null) {
       summaries = new Map(Object.entries(next) as [WorkspaceRef, ProcessTotals][]);
+      totals = nextTotals;
       for (const listener of listeners) listener();
     },
   };
@@ -1557,6 +1561,25 @@ describe("PresentationModule - sidebar resize", () => {
 
       expect(lastSnapshot(deps).sidebar.processSummary).toBe(true);
       expect(deps.processMonitor.watching).toBe(true);
+    });
+
+    it("puts CodeHydra's whole footprint on the sidebar only while the summary is on", async () => {
+      const deps = createDeps();
+      const module = await startModule(deps);
+      const ws = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
+      await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([ws]) });
+      const totals: CodeHydraTotals = {
+        all: { cpuPercent: 30, rssBytes: 3072, count: 5 },
+        workspaces: { cpuPercent: 10, rssBytes: 1024, count: 2 },
+        codehydra: { cpuPercent: 20, rssBytes: 2048, count: 3 },
+      };
+      deps.processMonitor.publish({}, totals);
+      await flush();
+      expect(lastSnapshot(deps).sidebar.processTotals).toBeUndefined();
+
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", enabled: true });
+      await flush();
+      expect(lastSnapshot(deps).sidebar.processTotals).toEqual(totals);
     });
 
     it("shows no totals on a hibernated row", async () => {
