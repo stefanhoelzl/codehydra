@@ -11,7 +11,8 @@
       "Bash(pnpm --version:*)",
       "Bash(tsc --version:*)",
       "Bash(gh pr merge:*)",
-      "Bash(pnpm format:check)"
+      "Bash(pnpm format:check)",
+      "Bash(uv run --script .claude/skills/posthog-issue/decode.py:*)"
     ]
   },
   "enabledPlugins": {
