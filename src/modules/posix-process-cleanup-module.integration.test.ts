@@ -11,6 +11,7 @@
  * shape this code is never handed.
  */
 
+import { AsyncLogScopeStore } from "../boundaries/platform/log-scope";
 import { describe, it, expect, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
@@ -74,6 +75,7 @@ const releaseOperation = createMinimalOperation<ReleaseHookResult>(
 
 function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
   const dispatcher = new Dispatcher({
+    logScope: new AsyncLogScopeStore(),
     logger: createMockLogger(),
     initialCapabilities: { posix: true },
   });
@@ -430,6 +432,7 @@ describe("PosixProcessCleanupModule Integration", () => {
 
     function createHibernateReleaseSetup(r: MockProcessRunner, logger = SILENT_LOGGER) {
       const dispatcher = new Dispatcher({
+        logScope: new AsyncLogScopeStore(),
         logger: createMockLogger(),
         initialCapabilities: { posix: true },
       });

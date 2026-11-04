@@ -203,17 +203,13 @@ export interface IdeServerModuleDeps {
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;
   readonly logger: Logger;
-  readonly archiveExtractor?: ArchiveExtractor;
+  readonly archiveExtractor: ArchiveExtractor;
   readonly configService: Config;
   /**
-   * Presenter for the port-conflict dialog.
-   *
-   * Optional: without it a busy port fails the way it always did. The IDE
-   * server starts at the `start` hook point, two after `show-ui`, so in the
-   * real app the UI is always up by then — this is for constructions that have
-   * no presenter at all.
+   * Presenter for the port-conflict dialog. The IDE server starts at the
+   * `start` hook point, two after `show-ui`, so the UI is up by then.
    */
-  readonly ui?: Pick<UiPresenter, "dialog"> | null;
+  readonly ui: Pick<UiPresenter, "dialog">;
 }
 
 // =============================================================================
@@ -332,8 +328,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   // -------------------------------------------------------------------------
 
   /** Build download request from the active descriptor (call only after load()). */
-  function getDownloadRequest(): DownloadRequest | null {
-    if (!deps.archiveExtractor) return null;
+  function getDownloadRequest(): DownloadRequest {
     const ide = getIdeServer();
     const subPath = ide.archiveSubPath(deps.platform, deps.arch);
     return {
@@ -685,9 +680,6 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
    * show what we found and let the user judge rather than guess at ownership.
    */
   async function resolvePortConflict(port: number): Promise<void> {
-    const ui = deps.ui;
-    if (!ui) throw portConflictError(port);
-
     let holders = await deps.processRunner.findListeningProcesses(port);
     // The scan is best-effort, and an empty result means "could not tell", not
     // "free" — with nothing to show there is no offer worth making.
@@ -698,7 +690,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       pids: holders.map((holder) => holder.pid).join(","),
     });
 
-    const handle = ui.dialog(portConflictDialog(port, holders));
+    const handle = deps.ui.dialog(portConflictDialog(port, holders));
     try {
       for (;;) {
         if ((await nextAction(handle)) !== "terminate") {
@@ -834,9 +826,6 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       }
   > {
     const request = getDownloadRequest();
-    if (!request) {
-      return { success: true, needsDownload: false };
-    }
 
     try {
       const isInstalled = await isBinaryInstalled(request.destDir, {
@@ -861,9 +850,6 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
 
   async function downloadIdeServer(onProgress?: DownloadProgressCallback): Promise<void> {
     const request = getDownloadRequest();
-    if (!request || !deps.archiveExtractor) {
-      throw new IdeServerError("Cannot download IDE server binary: ArchiveExtractor not available");
-    }
 
     logger.info("Downloading IDE server binary");
 

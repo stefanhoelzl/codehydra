@@ -39,7 +39,6 @@ export function createFakeBinaryResolver(
     current: () => (pending ? null : binary),
     seed: async () => binary.version ?? "system",
     bundleVersionsInUse: () => (binary.version ? [binary.version] : []),
-    idle: async () => undefined,
   };
 }
 

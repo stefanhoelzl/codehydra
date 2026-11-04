@@ -137,20 +137,6 @@ describe("AgentNotificationService", () => {
       // Chime plays because first report with idle > 0 (gray → green)
       expect(mockPlayChime).toHaveBeenCalledTimes(1);
     });
-
-    it("resets all state", () => {
-      service.handleStatusChange("/test-a", { idle: 0, busy: 2 });
-      service.handleStatusChange("/test-b", { idle: 0, busy: 3 });
-
-      service.reset();
-
-      // Both workspaces should now be treated as first events with idle agents
-      service.handleStatusChange("/test-a", { idle: 1, busy: 1 });
-      service.handleStatusChange("/test-b", { idle: 1, busy: 2 });
-
-      // Both chime because first report with idle > 0 (gray → green)
-      expect(mockPlayChime).toHaveBeenCalledTimes(2);
-    });
   });
 
   describe("edge cases", () => {

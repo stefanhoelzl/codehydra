@@ -68,7 +68,7 @@ export interface SettingsModuleDeps {
   readonly app: Pick<AppBoundary, "relaunch">;
   readonly dialog: Pick<DialogBoundary, "showDialog">;
   /** Rows other modules contribute; read each time the dialog is built. */
-  readonly extras?: () => readonly SettingsExtraRow[];
+  readonly extras: () => readonly SettingsExtraRow[];
   readonly logger: Logger;
 }
 
@@ -150,8 +150,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
   module: IntentModule;
   openSettings: () => void;
 } {
-  const { ui, config, app, dialog, logger } = deps;
-  const extras = (): readonly SettingsExtraRow[] => deps.extras?.() ?? [];
+  const { ui, config, app, dialog, logger, extras } = deps;
 
   let activeHandle: DialogHandle | null = null;
   /** Effective value per key when the dialog opened, for the restart-note diff. */

@@ -2,13 +2,14 @@
  * Test utilities for API server module testing.
  *
  * Provides helpers for creating test environments with real Socket.IO
- * (polling transport) and mock dispatchers for boundary and integration tests.
+ * (websocket transport, as in production) and mock dispatchers for boundary and integration tests.
  */
 
+import { AsyncLogScopeStore } from "../boundaries/platform/log-scope";
 import { vi, type Mock } from "vitest";
 import { z } from "zod/v4";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
-import type { OperationRegistry } from "../api/registry";
+import { OperationRegistry } from "../api/registry";
 import type { DomainEvent } from "../intents/lib/types";
 import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import type {
@@ -110,7 +111,7 @@ export interface TestClientOptions {
  */
 export function createTestClient(port: number, options: TestClientOptions): TestClientSocket {
   return ioClient(`http://127.0.0.1:${port}`, {
-    transports: ["polling"],
+    transports: ["websocket"],
     autoConnect: options.autoConnect ?? false,
     // `auth` lets a test present a non-sidekick handshake (a `ch` client kind
     // plus token); without it the sidekick's original shape is sent.
@@ -340,7 +341,7 @@ function createMinimalShowMessageOperation(): Operation<OperationSchemas> {
 // ============================================================================
 
 /**
- * Create a API server test environment with real Socket.IO (polling transport).
+ * Create a API server test environment with real Socket.IO (websocket transport).
  *
  * The server is started via the module's app:start hook, just like in production.
  * A mock dispatcher is injected so that API calls can be verified without real operations.
@@ -424,12 +425,9 @@ export async function createApiServerEnv(
     },
     fileSystem,
     logger: SILENT_LOGGER,
-    ...(extra?.registry !== undefined && { registry: extra.registry }),
-    ...(extra?.cliToken !== undefined && { cliToken: () => extra.cliToken ?? null }),
-    options: {
-      transports: ["polling"],
-      ...withoutLogScope(options),
-    },
+    registry: extra?.registry ?? new OperationRegistry([]),
+    cliToken: () => extra?.cliToken ?? null,
+    options: withoutLogScope(options),
   };
 
   const apiServer = createApiServerModule(moduleDeps);
@@ -439,7 +437,7 @@ export async function createApiServerEnv(
   // Wire up a real dispatcher to drive the module through hooks
   const testDispatcher = new Dispatcher({
     logger: createMockLogger(),
-    ...(logScope !== undefined && { logScope }),
+    logScope: logScope ?? new AsyncLogScopeStore(),
   });
   testDispatcher.registerModule(module);
   testDispatcher.registerOperation(createMinimalStartOperation());

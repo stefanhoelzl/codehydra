@@ -290,6 +290,12 @@ function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModu
     logger: SILENT_LOGGER,
     archiveExtractor: createArchiveExtractorMock(),
     configService: createMockConfig({ defaults: { "version.opencode": "1.0.223" } }),
+    // Only the port-conflict tests expect a dialog; they supply their own.
+    ui: {
+      dialog: () => {
+        throw new Error("unexpected dialog");
+      },
+    },
     ...overrides,
   };
 }
@@ -378,21 +384,6 @@ describe("IdeServerModule", () => {
 
     it("returns empty missingBinaries when up-to-date", async () => {
       const deps = createMockDeps();
-      const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(minimalCheckDeps());
-
-      const result = (await dispatcher.dispatch({
-        type: "app:start",
-        payload: {},
-      })) as CheckDepsResult;
-
-      expect(result.missingBinaries ?? []).not.toContain("vscodium");
-    });
-
-    it("returns needsDownload false when no ArchiveExtractor available", async () => {
-      const allDeps = createMockDeps();
-      delete (allDeps as unknown as Record<string, unknown>).archiveExtractor;
-      const deps = allDeps;
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(minimalCheckDeps());
 
@@ -1621,7 +1612,6 @@ describe("IdeServerModule", () => {
       answers: readonly string[];
       onKill?: (pid: number) => { success: boolean } | void;
       listeners?: Record<number, readonly (typeof HOLDER)[]>;
-      withUi?: boolean;
     }) {
       let portFree = false;
       const dialogUi = createDialogUi(options.answers);
@@ -1637,7 +1627,7 @@ describe("IdeServerModule", () => {
       const deps = createMockDeps({
         processRunner,
         portManager: { isPortAvailable: vi.fn(async () => portFree) },
-        ...(options.withUi === false ? {} : { ui: dialogUi.ui }),
+        ui: dialogUi.ui,
       });
       return { deps, processRunner, dialogUi };
     }
@@ -1723,16 +1713,6 @@ describe("IdeServerModule", () => {
       );
       expect(dialogUi.shown).toHaveLength(0);
     });
-
-    it("keeps the plain error when there is no presenter to ask with", async () => {
-      const { deps } = createConflictDeps({ answers: [], withUi: false });
-      const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(minimalStart());
-
-      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
-        "already in use"
-      );
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1740,7 +1720,7 @@ describe("IdeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("start failure cleanup", () => {
-    it("kills the spawned process when port is not available", async () => {
+    it("fails with the busy-port error when the holder cannot be identified", async () => {
       const deps = createMockDeps({
         portManager: {
           isPortAvailable: vi.fn().mockResolvedValue(false),

@@ -89,8 +89,9 @@ export function createTerminalFocusModule(deps: TerminalFocusModuleDeps): Intent
     // routine ordering shows up in the log, and in every bug report, as a fault.
     // The retry on the next trigger is what actually focuses the terminal either way.
     //
-    // `isConnected`, not `isReady`: a listening server says nothing about *this*
-    // workspace, so the server-level check let exactly the torn-down case through.
+    // Per workspace, not server-level: a listening server says nothing about
+    // *this* workspace, so a server-level check let exactly the torn-down case
+    // through.
     if (!deps.isConnected(workspaceRef)) return;
 
     inFlight.add(workspaceRef);

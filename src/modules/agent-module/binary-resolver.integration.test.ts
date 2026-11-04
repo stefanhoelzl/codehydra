@@ -8,7 +8,7 @@
  * fake release host, and a process runner answering `--version`.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createHash } from "node:crypto";
 import {
   compareVersions,
@@ -375,10 +375,9 @@ describe("agent binary resolver", () => {
       // Both are kept while the newer one is still downloading.
       expect(resolver.bundleVersionsInUse()).toEqual(expect.arrayContaining(["1.0.0", "2.0.0"]));
 
-      await resolver.idle();
+      await vi.waitFor(() => expect(resolver.current()?.version).toBe("2.0.0"));
 
       expect(fileSystem).toHaveFile(bundle("2.0.0"), BINARY);
-      expect(resolver.current()?.version).toBe("2.0.0");
       expect(resolver.bundleVersionsInUse()).toEqual(["2.0.0"]);
     });
 
@@ -387,7 +386,9 @@ describe("agent binary resolver", () => {
       httpClient.setResponse(`${HOST}/2.0.0/agent`, { status: 500 });
 
       await resolver.prepare();
-      await resolver.idle();
+      // The failed version stops being kept once its download has settled.
+      await vi.waitFor(() => expect(resolver.bundleVersionsInUse()).toEqual(["1.0.0"]));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(resolver.current()?.version).toBe("1.0.0");
     });

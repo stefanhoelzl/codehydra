@@ -133,6 +133,7 @@ function setup(): {
     config,
     app,
     dialog,
+    extras: () => [],
     logger: createMockLogger(),
   });
   return { openSettings, config, dialogs, app, dialog };
@@ -487,6 +488,7 @@ describe("SettingsModule — shortcut", () => {
       config,
       app,
       dialog,
+      extras: () => [],
       logger: createMockLogger(),
     });
     const event: ShortcutKeyPressedEvent = {
