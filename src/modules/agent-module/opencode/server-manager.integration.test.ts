@@ -289,6 +289,68 @@ describe("OpenCodeServerManager integration", () => {
     });
   });
 
+  describe("a server that exits before answering", () => {
+    // The port findFreePort() returned was taken before opencode bound it:
+    // opencode exits at once (1.x: a bare `ServeError`) and nothing answers.
+    const WS = testPath("/workspace/feature-a").toNative();
+
+    /** A manager whose health check polls fast, over a runner whose first `exits` spawns exit at once. */
+    function managerWhoseServers(exits: number): OpenCodeServerManager {
+      let spawned = 0;
+      mockProcessRunner = createMockProcessRunner({
+        onSpawn: () =>
+          spawned++ < exits
+            ? { pid: 2000 + spawned, exitCode: 1, stderr: "Error: Unexpected error\n\nServeError" }
+            : { pid: 2000 + spawned, untilKilled: true },
+      });
+      // Only a server that is still running answers.
+      mockHttpClient.fetch.mockImplementation(async () => {
+        if (spawned <= exits) throw new Error("connect ECONNREFUSED");
+        return new Response("{}", { status: 200 });
+      });
+      return new OpenCodeServerManager(
+        mockProcessRunner,
+        mockPortManager,
+        mockHttpClient,
+        mockPathProvider,
+        SILENT_LOGGER,
+        "linux",
+        { healthCheckTimeoutMs: 10_000, healthCheckIntervalMs: 1 }
+      );
+    }
+
+    it("is started again on a fresh port", async () => {
+      const manager = managerWhoseServers(1);
+      try {
+        const port = await manager.startServer(refOf(WS), new Path(WS), { binary: TEST_BINARY });
+
+        expect(port).toBe(14002);
+        expect(mockProcessRunner.$.spawnedCount).toBe(2);
+        expect(mockProcessRunner.$.spawned(1).$.args).toContain("14002");
+      } finally {
+        await manager.dispose();
+      }
+    });
+
+    it("fails at once, with its output, once every attempt has exited", async () => {
+      const manager = managerWhoseServers(Number.POSITIVE_INFINITY);
+      try {
+        const started = Date.now();
+        await expect(
+          manager.startServer(refOf(WS), new Path(WS), { binary: TEST_BINARY })
+        ).rejects.toThrow(
+          /opencode exited \(code 1\) before answering on port 14003:[\s\S]*ServeError/
+        );
+
+        expect(mockProcessRunner.$.spawnedCount).toBe(3);
+        // Not the 10s health-check timeout.
+        expect(Date.now() - started).toBeLessThan(1000);
+      } finally {
+        await manager.dispose();
+      }
+    });
+  });
+
   describe("restartServer", () => {
     it("restartServer returns same port", async () => {
       // Start server
