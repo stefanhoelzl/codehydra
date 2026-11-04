@@ -258,6 +258,53 @@ describe("ExecaProcessRunner", () => {
     );
   });
 
+  describe("increasePriority(pid)", () => {
+    it.runIf(isWindows)(
+      "raises a process to above-normal priority",
+      async () => {
+        const proc = spawnLongRunning(runner, 30_000);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+        const pid = proc.pid!;
+
+        expect(runner.increasePriority(pid)).toBe(true);
+
+        expect(os.getPriority(pid)).toBe(os.constants.priority.PRIORITY_ABOVE_NORMAL);
+      },
+      TEST_TIMEOUT
+    );
+
+    it.runIf(isWindows)(
+      "reports false for a PID that is gone",
+      async () => {
+        const proc = spawnLongRunning(runner, 30_000);
+        runningProcesses.push(proc);
+        const pid = proc.pid!;
+        await proc.kill(1000, 1000);
+        expect(await waitForProcessDeath(pid, 1000)).toBe(true);
+
+        expect(runner.increasePriority(pid)).toBe(false);
+      },
+      TEST_TIMEOUT
+    );
+
+    it.skipIf(isWindows)(
+      "changes nothing off Windows",
+      async () => {
+        const proc = spawnLongRunning(runner, 30_000);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+        const pid = proc.pid!;
+        const before = os.getPriority(pid);
+
+        expect(runner.increasePriority(pid)).toBe(false);
+
+        expect(os.getPriority(pid)).toBe(before);
+      },
+      TEST_TIMEOUT
+    );
+  });
+
   describe("kill(pid) — processes we did not spawn", () => {
     // The blocking processes this exists for are found by a scan, so there is
     // no handle for them. Same contract as the handle method, keyed by PID.

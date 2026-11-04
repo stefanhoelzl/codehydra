@@ -82,6 +82,9 @@ export interface ProcessRunnerMockState extends MockState {
 
   /** PIDs passed to `kill(pid, …)`, in call order. */
   readonly killedPids: readonly number[];
+
+  /** PIDs passed to `increasePriority(pid)`, in call order. */
+  readonly raisedPids: readonly number[];
 }
 
 /**
@@ -225,6 +228,7 @@ class MockSpawnedProcessImpl implements MockSpawnedProcess {
 class ProcessRunnerMockStateImpl implements ProcessRunnerMockState {
   private readonly processes: MockSpawnedProcess[] = [];
   private readonly killed: number[] = [];
+  private readonly raised: number[] = [];
 
   get spawnedCount(): number {
     return this.processes.length;
@@ -240,6 +244,14 @@ class ProcessRunnerMockStateImpl implements ProcessRunnerMockState {
 
   addKilledPid(pid: number): void {
     this.killed.push(pid);
+  }
+
+  get raisedPids(): readonly number[] {
+    return this.raised;
+  }
+
+  addRaisedPid(pid: number): void {
+    this.raised.push(pid);
   }
 
   spawned(indexOrFilter: number | { command: string }): MockSpawnedProcess {
@@ -338,6 +350,11 @@ class MockProcessRunnerImpl implements MockProcessRunner {
       if (ports !== undefined && ports.length > 0) result.set(pid, [...ports]);
     }
     return result;
+  }
+
+  increasePriority(pid: number): boolean {
+    this.state.addRaisedPid(pid);
+    return true;
   }
 
   async kill(pid: number, _termTimeout?: number, _killTimeout?: number): Promise<KillResult> {

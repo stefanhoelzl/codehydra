@@ -153,6 +153,7 @@ import { createScripts } from "./modules/scripts/scripts";
 import { createPollModule } from "./modules/poll-module";
 import { createWakeupModule } from "./modules/wakeup-module";
 import { createProcessMonitorModule } from "./modules/process-monitor/process-monitor-module";
+import { createInputPriorityModule } from "./modules/input-priority/input-priority-module";
 import { createHookOutputSink } from "./modules/plugin-module/output-sink";
 import { createWorkspaceLogModule } from "./modules/workspace-log-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
@@ -528,6 +529,15 @@ const processMonitorModule = createProcessMonitorModule({
   processRunner,
   dispatcher,
   logger: loggingService.createLogger("process"),
+  appPid: process.pid,
+});
+// Windows: keeps terminal typing responsive under heavy load by raising the
+// processes a keystroke passes through.
+const inputPriorityModule = createInputPriorityModule({
+  processRunner,
+  configService,
+  logger: loggingService.createLogger("process"),
+  platform: platformInfo.platform,
   appPid: process.pid,
 });
 const presentationModule = createPresentationModule({
@@ -1088,6 +1098,7 @@ dispatcher.registerModule(pluginModule);
 dispatcher.registerModule(pollModule);
 dispatcher.registerModule(wakeupModule);
 dispatcher.registerModule(processMonitorModule);
+dispatcher.registerModule(inputPriorityModule);
 dispatcher.registerModule(workspaceLogModule.module);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);

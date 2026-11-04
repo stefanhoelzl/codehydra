@@ -50,7 +50,10 @@ function identity(entry: ProcessSnapshotEntry): string {
  * number: on Windows it is never cleared when the parent exits, so a newer
  * process that got the same pid would otherwise adopt the orphan.
  */
-function isPlausibleParent(child: ProcessSnapshotEntry, parent: ProcessSnapshotEntry): boolean {
+export function isPlausibleParent(
+  child: ProcessSnapshotEntry,
+  parent: ProcessSnapshotEntry
+): boolean {
   if (parent.pid === child.pid) return false;
   if (child.startedAt === null || parent.startedAt === null) return true;
   return parent.startedAt <= child.startedAt + START_TOLERANCE_MS;
