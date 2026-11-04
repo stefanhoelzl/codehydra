@@ -366,6 +366,18 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
 
   if (scenario === "subagent") {
     // The sub-agent talks to the same mock, under its own system prompt.
+    //
+    // Claude launches it asynchronously even though the Task call does not ask
+    // for the background (`async_launched`, checked on 2.1.318), so the main
+    // turn ends beside it and its Stop sees it only if it is still running.
+    // Answered at once, it raced the main agent's own follow-up call — each is
+    // one instant mock reply — and under load it sometimes won, leaving an
+    // empty background_tasks. A foreground sleep first keeps it running well
+    // past the main Stop; the scenario waits for its SubagentStop anyway.
+    mock.addFixture({
+      match: { systemMessage: SUBAGENT_SYSTEM_PROMPT, hasToolResult: false },
+      response: bashCall("sleep 5", "sub-agent's work", false),
+    });
     mock.addFixture({
       match: { systemMessage: SUBAGENT_SYSTEM_PROMPT },
       response: { content: "Sub-agent done." },
