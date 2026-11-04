@@ -29,7 +29,8 @@ extraResources:
   - from: resources/icon.ico
     to: icon.ico
   # CLI wrapper scripts and hook handler (executed by Claude Code), and the
-  # Windows process helper codehydra-procs.exe (scripts/build-win-helper.ts)
+  # native addon codehydra-native.*.node (scripts/build-native.ts), which
+  # Node loads from a real file, not from inside the asar
   - from: out/main/assets/bin
     to: bin
   # VSIX files (installed by code-server)

@@ -18,6 +18,19 @@ export interface NativeAddon {
    * environment variable to read from each one (`envValue`).
    */
   listProcessesAsync(envVar?: string | null): Promise<ProcessSnapshotEntry[]>;
+  /** Every listening TCP socket (IPv4 and IPv6) with the pid that owns it (listeners crate). */
+  listeningSocketsAsync(): Promise<{ pid: number; port: number }[]>;
+  /**
+   * The processes Restart Manager says hold a file under `dir` (up to 1000 of
+   * its files registered). Windows only; empty elsewhere.
+   */
+  restartManagerHoldersAsync(dir: string): Promise<{ pid: number; name: string }[]>;
+  /**
+   * The files under `dir` that `pids` hold open, as absolute paths, from the
+   * system handle table. Windows only; empty elsewhere. Bounded: names that do
+   * not resolve within a few seconds are left out.
+   */
+  openFilesUnderAsync(dir: string, pids: number[]): Promise<{ pid: number; path: string }[]>;
 }
 
 /** The addon's file name for a platform and architecture, e.g. `codehydra-native.linux-x64.node`. */

@@ -1,15 +1,10 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { mkdtemp, writeFile, chmod, rm, realpath, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, chmod, rm, realpath, readFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createServer, type Server } from "node:net";
-import {
-  ExecaProcessRunner,
-  LISTENER_DETAILS_TIMEOUT_MS,
-  type SpawnedProcess,
-  type ProcessRunner,
-} from "./process";
+import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "./process";
 import { SILENT_LOGGER } from "./logging";
 import { createBehavioralLogger } from "./logging.test-utils";
 import {
@@ -21,7 +16,6 @@ import {
   spawnWithOutput,
   spawnWithExitCode,
   spawnWithChild,
-  windowsProcessHelperPath,
 } from "./process.boundary-test-utils";
 import { delay } from "@shared/test-fixtures";
 
@@ -61,7 +55,7 @@ describe("ExecaProcessRunner", () => {
   const runningProcesses: SpawnedProcess[] = [];
 
   beforeEach(async () => {
-    runner = new ExecaProcessRunner(SILENT_LOGGER);
+    runner = new ExecaProcessRunner(SILENT_LOGGER, { native: nativeAddon() });
   });
 
   afterEach(async () => {
@@ -359,12 +353,10 @@ describe("ExecaProcessRunner", () => {
   });
 
   describe("findListeningProcesses", () => {
-    // The real platform tool against a real socket: the parsers are tested on
-    // canned output, but only this shows the query itself still works (a
-    // mangled one just prints nothing, which reads as "nobody").
-    // Room for the whole scan: on Windows, naming a holder is a cold PowerShell
-    // plus a WMI query, which has a budget of its own well past TEST_TIMEOUT.
-    const SCAN_TEST_TIMEOUT = LISTENER_DETAILS_TIMEOUT_MS + 5000;
+    // The native addon's socket table against a real socket: only this shows
+    // the query still works (a broken one finds nothing, which reads as "nobody"),
+    // and that the holder is named from the process list.
+    const SCAN_TEST_TIMEOUT = 15_000;
 
     async function listen(): Promise<{ server: Server; port: number }> {
       const server = createServer();
@@ -381,6 +373,8 @@ describe("ExecaProcessRunner", () => {
         try {
           const holders = await runner.findListeningProcesses(port);
           expect(holders.map((holder) => holder.pid)).toContain(process.pid);
+          const self = holders.find((holder) => holder.pid === process.pid);
+          expect(self?.name).not.toBe("unknown");
         } finally {
           await new Promise((resolve) => server.close(resolve));
         }
@@ -401,10 +395,9 @@ describe("ExecaProcessRunner", () => {
   });
 
   describe("listProcesses / findListeningPorts", () => {
-    // The real scans — the native addon for processes; /proc, lsof or the
-    // Windows helper exe for ports — against a real child: started in a
-    // directory of its own, listening on a port. Only this shows the scan
-    // reports cwd, parent, memory, CPU, environment and ports.
+    // The native addon's scans against a real child: started in a directory of
+    // its own, listening on a port. Only this shows they report cwd, parent,
+    // memory, CPU, environment, ports and the directory's holders.
     const SNAPSHOT_TEST_TIMEOUT = 30_000;
 
     let dir: string;
@@ -412,10 +405,7 @@ describe("ExecaProcessRunner", () => {
 
     beforeEach(async () => {
       dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "snapshot-test-")));
-      scanner = new ExecaProcessRunner(SILENT_LOGGER, {
-        native: nativeAddon(),
-        ...(isWindows && { windowsProcessHelper: windowsProcessHelperPath() }),
-      });
+      scanner = new ExecaProcessRunner(SILENT_LOGGER, { native: nativeAddon() });
     });
 
     /** Started in `dir`: killed before it is removed, which Windows refuses while a process sits in it. */
@@ -510,6 +500,54 @@ describe("ExecaProcessRunner", () => {
       "finds no ports for a process listening on nothing",
       async () => {
         expect((await scanner.findListeningPorts([process.pid])).has(process.pid)).toBe(false);
+      },
+      SNAPSHOT_TEST_TIMEOUT
+    );
+
+    it(
+      "finds a process whose working directory is inside a directory, relative to it",
+      async () => {
+        const sub = path.join(dir, "sub");
+        await mkdir(sub);
+        const child = runner.run(process.execPath, ["-e", "setTimeout(()=>{},30000)"], {
+          cwd: sub,
+        });
+        children.push(child);
+        await delay(300);
+
+        const scan = await scanner.findDirectoryHolders(dir);
+        expect(scan.timedOut).toBe(false);
+        const holder = scan.holders.find((candidate) => candidate.pid === child.pid);
+        expect(holder, "child not found as a holder").toBeDefined();
+        expect(holder!.cwd).toBe("sub");
+        expect(holder!.files).toEqual([]);
+        // Never the scanning process itself.
+        expect(scan.holders.some((candidate) => candidate.pid === process.pid)).toBe(false);
+
+        // Outside the directory: nobody.
+        const elsewhere = await scanner.findDirectoryHolders(path.join(dir, "missing"));
+        expect(elsewhere.holders.some((candidate) => candidate.pid === child.pid)).toBe(false);
+      },
+      SNAPSHOT_TEST_TIMEOUT
+    );
+
+    it.skipIf(!isWindows)(
+      "finds a process holding a file open in a directory, with the file (Windows)",
+      async () => {
+        const file = path.join(dir, "held.txt");
+        await writeFile(file, "x");
+        // Its cwd is elsewhere: only the open handle ties it to `dir`.
+        const script = `const fd=require('fs').openSync(${JSON.stringify(file)},'r');setTimeout(()=>{},30000)`;
+        const child = runner.run(process.execPath, ["-e", script], { cwd: os.tmpdir() });
+        children.push(child);
+        await delay(500);
+
+        const scan = await scanner.findDirectoryHolders(dir, { files: true });
+        expect(scan.timedOut).toBe(false);
+        const holder = scan.holders.find((candidate) => candidate.pid === child.pid);
+        expect(holder, "child not found as a holder").toBeDefined();
+        expect(holder!.files).toContain("held.txt");
+        expect(holder!.cwd).toBeNull();
       },
       SNAPSHOT_TEST_TIMEOUT
     );

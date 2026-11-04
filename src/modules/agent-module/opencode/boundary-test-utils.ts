@@ -13,6 +13,7 @@ import { createOpencodeClient, type OpencodeClient as SdkClient } from "@opencod
 import { OpenCode as OpenCodeV2Factory } from "@opencode/client";
 import type { SpawnedProcess, ProcessRunner } from "../../../boundaries/platform/process";
 import { ExecaProcessRunner } from "../../../boundaries/platform/process";
+import { nativeAddon } from "../../../boundaries/platform/process.boundary-test-utils";
 import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
@@ -29,7 +30,7 @@ import { OpenCodeClient } from "./client";
  * Creates a default ProcessRunner for boundary tests.
  */
 function createDefaultRunner(): ProcessRunner {
-  return new ExecaProcessRunner(SILENT_LOGGER);
+  return new ExecaProcessRunner(SILENT_LOGGER, { native: nativeAddon() });
 }
 
 // ============================================================================

@@ -8,6 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+listeners = "0.6"
 napi = { version = "3", default-features = false, features = ["napi3"] }
 napi-derive = "3"
 sysinfo = { version = "0.40", default-features = false, features = ["system"] }
@@ -19,3 +20,13 @@ napi-build = "2"
 lto = true
 codegen-units = 1
 strip = "symbols"
+
+[target."cfg(windows)".dependencies]
+restart-manager = "0.1"
+# open_files.rs: the system handle table. 0.62 is the version sysinfo and
+# listeners already pull in, so it is not built twice.
+windows = { version = "0.62", features = [
+    "Wdk_System_SystemInformation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }

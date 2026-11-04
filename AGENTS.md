@@ -107,7 +107,7 @@ path1.equals(path2); // equals() for comparison
 - **Desktop**: Electron (BaseWindow + one WebContentsView; workspaces are iframes inside it)
 - **Frontend**: Svelte 5 + TypeScript + @vscode-elements
 - **Backend**: Node.js services
-- **Native addon**: Rust + napi-rs + sysinfo (`native/`) — in-process OS queries for `ProcessRunner`, no `unsafe` of our own
+- **Native addon**: Rust + napi-rs (`native/`) — in-process OS queries for `ProcessRunner` (sysinfo, listeners, restart-manager); `unsafe` only in `open_files.rs`
 - **Testing**: Vitest (Playwright for e2e) · **Build**: Vite · **Package manager**: pnpm
 
 ### Essential Commands
@@ -184,7 +184,7 @@ Nested `AGENTS.md` files load automatically when you work in their directory; sk
 | Agent providers, binaries      | `src/modules/agent-module/AGENTS.md`, docs/AGENT_PROVIDERS.md |
 | Agent system prompt            | `resources/prompts/AGENTS.md`                                 |
 | Bundled VS Code extensions     | `extensions/AGENTS.md`                                        |
-| Native addon, Windows helper   | docs/INTENTS.md (Native Addon, Windows Native Helper)         |
+| Native addon (OS queries)      | docs/INTENTS.md (Native Addon)                                |
 | Config, state.json, logs       | docs/CONFIGURATION.md, skill `config-key`                     |
 | Driving the app (UI debugging) | skill `appctrl`                                               |
 | PostHog crash / bug reports    | skill `posthog-issue`                                         |

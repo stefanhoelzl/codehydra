@@ -15,6 +15,7 @@ import * as os from "node:os";
 import * as nodePath from "node:path";
 import { execFileSync } from "node:child_process";
 import { ExecaProcessRunner } from "../../boundaries/platform/process";
+import { nativeAddon } from "../../boundaries/platform/process.boundary-test-utils";
 import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { Path } from "../../utils/path/path";
@@ -46,7 +47,7 @@ beforeEach(async () => {
   const fileSystem = new DefaultFileSystemBoundary(SILENT_LOGGER);
   runner = createScriptRunner({
     fileSystem,
-    processRunner: new ExecaProcessRunner(SILENT_LOGGER),
+    processRunner: new ExecaProcessRunner(SILENT_LOGGER, { native: nativeAddon() }),
     shells: createShellResolver({
       fileSystem,
       platform: process.platform,

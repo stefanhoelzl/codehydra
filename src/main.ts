@@ -325,12 +325,10 @@ const osNotificationLayer = new DefaultOsNotificationBoundary(notificationLogger
 
 // 4. Service construction
 
-// Process runner uses platform-native tree killing (taskkill on Windows, process.kill on Unix).
-// Process snapshots come from the bundled native addon; on Windows, listening
-// ports and blocking-process detection still run the bundled helper exe.
-const windowsProcessHelper = pathProvider.runtimePath("bin/codehydra-procs.exe").toNative();
+// Process runner: spawns through execa; kills process trees with process.kill (the tree from the process list).
+// Its OS queries — process list, listening sockets, directory holders — come
+// from the bundled native addon.
 const processRunner = new ExecaProcessRunner(loggingService.createLogger("process"), {
-  windowsProcessHelper,
   native: loadNativeAddon(pathProvider.runtimePath(`bin/${nativeAddonFileName()}`).toNative()),
 });
 const networkLayer = new DefaultNetworkLayer(loggingService.createLogger("network"));
@@ -799,7 +797,6 @@ const pluginModule = createPluginModule({
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
   processRunner,
-  helperPath: windowsProcessHelper,
   logger: apiLogger,
 });
 const posixProcessCleanupModule = createPosixProcessCleanupModule({

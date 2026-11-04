@@ -2,29 +2,30 @@
  * PosixProcessCleanupModule — Kills processes whose CWD is under the workspace path during deletion or hibernation.
  *
  * Hooks (flow and error policy shared with windows-file-lock-module, see cwd-release-kill):
- * - delete-workspace → release: Use lsof to find CWD matches, terminate them; a
- *   timed-out scan, a failure or a survivor is reported on the release result
+ * - delete-workspace → release: find the processes whose CWD is inside the
+ *   workspace, terminate them; a timed-out scan, a failure or a survivor is
+ *   reported on the release result
  * - hibernate-workspace → release: Same CWD scan + terminate, runs after shutdown;
  *   failures are logged
  *
- * Detection uses `lsof -a -d cwd +c 0 -Fpnc +D <path>` for machine-parseable output
- * scoped to the workspace directory tree. The -a flag ANDs the -d and +D selections
- * (lsof defaults to OR).
- * lsof exit code 1 means "no files found" and is not treated as an error.
+ * Detection is `ProcessRunner.findDirectoryHolders` (the native addon's process
+ * list, filtered by working directory): no `lsof`, which may be missing, and
+ * no walk of the workspace tree, which `lsof +D` did and node_modules made slow.
  */
 
 import type { IntentModule } from "../intents/lib/module";
 import type { Logger } from "../boundaries/platform/logging-types";
-import type { ProcessRunner, ProcessResult } from "../boundaries/platform/process";
+import type { ProcessRunner } from "../boundaries/platform/process";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../intents/hibernate-workspace";
 import { createCwdReleaseHandlers, type CwdScan } from "./cwd-release-kill";
 import { defineHooks } from "../intents/declarations";
 
-/** Detected process info from lsof. */
+/** A process with its working directory inside the workspace. */
 export interface DetectedProcess {
   readonly pid: number;
   readonly name: string;
+  /** Relative to the workspace ("." for the workspace itself). */
   readonly cwd: string;
 }
 
@@ -32,48 +33,10 @@ const DETECT_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
 
 /**
- * Parse lsof -Fpnc output into DetectedProcess array.
- * Format: lines starting with p=PID, c=command, n=path.
- * Each process entry starts with a 'p' line.
- * Primary path filtering is handled by lsof's -a +D flags.
- * The workspacePath check here is defense-in-depth.
- */
-function parseLsofOutput(stdout: string, workspacePath: string): DetectedProcess[] {
-  const results: DetectedProcess[] = [];
-  let currentPid: number | undefined;
-  let currentName = "unknown";
-
-  for (const line of stdout.split("\n")) {
-    if (line.length === 0) continue;
-
-    const prefix = line[0];
-    const value = line.slice(1);
-
-    switch (prefix) {
-      case "p":
-        currentPid = Number(value);
-        currentName = "unknown";
-        break;
-      case "c":
-        currentName = value;
-        break;
-      case "n":
-        if (
-          currentPid !== undefined &&
-          !Number.isNaN(currentPid) &&
-          (value === workspacePath || value.startsWith(workspacePath + "/"))
-        ) {
-          results.push({ pid: currentPid, name: currentName, cwd: value });
-        }
-        break;
-    }
-  }
-
-  return results;
-}
-
-/**
- * Detect processes whose CWD is under the given workspace path using lsof.
+ * Detect processes whose CWD is under the given workspace path.
+ *
+ * A scan that cannot run throws, so the release reports it rather than
+ * mistaking it for a workspace nothing holds.
  * Exported for testing.
  */
 export async function detectCwdProcesses(
@@ -81,33 +44,19 @@ export async function detectCwdProcesses(
   workspacePath: string,
   logger: Logger
 ): Promise<CwdScan & { readonly processes: readonly DetectedProcess[] }> {
-  const proc = processRunner.run("lsof", [
-    "-a",
-    "-d",
-    "cwd",
-    "+c",
-    "0",
-    "-Fpnc",
-    "+D",
-    workspacePath,
-  ]);
-  const result: ProcessResult = await proc.wait(DETECT_TIMEOUT_MS);
-
-  if (result.running) {
+  const scan = await processRunner.findDirectoryHolders(workspacePath, {
+    timeoutMs: DETECT_TIMEOUT_MS,
+  });
+  if (scan.timedOut) {
     logger.scoped({ path: workspacePath }).warn("Process detection timed out");
-    await proc.kill(1000, 1000);
     return { processes: [], timedOut: true };
   }
-
-  // lsof exit code 1 = "no files found" (not an error)
-  if (result.exitCode !== null && result.exitCode !== 0 && result.exitCode !== 1) {
-    logger
-      .scoped({ path: workspacePath })
-      .warn("Process detection failed", { exitCode: result.exitCode, stderr: result.stderr });
-    return { processes: [], timedOut: false };
-  }
-
-  return { processes: parseLsofOutput(result.stdout, workspacePath), timedOut: false };
+  return {
+    processes: scan.holders.flatMap(({ pid, name, cwd }) =>
+      cwd === null ? [] : [{ pid, name, cwd }]
+    ),
+    timedOut: false,
+  };
 }
 
 /**
