@@ -133,7 +133,9 @@ describe("a turn that spawns a sub-agent", () => {
     // sub-agent is still running, so `SubagentStop` lands afterwards. Waiting on
     // `Stop` alone raced it: the poll returned and the agent was killed with the
     // sub-agent's hook still in flight, which is a separate process and so is
-    // slowest exactly where this failed, on Windows.
+    // slowest exactly where this failed, on Windows. That the sub-agent is still
+    // running at the main Stop is made certain by the fixture (a sleep before it
+    // answers), not left to which of two instant mock replies lands first.
     run = await runScenario("subagent", {
       until: (r) => seen(r, "Stop") && seen(r, "SubagentStop"),
     });
