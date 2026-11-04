@@ -855,6 +855,53 @@ describe("IdeServerModule", () => {
       }
     });
 
+    it("stops health-checking a starting server as soon as its stop begins", async () => {
+      // Until the kill lands the process still reads as running; fetching from
+      // it then is what let undici throw an uncaught `setTypeOfService EINVAL`
+      // on macOS (the dying server resets the connection).
+      vi.useFakeTimers();
+
+      try {
+        const processRunner = createMockProcessRunner({
+          onSpawn: () => ({ ...defaultSpawnConfig(), untilKilled: true }),
+        });
+        const fetch = vi.fn().mockResolvedValue({ status: 503 });
+        const deps = createMockDeps({ processRunner, httpClient: { fetch } });
+        const { dispatcher } = createTestSetup(deps);
+        dispatcher.registerOperation(minimalStart());
+        dispatcher.registerOperation(
+          createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+            throwOnError: false,
+          })
+        );
+
+        const start = dispatcher.dispatch({ type: "app:start", payload: {} });
+        await vi.advanceTimersByTimeAsync(0);
+
+        // A kill that takes a while, as SIGTERM does.
+        const proc = processRunner.$.spawned(0);
+        const kill = proc.kill.bind(proc);
+        const { promise: killed, resolve: landKill } = Promise.withResolvers<void>();
+        vi.spyOn(proc, "kill").mockImplementation(async (term, force) => {
+          await killed;
+          return kill(term, force);
+        });
+
+        const shutdown = dispatcher.dispatch({ type: "app:shutdown", payload: {} });
+        await vi.advanceTimersByTimeAsync(0);
+        const fetchesAtStop = fetch.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(fetch).toHaveBeenCalledTimes(fetchesAtStop);
+
+        landKill();
+        await shutdown;
+        await expect(start).resolves.toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("never spawns the server once shutdown has run", async () => {
       const processRunner = createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() });
       const deps = createMockDeps({ processRunner });

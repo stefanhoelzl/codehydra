@@ -348,6 +348,12 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   /** The spawned server; null before a start, after a stop, and once a start fails. */
   let serverProcess: SpawnedProcess | null = null;
   /**
+   * Servers stop() is killing. Marked before the kill, not after: until the
+   * kill lands the process still reads as running, and a startup health check
+   * would go on fetching from a server that is being torn down.
+   */
+  const stopping = new WeakSet<SpawnedProcess>();
+  /**
    * The start in flight or done, resolving to the port served. Null while
    * stopped, so the next `ensureRunning` starts afresh; a failed start clears it.
    */
@@ -496,9 +502,12 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   // -------------------------------------------------------------------------
 
   async function checkHealth(port: number): Promise<boolean> {
-    if (serverProcess?.pid === undefined) {
-      // stop() ran (shutdown, or a resume restart): there is no server left to
-      // become healthy, so polling on would only wait out the timeout.
+    if (serverProcess?.pid === undefined || stopping.has(serverProcess)) {
+      // stop() ran or is running (shutdown, or a resume restart): there is no
+      // server left to become healthy, so polling on would only wait out the
+      // timeout. Nor is one fetched from while it dies: on macOS, Node's fetch
+      // (undici) can throw an uncaught `setTypeOfService EINVAL` from a
+      // connection the dying server resets.
       logger.warn("Health check failed: process not available");
       throw new HealthCheckAbortError("Process stopped");
     }
@@ -796,6 +805,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     const pid = proc.pid ?? 0;
 
     logger.info("Stopping", { pid });
+    stopping.add(proc);
 
     try {
       const result = await proc.kill(
