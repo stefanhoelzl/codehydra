@@ -3,6 +3,7 @@
  */
 
 import { readdir, readFile, readlink } from "node:fs/promises";
+import { constants as osConstants, setPriority } from "node:os";
 import type { Readable } from "node:stream";
 import { execa } from "execa";
 import type { Logger } from "./logging";
@@ -328,6 +329,20 @@ export interface ProcessRunner {
    * `findListeningProcesses`: an empty map when the scan failed.
    */
   findListeningPorts(pids: readonly number[]): Promise<ReadonlyMap<number, readonly number[]>>;
+
+  /**
+   * Raise `pid` to above-normal scheduling priority (Windows
+   * `ABOVE_NORMAL_PRIORITY_CLASS`), so it is scheduled ahead of everything at
+   * normal priority.
+   *
+   * Windows only: raising a priority needs privileges on Linux and macOS, so
+   * there nothing is changed. Windows does not pass it on — a process the
+   * raised one starts afterwards runs at normal priority.
+   *
+   * @returns Whether the priority was raised: false off Windows, or when the
+   *   OS refused (the process exited, or is not ours to change).
+   */
+  increasePriority(pid: number): boolean;
 }
 
 /**
@@ -1342,6 +1357,20 @@ export class ExecaProcessRunner implements ProcessRunner {
         error: getErrorMessage(error),
       });
       return [];
+    }
+  }
+
+  increasePriority(pid: number): boolean {
+    if (!isWindows) return false;
+    try {
+      setPriority(pid, osConstants.priority.PRIORITY_ABOVE_NORMAL);
+      return true;
+    } catch (error) {
+      this.logger.debug("Could not raise process priority", {
+        pid,
+        error: getErrorMessage(error),
+      });
+      return false;
     }
   }
 

@@ -525,6 +525,16 @@ the workspace, which stops everything in it. Processes that other users or
 the system own (and, on Windows, elevated ones) cannot be inspected, and are
 missing from the list.
 
+On Windows, CodeHydra keeps typing in terminals responsive when the machine is
+overloaded — say, several agents running builds on every core at once. The
+processes a keystroke passes through (CodeHydra's window, the IDE server, the
+terminals and their shells, the agents) run at above-normal priority; what you
+or an agent start from a terminal (builds, dev servers) stays at normal
+priority and gets no head start over other work. Programs you run
+interactively inside a terminal shell (a REPL, an editor) are started by the
+shell, so they run at normal priority too. Turn it off with
+`terminal.priority-boost` (applies after a restart).
+
 ## Configuration
 
 CodeHydra works out of the box, but most behavior is configurable. Every

@@ -108,6 +108,10 @@ Default `VSCODIUM_VERSION` (`ide-server-module/vscodium.ts`) · `ide-server-modu
 
 Default 25448 packaged, else derived from the git branch (30000–65000) · `ide-server-module.ts`. Embedded IDE server (VSCodium reh-web) port, 1024–65535.
 
+#### `terminal.priority-boost`
+
+Default `true` · `input-priority/input-priority-module.ts`. Windows only. Runs every process a keystroke in a workspace terminal passes through at above-normal priority: the UI renderer, the IDE server, its ptyHost, every ConPTY `OpenConsole`, the terminals' shells and the agent TUIs (`input-path.ts`). Under heavy load (agents running builds on every core) each of them otherwise waits behind that load on every key, and typing lags by seconds. What a shell or agent starts stays at normal priority (Windows does not pass a raised priority on). A process snapshot every 5 s (`ProcessRunner.listProcesses`) finds new terminals; raising is one way (`ProcessRunner.increasePriority`), so turning it off applies after a restart.
+
 #### `telemetry.enabled`
 
 Default `true`, computed `false` in dev/unpackaged · `src/main.ts`. Enable telemetry; read by `telemetry-module` (passive events) and `error-report-module` (crash reports). Live.
