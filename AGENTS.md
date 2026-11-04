@@ -185,6 +185,7 @@ Nested `AGENTS.md` files load automatically when you work in their directory; sk
 | Bundled VS Code extensions     | `extensions/AGENTS.md`                                        |
 | Config, state.json, logs       | docs/CONFIGURATION.md, skill `config-key`                     |
 | Driving the app (UI debugging) | skill `appctrl`                                               |
+| PostHog crash / bug reports    | skill `posthog-issue`                                         |
 | Architecture, core concepts    | docs/ARCHITECTURE.md                                          |
 | Implementation patterns        | docs/PATTERNS.md                                              |
 | Testing strategy               | docs/TESTING.md                                               |
