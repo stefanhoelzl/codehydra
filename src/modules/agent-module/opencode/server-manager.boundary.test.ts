@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./server-manager";
 import type { ResolvedAgentBinary } from "../binary-resolver";
 import { ExecaProcessRunner } from "../../../boundaries/platform/process";
+import { nativeAddon } from "../../../boundaries/platform/process.boundary-test-utils";
 import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import {
@@ -71,7 +72,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
 
     // Create dependencies using silent loggers (no Electron dependency)
     networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
-    processRunner = new ExecaProcessRunner(SILENT_LOGGER);
+    processRunner = new ExecaProcessRunner(SILENT_LOGGER, { native: nativeAddon() });
   }, BINARY_WARM_TIMEOUT_MS);
 
   afterEach(async () => {

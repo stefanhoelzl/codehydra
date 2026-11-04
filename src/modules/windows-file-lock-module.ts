@@ -43,9 +43,10 @@
  * - delete-workspace → flush: kill PIDs collected by detect
  * - hibernate-workspace → release: CWD-only scan + kill blocking processes (best-effort)
  *
- * Detection runs the bundled helper exe (`codehydra-procs.exe detect|detect-cwd`,
- * resources/win-helper: Restart Manager API for file handles, PEB reads for
- * CWD); termination goes through the ProcessRunner boundary.
+ * Detection and termination both go through the ProcessRunner boundary:
+ * `findDirectoryHolders` (the native addon: working directories from the
+ * process list; with `files`, Restart Manager and the system handle table for
+ * the files held open) and `kill`.
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -65,27 +66,8 @@ import { getErrorMessage } from "../shared/error-utils";
 import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
-// JSON Output Types
-// =============================================================================
-
-/** JSON output of `codehydra-procs.exe detect` / `detect-cwd`. */
-interface DetectOutput {
-  blocking: Array<{
-    pid: number;
-    name: string;
-    commandLine: string;
-    files: string[];
-    cwd: string | null;
-  }>;
-  error?: string;
-}
-
-// =============================================================================
 // Constants
 // =============================================================================
-
-/** Max files per process in detect output */
-const MAX_FILES_PER_PROCESS = 20;
 
 /**
  * Timeout for the post-failure "Detect" scan.
@@ -133,73 +115,6 @@ const KILL_TIMEOUT_MS = 5_000;
 // =============================================================================
 
 /**
- * Parse PowerShell JSON output into BlockingProcess array.
- * Exported for testing.
- */
-export function parseDetectOutput(stdout: string, logger: Logger): BlockingProcess[] {
-  const trimmed = stdout.trim();
-  if (!trimmed) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed) as DetectOutput | { error: string };
-
-    // Check for error response
-    if ("error" in parsed && typeof parsed.error === "string") {
-      logger.warn("Blocking process detection returned error", { error: parsed.error });
-      return [];
-    }
-
-    const detectOutput = parsed as DetectOutput;
-    if (!detectOutput.blocking || !Array.isArray(detectOutput.blocking)) {
-      return [];
-    }
-
-    const result: BlockingProcess[] = [];
-    for (const item of detectOutput.blocking) {
-      if (isValidBlockingProcess(item)) {
-        const files = Array.isArray(item.files)
-          ? item.files
-              .filter((f): f is string => typeof f === "string")
-              .slice(0, MAX_FILES_PER_PROCESS)
-          : [];
-
-        result.push({
-          pid: item.pid,
-          name: String(item.name),
-          commandLine: String(item.commandLine),
-          files,
-          cwd: typeof item.cwd === "string" ? item.cwd : null,
-        });
-      }
-    }
-
-    return result;
-  } catch (error) {
-    logger.warn("Failed to parse blocking process output", {
-      stdout,
-      error: getErrorMessage(error),
-    });
-    return [];
-  }
-}
-
-/** Type guard for validating parsed JSON structure. */
-function isValidBlockingProcess(
-  item: unknown
-): item is { pid: number; name: unknown; commandLine: unknown; files: unknown; cwd: unknown } {
-  return (
-    typeof item === "object" &&
-    item !== null &&
-    "pid" in item &&
-    typeof (item as { pid: unknown }).pid === "number" &&
-    "name" in item &&
-    "commandLine" in item
-  );
-}
-
-/**
  * Outcome of a scan.
  *
  * `timedOut` exists because an empty `processes` list is otherwise ambiguous:
@@ -214,40 +129,31 @@ export interface DetectScanResult {
 }
 
 /**
- * Run a detect action of the Windows process helper (`codehydra-procs.exe`):
- * `detect` (file handles + CWD) or `detect-cwd` (CWD only).
+ * Find the processes holding the workspace directory:
+ * `detect` (open files + CWD) or `detect-cwd` (CWD only).
+ *
+ * A scan that cannot run throws, so its hook reports it rather than mistaking
+ * it for a workspace nothing holds.
  * Exported for boundary tests.
  */
 export async function runDetectAction(
   processRunner: ProcessRunner,
-  helperPath: string,
   path: Path,
   action: "detect" | "detect-cwd",
   logger: Logger,
   timeoutMs: number
 ): Promise<DetectScanResult> {
-  const proc = processRunner.run(helperPath, [action, path.toNative()]);
-
-  const result = await proc.wait(timeoutMs);
-
-  if (result.running) {
+  const scan = await processRunner.findDirectoryHolders(path.toNative(), {
+    files: action === "detect",
+    timeoutMs,
+  });
+  if (scan.timedOut) {
     logger
       .scoped({ path: path.toString() })
       .warn("Blocking process detection timed out", { action, timeoutMs });
-    await proc.kill(1000, 1000);
     return { processes: [], timedOut: true };
   }
-
-  if (result.exitCode !== 0) {
-    logger.scoped({ path: path.toString() }).warn("Blocking process detection failed", {
-      action,
-      exitCode: result.exitCode,
-      stderr: result.stderr,
-    });
-    return { processes: [], timedOut: false };
-  }
-
-  return { processes: parseDetectOutput(result.stdout, logger), timedOut: false };
+  return { processes: [...scan.holders], timedOut: false };
 }
 
 /**
@@ -298,8 +204,6 @@ export async function killBlockingProcesses(
 
 interface WindowsFileLockModuleDeps {
   readonly processRunner: ProcessRunner;
-  /** The bundled `codehydra-procs.exe`. */
-  readonly helperPath: string;
   readonly logger: Logger;
 }
 
@@ -319,7 +223,6 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
       detect: (workspacePath) =>
         runDetectAction(
           deps.processRunner,
-          deps.helperPath,
           new Path(workspacePath),
           "detect-cwd",
           deps.logger,
@@ -343,7 +246,6 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
             try {
               const scan = await runDetectAction(
                 deps.processRunner,
-                deps.helperPath,
                 new Path(workspacePath),
                 "detect",
                 deps.logger,

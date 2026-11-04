@@ -10,6 +10,9 @@ import type {
   ListeningProcess,
   ListProcessesOptions,
   ProcessSnapshot,
+  DirectoryHolder,
+  DirectoryHolderScan,
+  FindDirectoryHoldersOptions,
 } from "./process";
 import type {
   MockState,
@@ -313,9 +316,13 @@ class MockProcessRunnerImpl implements MockProcessRunner {
   private readonly processes:
     ((options?: ListProcessesOptions) => ProcessSnapshot | null) | undefined;
   private readonly listeningPorts: Readonly<Record<number, readonly number[]>>;
+  private readonly directoryHolders:
+    | ((dir: string, options: FindDirectoryHoldersOptions) => DirectoryHolderScan | Error)
+    | undefined;
 
   constructor(options?: MockProcessRunnerOptions) {
     this.processes = options?.processes;
+    this.directoryHolders = options?.directoryHolders;
     this.listeningPorts = options?.listeningPorts ?? {};
     this.defaultResult = {
       exitCode: options?.defaultResult?.exitCode ?? 0,
@@ -350,6 +357,15 @@ class MockProcessRunnerImpl implements MockProcessRunner {
       if (ports !== undefined && ports.length > 0) result.set(pid, [...ports]);
     }
     return result;
+  }
+
+  async findDirectoryHolders(
+    dir: string,
+    options: FindDirectoryHoldersOptions = {}
+  ): Promise<DirectoryHolderScan> {
+    const answer = this.directoryHolders?.(dir, options) ?? { holders: [], timedOut: false };
+    if (answer instanceof Error) throw answer;
+    return answer;
   }
 
   increasePriority(pid: number): boolean {
@@ -512,6 +528,17 @@ export interface MockProcessRunnerOptions {
 
   /** Ports findListeningPorts(pids) reports, keyed by pid. */
   listeningPorts?: Readonly<Record<number, readonly number[]>>;
+
+  /**
+   * What findDirectoryHolders(dir, options) answers, asked on every call — so a
+   * test changes the machine between scans by closing over its own state.
+   * Return an Error to model a scan that could not run (it is thrown).
+   * Omitted: nothing holds any directory.
+   */
+  directoryHolders?: (
+    dir: string,
+    options: FindDirectoryHoldersOptions
+  ) => DirectoryHolderScan | Error;
 }
 
 /**
@@ -545,6 +572,42 @@ export interface MockProcessRunnerOptions {
  */
 export function createMockProcessRunner(options?: MockProcessRunnerOptions): MockProcessRunner {
   return new MockProcessRunnerImpl(options);
+}
+
+/** One `findDirectoryHolders` call, as the code under test made it. */
+export interface HolderScanCall {
+  readonly dir: string;
+  readonly files: boolean;
+  readonly timeoutMs: number | undefined;
+}
+
+/**
+ * A `directoryHolders` answer for `createMockProcessRunner`: every scan finds
+ * `holders` (`files` and `cwd` default to none), times out, or throws `Error`.
+ * Each call is appended to `calls`.
+ *
+ * @example
+ * const calls: HolderScanCall[] = [];
+ * const runner = createMockProcessRunner({
+ *   directoryHolders: directoryHolders([{ pid: 1, name: "bash", commandLine: "bash", cwd: "." }], calls),
+ * });
+ */
+export function directoryHolders(
+  holders:
+    | readonly (Pick<DirectoryHolder, "pid" | "name" | "commandLine"> & Partial<DirectoryHolder>)[]
+    | "timeout"
+    | Error,
+  calls: HolderScanCall[] = []
+): (dir: string, options: FindDirectoryHoldersOptions) => DirectoryHolderScan | Error {
+  return (dir, options) => {
+    calls.push({ dir, files: options.files === true, timeoutMs: options.timeoutMs });
+    if (holders === "timeout") return { holders: [], timedOut: true };
+    if (holders instanceof Error) return holders;
+    return {
+      timedOut: false,
+      holders: holders.map((holder) => ({ files: [], cwd: null, ...holder })),
+    };
+  };
 }
 
 // =============================================================================

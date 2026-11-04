@@ -14,20 +14,6 @@ import type { ProcessRunner, SpawnedProcess } from "./process";
 import { loadNativeAddon, nativeAddonFileName, type NativeAddon } from "./native-addon";
 
 /**
- * The Windows process helper as `pnpm build:wrappers` leaves it.
- *
- * Throws, never skips, when it has not been built: a Windows boundary test
- * that silently skipped would report the helper as working.
- */
-export function windowsProcessHelperPath(): string {
-  const helper = join(process.cwd(), "dist", "bin", "codehydra-procs.exe");
-  if (!existsSync(helper)) {
-    throw new Error(`${helper} is missing: run \`pnpm build:wrappers\` first`);
-  }
-  return helper;
-}
-
-/**
  * The native addon for this platform as `pnpm build:wrappers` leaves it.
  *
  * Throws, never skips, when it has not been built: a boundary test that

@@ -1346,7 +1346,7 @@ const workspaceLockHandler = createWorkspaceLockHandler(
   logger
 );
 
-// Windows: Uses Restart Manager API via the bundled codehydra-procs.exe
+// Windows: Restart Manager and the handle table via the native addon (ProcessRunner.findDirectoryHolders)
 // Other platforms: Returns undefined (detection steps skipped)
 ```
 
@@ -1414,58 +1414,41 @@ const module = new CoreModule(api, { ...deps, workspaceLockHandler: mockHandler 
 
 **Boundary test file:** `workspace-lock-handler.boundary.test.ts`
 
-### Windows Native Helper (`codehydra-procs.exe`)
-
-Windows process inspection that needs Win32 APIs — Restart Manager, handle
-enumeration, reading another process's PEB for its working directory, the TCP
-table — lives in one small C# console program, not in PowerShell:
-
-```
-resources/win-helper/*.cs          -> Source (Program.cs: commands; BlockingProcessDetector.cs: the inspection)
-resources/win-helper/*.csproj      -> .NET Framework 4.8 exe, built by the .NET SDK on any OS
-dist/bin/codehydra-procs.exe       -> pnpm build:wrappers (skipped with a warning without `dotnet`; required on CI)
-out/main/assets/bin/               -> Bundled with the other binaries; packaged as bin/
-```
-
-It is compiled at build time, not at run time: no `Add-Type` (which antivirus,
-AppLocker or Constrained Language Mode can block) and no PowerShell start-up per
-call. It targets .NET Framework 4.8, which every supported Windows ships, so
-users install nothing; the .NET SDK cross-compiles it, so the shared Linux CI
-build produces it like every other bundled binary. `pnpm dist:win` makes sure
-it is in `out/main/assets/bin` and fails without the SDK rather than package
-without it.
-
-Each command prints one JSON object and exits (`{"error": "…"}` with exit 1 on
-failure):
-
-| Command            | Output                                                                | Used by                                           |
-| ------------------ | --------------------------------------------------------------------- | ------------------------------------------------- |
-| `listeners`        | `{"listeners":[{pid, port}]}`                                         | `ProcessRunner.findListeningPorts`                |
-| `detect <dir>`     | `{"blocking":[{pid, name, commandLine, files, cwd}]}` (handles + CWD) | windows-file-lock-module (after a failed removal) |
-| `detect-cwd <dir>` | same, CWD only                                                        | windows-file-lock-module (release)                |
-
-The path reaches its users as `runtimePath("bin/codehydra-procs.exe")`, wired in
-`main.ts`. Boundary tests find the built exe with `windowsProcessHelperPath()`
-(`process.boundary-test-utils.ts`), which throws when it has not been built.
-
 ### Native Addon (`codehydra-native.<platform>-<arch>.node`)
 
-OS queries made in process instead of by spawning a tool: a Rust crate built
-as a Node addon with napi-rs, on top of [sysinfo](https://crates.io/crates/sysinfo).
-It replaces `ps`/`lsof` on macOS, `/proc` parsing on Linux and the helper's
-former `snapshot` command on Windows for `ProcessRunner.listProcesses`.
+Every OS query `ProcessRunner` makes, in process instead of by spawning a tool:
+a Rust crate built as a Node addon with napi-rs. It replaced `ps`, `lsof`, `pgrep`,
+`taskkill`, `getconf`, `netstat`, PowerShell/WMI, `/proc` parsing and the former C# helper
+`codehydra-procs.exe`.
+
+| Export                       | Library                                                     | Used by                                                                                             |
+| ---------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `listProcessesAsync`         | [sysinfo](https://crates.io/crates/sysinfo)                 | `listProcesses`, `findListeningProcesses` (names), `findDirectoryHolders`, tree kills (descendants) |
+| `listeningSocketsAsync`      | [listeners](https://crates.io/crates/listeners)             | `findListeningPorts`, `findListeningProcesses`                                                      |
+| `restartManagerHoldersAsync` | [restart-manager](https://crates.io/crates/restart-manager) | `findDirectoryHolders` with `files` (Windows): who holds a file in the folder                       |
+| `openFilesUnderAsync`        | our own `open_files.rs` (the system handle table)           | `findDirectoryHolders` with `files` (Windows): which files                                          |
 
 ```
-native/src/lib.rs                  -> Source; #![deny(unsafe_code)]: the OS calls are sysinfo's
+native/src/lib.rs                  -> Exports; #![deny(unsafe_code)]
+native/src/open_files.rs           -> Windows only, the one module with `unsafe` (allowed there)
 native/rust-toolchain.toml         -> Pinned Rust version (rustup installs it on first use)
 dist/bin/codehydra-native.*.node   -> pnpm build:wrappers (scripts/build-native.ts; fails without `cargo`)
 out/main/assets/bin/               -> Bundled with the other binaries; packaged as bin/
 ```
 
-Every export is async and runs on the libuv thread pool. What sysinfo reports
-is passed on as it is: Windows names keep `.exe` and working directories their
-trailing `\`, and processes the OS will not describe to us (other users' on
-macOS, protected ones on Windows) come back with little more than a name.
+Every export is async and runs on the libuv thread pool. What the libraries
+report is passed on as it is: Windows names keep `.exe` and working
+directories their trailing `\`, and processes the OS will not describe to us
+(other users' on macOS, protected ones on Windows) come back with little more
+than a name, and their sockets are not listed.
+
+`open_files.rs` exists because no crate lists the files a process holds open.
+It reads `NtQuerySystemInformation(SystemExtendedHandleInformation)`, keeps the
+"File" handles of the asked-about pids, duplicates each into this process and
+asks for its path (`GetFileType` first, so pipes are skipped). Asking for a
+handle's name can block forever, so names resolve on one worker thread: a
+query stuck past 500 ms is abandoned with its thread (and its handle leaked,
+never closed), within 5 s in total.
 
 A packaged build carries the addon of every platform, because CI builds once on
 Linux and packages that output for each OS: the `native` job of `build.yaml`

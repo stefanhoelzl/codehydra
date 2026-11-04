@@ -2,18 +2,17 @@
  * Process spawning utilities.
  */
 
-import { readdir, readFile, readlink } from "node:fs/promises";
 import { constants as osConstants, setPriority } from "node:os";
 import type { Readable } from "node:stream";
 import { execa } from "execa";
 import type { Logger } from "./logging";
 import type { NativeAddon } from "./native-addon";
+import { Path } from "../../utils/path/path";
 import { raceTimeout, TIMED_OUT } from "../../utils/timeout";
 import { errorCode, getErrorMessage } from "../../shared/error-utils";
 
 /**
- * Platform detection for kill logic.
- * Windows uses taskkill, Unix uses process.kill.
+ * Platform detection: Windows has no graceful kill (see killProcessTree).
  */
 const isWindows = process.platform === "win32";
 
@@ -224,26 +223,54 @@ export interface ProcessSnapshot {
 }
 
 /**
- * How long an OS-level process scan may take before it is abandoned.
+ * How long an OS-level scan may take before it is abandoned.
  *
  * A ceiling, not a delay: a scan that answers fast is unaffected by it, and one
  * that times out is indistinguishable from a free port at the call site — so a
- * budget that is too tight silently disables the whole feature. Windows keeps
- * the larger one from when its scan went through PowerShell and WMI (which
- * overran 5s outright on a loaded CI runner); `netstat` is far faster, but a
- * loaded runner is still slower than `lsof` on a desktop.
+ * budget that is too tight silently disables the whole feature. The native
+ * addon answers in milliseconds; the ceiling is for a machine so loaded that
+ * the thread pool itself is starved.
  */
-export const PROCESS_SCAN_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000;
+export const PROCESS_SCAN_TIMEOUT_MS = 10_000;
 
 /**
- * Budget for looking up the name and command line of a Windows port holder.
+ * A process holding a directory (`ProcessRunner.findDirectoryHolders`).
  *
- * Shorter than the scan's own, because by then the pid is already known and the
- * lookup is only decoration: WMI can stall for longer than any budget worth
- * waiting on (CI saw it pass 30s while other PowerShell ran in a second), and
- * the pid alone is enough to offer.
+ * The same shape as the deletion dialog's `BlockingProcess`, declared here
+ * because a boundary must not depend on the intents layer.
  */
-export const LISTENER_DETAILS_TIMEOUT_MS = 10_000;
+export interface DirectoryHolder {
+  readonly pid: number;
+  readonly name: string;
+  /** Full command line, or the bare name when the OS did not report one. */
+  readonly commandLine: string;
+  /** Files it holds open in the directory, relative to it (at most 20; Windows only). */
+  readonly files: readonly string[];
+  /** Its working directory relative to the directory ("." for the directory itself); null if outside. */
+  readonly cwd: string | null;
+}
+
+/** What `findDirectoryHolders` looks for. */
+export interface FindDirectoryHoldersOptions {
+  /**
+   * Also processes holding files open in the directory, with those files
+   * (Restart Manager and the handle table; Windows only, ignored elsewhere).
+   * Without it only working directories are matched.
+   */
+  readonly files?: boolean;
+  /** Budget for the whole scan; default `PROCESS_SCAN_TIMEOUT_MS`. */
+  readonly timeoutMs?: number;
+}
+
+/**
+ * Outcome of `findDirectoryHolders`. `timedOut` keeps "nothing found" apart
+ * from "never found out": an empty list alone would report a clean bill of
+ * health on a scan that gave up.
+ */
+export interface DirectoryHolderScan {
+  readonly holders: readonly DirectoryHolder[];
+  readonly timedOut: boolean;
+}
 
 /**
  * Interface for running external processes.
@@ -291,17 +318,18 @@ export interface ProcessRunner {
    * Processes holding a LISTEN socket on `port`.
    *
    * Process inspection keyed by a port, which is why it lives here rather than
-   * on `PortManager`: the work is shelling out to `lsof` / `netstat`,
-   * exactly like every other process scan in this codebase, and `PortManager`
-   * would have to reach across into the process boundary to do it.
+   * on `PortManager`: the work is the socket table and the process list, like
+   * every other process scan in this codebase (the native addon), and
+   * `PortManager` would have to reach across into the process boundary to do it.
    *
    * Normally one entry — Node marks sockets close-on-exec, so a server's
-   * children do not inherit its listener — but a list because `lsof` can
-   * legitimately report several (fork-inherited descriptors, `SO_REUSEPORT`).
+   * children do not inherit its listener — but a list because the socket table
+   * can legitimately name several (fork-inherited descriptors, `SO_REUSEPORT`).
    *
-   * Best-effort: returns an empty array when the scan fails, times out, or the
-   * platform tool is missing. A caller must treat "nothing found" as "could not
-   * tell", never as "the port is free".
+   * Best-effort: returns an empty array when the scan fails or times out. A
+   * caller must treat "nothing found" as "could not tell", never as "the port
+   * is free". Sockets of processes the OS will not describe to us (another
+   * user's on macOS) are not found.
    *
    * @param port - TCP port to look up on localhost.
    */
@@ -323,14 +351,24 @@ export interface ProcessRunner {
   listProcesses(options?: ListProcessesOptions): Promise<ProcessSnapshot | null>;
 
   /**
-   * The TCP ports each of `pids` listens on. A pid listening on nothing, or
-   * one the OS would not tell about, is absent from the map.
-   *
-   * Scoped to the given pids because the per-process lookup is the expensive
-   * half on Linux (each process's fds are read). Best-effort like
-   * `findListeningProcesses`: an empty map when the scan failed.
+   * The TCP ports each of `pids` listens on, ascending. A pid listening on
+   * nothing, or one the OS would not tell about, is absent from the map.
+   * Best-effort like `findListeningProcesses`: an empty map when the scan failed.
    */
   findListeningPorts(pids: readonly number[]): Promise<ReadonlyMap<number, readonly number[]>>;
+
+  /**
+   * The processes holding directory `dir`: those whose working directory is
+   * in it and, with `files` on Windows, those holding files open in it — what
+   * keeps a workspace from being removed. Never this process.
+   *
+   * Throws when the scan cannot run at all; a scan that ran out of time
+   * resolves with `timedOut`.
+   */
+  findDirectoryHolders(
+    dir: string,
+    options?: FindDirectoryHoldersOptions
+  ): Promise<DirectoryHolderScan>;
 
   /**
    * Raise `pid` to above-normal scheduling priority (Windows
@@ -352,89 +390,90 @@ export interface ProcessRunner {
  */
 type ExecaSubprocess = ReturnType<typeof execa>;
 
+/** The descendants of a pid alive right now (from a process snapshot). */
+type DescendantLookup = (pid: number) => Promise<readonly number[]>;
+
 /**
- * Every descendant of `pid` alive right now, found level by level with
- * `pgrep -P` (available wherever `pkill` is: procps on Linux, base macOS).
+ * Every descendant of `pid` in `processes`, following parent links level by
+ * level. A "child" that started before its parent is not one: its parent pid
+ * belonged to a process that exited, and the number was reused since.
  *
  * Direct children are not enough. A shell command line is `sh` → the script →
  * whatever the script started, and a grandchild left running keeps the
  * inherited stdout/stderr pipes open, so the spawn it belongs to never
  * finishes even though its own process is gone.
  */
-async function collectDescendants(pid: number): Promise<number[]> {
+export function descendantsIn(processes: readonly ProcessSnapshotEntry[], pid: number): number[] {
+  const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
+  const children = new Map<number, ProcessSnapshotEntry[]>();
+  for (const entry of processes) {
+    if (entry.ppid <= 0 || entry.ppid === entry.pid) continue;
+    const siblings = children.get(entry.ppid) ?? [];
+    siblings.push(entry);
+    children.set(entry.ppid, siblings);
+  }
+  const seen = new Set([pid]);
   const found: number[] = [];
   let frontier = [pid];
   while (frontier.length > 0) {
     const next: number[] = [];
     for (const parent of frontier) {
-      try {
-        const { stdout } = await execa("pgrep", ["-P", String(parent)]);
-        for (const token of stdout.split(/\s+/)) {
-          const child = Number(token);
-          if (Number.isInteger(child) && child > 0 && !found.includes(child)) next.push(child);
+      const parentStart = byPid.get(parent)?.startedAt ?? null;
+      for (const child of children.get(parent) ?? []) {
+        if (seen.has(child.pid)) continue;
+        if (parentStart !== null && child.startedAt !== null && child.startedAt < parentStart) {
+          continue;
         }
-      } catch {
-        // pgrep exits non-zero when nothing matched - a leaf
+        seen.add(child.pid);
+        found.push(child.pid);
+        next.push(child.pid);
       }
     }
-    found.push(...next);
     frontier = next;
   }
   return found;
 }
 
 /**
- * Kill a process and its descendants using platform-appropriate method.
- * - Windows: taskkill /pid <pid> /t /f for native tree killing
- *   (Always uses /f because WM_CLOSE cannot signal console processes)
- * - Unix: signal every descendant (`collectDescendants`), then the process
+ * Kill a process and its descendants: signal every descendant (`descendants`,
+ * from the process list), then the process itself.
+ *
+ * On Windows every signal is `TerminateProcess` — the forceful kill
+ * `taskkill /t /f` did, and the only one that works: WM_CLOSE is ignored by
+ * console applications, and CTRL_C_EVENT cannot reach a detached process.
  *
  * Works on any PID, not just one we spawned — the tree-kill mechanics are
  * identical either way, and `ProcessRunner.kill` needs them for foreign PIDs.
  *
  * @param pid - Process ID to kill
- * @param force - If true, use SIGKILL (Unix only). On Windows, always forceful.
- * @param tree - Descendants seen by an earlier call for the same kill (Unix).
+ * @param force - If true, SIGKILL; else SIGTERM. Windows: both terminate.
+ * @param tree - Descendants seen by an earlier call for the same kill.
  *   Pass the same set to the SIGTERM and the SIGKILL pass: a descendant whose
  *   parent died of the SIGTERM is re-parented and can no longer be found from
  *   `pid`, so the forced pass must remember it rather than look for it again.
+ * @param descendants - How to find them; omitted, only `pid` is signalled.
  */
 async function killProcessTree(
   pid: number,
   force: boolean,
-  tree: Set<number> = new Set()
+  tree: Set<number> = new Set(),
+  descendants?: DescendantLookup
 ): Promise<void> {
-  if (isWindows) {
-    // Windows: Always use /f because WM_CLOSE (sent by taskkill without /f)
-    // is ignored by console applications. We can't send CTRL_C_EVENT to
-    // detached processes, so forceful termination is our only option.
-    // The `force` parameter is ignored on Windows - always forceful.
-    const args = ["/pid", String(pid), "/t", "/f"];
+  const signal = force ? "SIGKILL" : "SIGTERM";
+  // Descendants first: once the parent is gone, they are re-parented and
+  // can no longer be found from it.
+  for (const descendant of (await descendants?.(pid)) ?? []) tree.add(descendant);
+  for (const descendant of tree) {
     try {
-      await execa("taskkill", args);
+      process.kill(descendant, signal);
     } catch {
-      // Process may have already exited, or taskkill failed
-      // (e.g., access denied, process not found)
+      // Already exited (ESRCH)
     }
-  } else {
-    // Unix: kill descendants first, then the parent
-    const signal = force ? "SIGKILL" : "SIGTERM";
-
-    for (const descendant of await collectDescendants(pid)) tree.add(descendant);
-    for (const descendant of tree) {
-      try {
-        process.kill(descendant, signal);
-      } catch {
-        // Already exited (ESRCH)
-      }
-    }
-
-    // Kill the parent process
-    try {
-      process.kill(pid, signal);
-    } catch {
-      // Process may have already exited (ESRCH)
-    }
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // Process may have already exited (ESRCH)
   }
 }
 
@@ -500,10 +539,18 @@ class ExecaSpawnedProcess implements SpawnedProcess {
   private readonly streamingActive: boolean;
   /** Descendants met while killing, shared by the SIGTERM and SIGKILL passes. */
   private readonly killTree = new Set<number>();
+  private readonly descendants: DescendantLookup;
 
-  constructor(subprocess: ExecaSubprocess, logger: Logger, command: string, redactBy?: string) {
+  constructor(
+    subprocess: ExecaSubprocess,
+    logger: Logger,
+    command: string,
+    descendants: DescendantLookup,
+    redactBy?: string
+  ) {
     this.subprocess = subprocess;
     this.logger = logger;
+    this.descendants = descendants;
     this.redacted = redactBy !== undefined;
     this.loggableCommand = redactBy !== undefined ? `<${redactBy}>` : command;
     this.streamingActive = this.setupStreamLogging();
@@ -521,20 +568,15 @@ class ExecaSpawnedProcess implements SpawnedProcess {
     }
 
     if (isWindows) {
-      // Windows: Always use forceful kill (taskkill /f) because:
-      // 1. WM_CLOSE (taskkill without /f) is ignored by console apps
-      // 2. We can't send CTRL_C_EVENT to detached processes
-      // So we skip the "graceful" phase entirely and go straight to forceful.
+      // Windows: only a forceful kill works (TerminateProcess — see
+      // killProcessTree), so there is no graceful phase to wait out.
       await this.killProcess(pid, true);
-      this.logger.warn("Killed", { command: this.loggableCommand, pid, signal: "TASKKILL" });
+      this.logger.warn("Killed", { command: this.loggableCommand, pid, signal: "TERMINATE" });
 
       // Wait for termTimeout (combined wait since we only do one kill)
       const timeout = (termTimeout ?? 0) + (killTimeout ?? 0);
-      if (timeout > 0) {
-        const result = await this.wait(timeout);
-        if (!result.running) {
-          return { success: true, reason: "SIGKILL" }; // Report as SIGKILL for consistency
-        }
+      if (timeout > 0 && (await this.waitForTreeExit(timeout))) {
+        return { success: true, reason: "SIGKILL" }; // Report as SIGKILL for consistency
       }
 
       // Process may still be running
@@ -565,7 +607,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
   }
 
   private async killProcess(pid: number, force: boolean): Promise<void> {
-    return killProcessTree(pid, force, this.killTree);
+    return killProcessTree(pid, force, this.killTree, this.descendants);
   }
 
   /**
@@ -798,232 +840,52 @@ class ExecaSpawnedProcess implements SpawnedProcess {
   }
 }
 
-/**
- * Process runner implementation using execa.
- * Returns a SpawnedProcess handle for controlling the spawned process.
- */
-
-// ============================================================================
-// Listening-process scan
-// ============================================================================
-
-/**
- * Extract PIDs from `lsof -F p` output.
- *
- * `-F` prints one field per line, each prefixed by its type: `p` is a PID.
- * lsof reports no command line, only a command *name*, so callers pair this
- * with `ps` to get something the user can actually recognize.
- */
-export function parseLsofPids(stdout: string): number[] {
-  const pids: number[] = [];
-  for (const line of stdout.split("\n")) {
-    if (line[0] !== "p") continue;
-    const pid = Number(line.slice(1));
-    if (Number.isInteger(pid) && pid > 0 && !pids.includes(pid)) pids.push(pid);
-  }
-  return pids;
-}
-
-/**
- * Parse `ps -o pid=,comm=,args=` output into ListeningProcess entries.
- *
- * Fields are whitespace-separated with `args` running to end of line, so this
- * splits twice and keeps the remainder verbatim — a command line contains
- * spaces and must survive intact for the user to recognize it.
- */
-export function parsePsOutput(stdout: string): ListeningProcess[] {
-  const processes: ListeningProcess[] = [];
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "") continue;
-    const match = /^(\d+)\s+(\S+)\s*(.*)$/.exec(trimmed);
-    if (!match) continue;
-    const [, rawPid, name, args] = match;
-    const pid = Number(rawPid);
-    if (!Number.isInteger(pid)) continue;
-    processes.push({ pid, name: name!, commandLine: args!.trim() === "" ? name! : args!.trim() });
-  }
-  return processes;
-}
-
-/**
- * Parse `netstat -ano` output into the pids listening on `port`.
- *
- * A listening row is one whose foreign address is the unspecified one
- * (`0.0.0.0:0` / `[::]:0`) — matched on that rather than on the state column,
- * because netstat translates the state (`LISTENING` is `ABHÖREN` on a German
- * Windows). The pid is the last column. UDP rows have no state and are skipped
- * by the protocol, which netstat never translates.
- */
-export function parseNetstatListeners(stdout: string, port: number): number[] {
-  const pids: number[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    const fields = line.trim().split(/\s+/);
-    if (fields.length < 5 || fields[0] !== "TCP") continue;
-    const local = fields[1]!;
-    const foreign = fields[2]!;
-    if (!local.endsWith(`:${port}`)) continue;
-    if (foreign !== "0.0.0.0:0" && foreign !== "[::]:0") continue;
-    const pid = Number(fields[fields.length - 1]);
-    // pid 0 is the System Idle Process, which is what a socket in TIME_WAIT
-    // reports; it holds nothing anyone could terminate.
-    if (Number.isInteger(pid) && pid > 0 && !pids.includes(pid)) pids.push(pid);
-  }
-  return pids;
-}
-
-/** Parse the JSON emitted by the Windows listener details query. */
-export function parseWindowsListeners(stdout: string): ListeningProcess[] {
-  const trimmed = stdout.trim();
-  if (trimmed === "") return [];
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return [];
-  }
-
-  // ConvertTo-Json emits a bare object for a single result and an array for
-  // several. Windows PowerShell 5.1 has no -AsArray to normalize that, so both
-  // shapes have to be accepted — and one listener is the common case.
-  const items = Array.isArray(parsed) ? parsed : [parsed];
-  const processes: ListeningProcess[] = [];
-  for (const item of items) {
-    if (typeof item !== "object" || item === null) continue;
-    const record = item as Record<string, unknown>;
-    const pid = record["ProcessId"];
-    if (typeof pid !== "number" || !Number.isInteger(pid)) continue;
-    const name = typeof record["Name"] === "string" ? record["Name"] : "unknown";
-    const commandLine = typeof record["CommandLine"] === "string" ? record["CommandLine"] : name;
-    processes.push({ pid, name, commandLine });
-  }
-  return processes;
-}
-
-// ============================================================================
-// Listening-port parsers (findListeningPorts)
-// ============================================================================
-
-/**
- * Listening TCP sockets in /proc/net/tcp or tcp6: socket inode → port.
- *
- * Each row is `sl local rem st … inode`; `local` is `<hex addr>:<hex port>`
- * and state `0A` is LISTEN.
- */
-export function parseProcNetTcpListeners(text: string): Map<number, number> {
-  const ports = new Map<number, number>();
-  for (const line of text.split("\n")) {
-    const fields = line.trim().split(/\s+/);
-    if (fields.length < 10 || fields[3] !== "0A") continue;
-    const local = fields[1]!;
-    const port = parseInt(local.slice(local.lastIndexOf(":") + 1), 16);
-    const inode = Number(fields[9]);
-    if (Number.isInteger(port) && port > 0 && Number.isInteger(inode) && inode > 0) {
-      ports.set(inode, port);
-    }
-  }
-  return ports;
-}
-
-/** The inode of a `socket:[12345]` fd link, or null for anything else. */
-export function socketInode(link: string): number | null {
-  const match = /^socket:\[(\d+)\]$/.exec(link);
-  return match ? Number(match[1]) : null;
-}
-
-/**
- * `lsof -iTCP -sTCP:LISTEN -Fpn` output: pid → ports.
- *
- * An `n` line is the local address: `*:5173`, `127.0.0.1:5173`, `[::1]:5173`.
- */
-export function parseLsofListenPorts(stdout: string): Map<number, number[]> {
-  const ports = new Map<number, number[]>();
-  let pid: number | undefined;
-  for (const line of stdout.split("\n")) {
-    if (line[0] === "p") {
-      pid = Number(line.slice(1));
-      continue;
-    }
-    if (line[0] !== "n" || pid === undefined || !Number.isInteger(pid)) continue;
-    const port = Number(line.slice(line.lastIndexOf(":") + 1));
-    if (!Number.isInteger(port) || port <= 0) continue;
-    const list = ports.get(pid) ?? [];
-    if (!list.includes(port)) list.push(port);
-    ports.set(pid, list);
-  }
-  return ports;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-/** `codehydra-procs.exe listeners` output: pid → ports. */
-export function parseWindowsListenPorts(stdout: string): Map<number, number[]> {
-  const ports = new Map<number, number[]>();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout.trim());
-  } catch {
-    return ports;
-  }
-  if (!isRecord(parsed) || !Array.isArray(parsed["listeners"])) return ports;
-  for (const item of parsed["listeners"] as unknown[]) {
-    if (!isRecord(item)) continue;
-    const pid = numberOrNull(item["pid"]);
-    const port = numberOrNull(item["port"]);
-    if (pid === null || port === null || pid <= 0 || port <= 0) continue;
-    const list = ports.get(pid) ?? [];
-    if (!list.includes(port)) list.push(port);
-    ports.set(pid, list);
-  }
-  return ports;
-}
-
-/**
- * PowerShell that looks up the name and command line of the given processes.
- *
- * Win32_Process is the only place Windows reports another process's command
- * line. SilentlyContinue so that a pid which exited meanwhile is just absent.
- *
- * Sent via `-EncodedCommand`, so quoting is a non-issue — but it still has to
- * be **Windows PowerShell 5.1**: `powershell.exe` is 5.1, not pwsh, so
- * `ConvertTo-Json -AsArray` (6+) is unavailable and would fail the whole
- * command. Without it a single result serializes as a bare object, which
- * `parseWindowsListeners` accepts.
- */
-function windowsListenerDetailsQuery(pids: readonly number[]): string {
-  const filter = pids.map((pid) => `ProcessId=${pid}`).join(" OR ");
-  return (
-    `$ErrorActionPreference='SilentlyContinue'; ` +
-    `Get-CimInstance Win32_Process -Filter '${filter}' | ` +
-    `Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress`
-  );
-}
-
 export interface ExecaProcessRunnerOptions {
   /**
-   * The bundled Windows process helper (`codehydra-procs.exe`). Without it,
-   * `findListeningPorts` finds nothing on Windows.
-   */
-  readonly windowsProcessHelper?: string;
-  /**
-   * The native addon (`native-addon.ts`). Without it, `listProcesses`
-   * returns null on every platform.
+   * The native addon (`native-addon.ts`): every OS query below goes through
+   * it. Without it, `listProcesses` returns null, the port lookups find
+   * nothing and `findDirectoryHolders` throws.
    */
   readonly native?: NativeAddon;
 }
 
+/** Most files a `DirectoryHolder` lists. */
+const MAX_HOLDER_FILES = 20;
+
+/**
+ * `path` relative to `dir` when it is `dir` or inside it ("." for `dir`
+ * itself), with its own spelling kept; null otherwise. `Path` decides
+ * containment (case-insensitive on Windows, trailing separators ignored).
+ */
+function relativeInside(path: string, dir: string): string | null {
+  if (!new Path(path).startsWith(new Path(dir))) return null;
+  const rest = path
+    .slice(dir.replace(/[\\/]+$/, "").length)
+    .replace(/^[\\/]+/, "")
+    .replace(/[\\/]+$/, "");
+  return rest === "" ? "." : rest;
+}
+
+/**
+ * Process runner implementation using execa; OS queries through the native addon.
+ * Returns a SpawnedProcess handle for controlling the spawned process.
+ */
 export class ExecaProcessRunner implements ProcessRunner {
   constructor(
     private readonly logger: Logger,
     private readonly options: ExecaProcessRunnerOptions = {}
   ) {}
+
+  /**
+   * A process's descendants, from the process list: what a tree kill signals.
+   * Without the addon (or when the scan fails) none are found, and a kill
+   * reaches only the process itself.
+   */
+  private readonly descendantsOf: DescendantLookup = async (pid) => {
+    if (this.options.native === undefined) return [];
+    const snapshot = await this.listProcesses();
+    return snapshot === null ? [] : descendantsIn(snapshot.processes, pid);
+  };
 
   run(command: string, args: readonly string[], options?: ProcessOptions): SpawnedProcess {
     const subprocess = execa(command, [...args], {
@@ -1038,7 +900,13 @@ export class ExecaProcessRunner implements ProcessRunner {
       ...(options?.input !== undefined && { input: options.input }),
     }) as ExecaSubprocess;
 
-    const spawned = new ExecaSpawnedProcess(subprocess, this.logger, command, options?.redactBy);
+    const spawned = new ExecaSpawnedProcess(
+      subprocess,
+      this.logger,
+      command,
+      this.descendantsOf,
+      options?.redactBy
+    );
 
     // Check if spawn failed (no PID)
     if (spawned.pid === undefined) {
@@ -1081,11 +949,12 @@ export class ExecaProcessRunner implements ProcessRunner {
 
     if (isWindows) {
       // Windows has no graceful phase for console processes — see killProcessTree.
-      await killProcessTree(pid, true);
-      this.logger.warn("Killed foreign process", { pid, signal: "TASKKILL" });
+      const tree = new Set<number>();
+      await killProcessTree(pid, true, tree, this.descendantsOf);
+      this.logger.warn("Killed foreign process", { pid, signal: "TERMINATE" });
 
       const timeout = (termTimeout ?? 0) + (killTimeout ?? 0);
-      if (timeout > 0 && (await waitForPidsExit([pid], timeout))) {
+      if (timeout > 0 && (await waitForPidsExit([pid, ...tree], timeout))) {
         return { success: true, reason: "SIGKILL" };
       }
       if (timeout === 0) return { success: false };
@@ -1095,14 +964,14 @@ export class ExecaProcessRunner implements ProcessRunner {
     }
 
     const tree = new Set<number>();
-    await killProcessTree(pid, false, tree);
+    await killProcessTree(pid, false, tree, this.descendantsOf);
     this.logger.info("Killed foreign process", { pid, signal: "SIGTERM" });
     // The whole tree, not just `pid` — see ExecaSpawnedProcess.waitForTreeExit.
     if (termTimeout !== undefined && (await waitForPidsExit([pid, ...tree], termTimeout))) {
       return { success: true, reason: "SIGTERM" };
     }
 
-    await killProcessTree(pid, true, tree);
+    await killProcessTree(pid, true, tree, this.descendantsOf);
     this.logger.warn("Killed foreign process", { pid, signal: "SIGKILL" });
     if (killTimeout !== undefined && (await waitForPidsExit([pid, ...tree], killTimeout))) {
       return { success: true, reason: "SIGKILL" };
@@ -1115,26 +984,125 @@ export class ExecaProcessRunner implements ProcessRunner {
   }
 
   async findListeningProcesses(port: number): Promise<ListeningProcess[]> {
+    // Best-effort by contract: a caller must not read "none found" as "port
+    // free", so a failed scan is indistinguishable from an empty one.
+    const sockets = await this.listeningSockets();
+    const pids = [...new Set(sockets.filter((s) => s.port === port).map((s) => s.pid))];
+    this.logger.debug("Scanned port for listeners", { port, count: pids.length });
+    if (pids.length === 0) return [];
+
+    // The socket table knows the pid; the process list knows what it is. A
+    // failed process scan still names the holder by pid rather than hiding it.
+    const snapshot = await this.listProcesses();
+    return pids.map((pid) => {
+      const entry = snapshot?.processes.find((candidate) => candidate.pid === pid);
+      return entry === undefined
+        ? { pid, name: "unknown", commandLine: "unknown" }
+        : { pid, name: entry.name, commandLine: entry.commandLine };
+    });
+  }
+
+  async findListeningPorts(
+    pids: readonly number[]
+  ): Promise<ReadonlyMap<number, readonly number[]>> {
+    if (pids.length === 0) return new Map();
+    const wanted = new Set(pids);
+    const ports = new Map<number, number[]>();
+    for (const { pid, port } of await this.listeningSockets()) {
+      if (!wanted.has(pid)) continue;
+      const list = ports.get(pid) ?? [];
+      if (!list.includes(port)) list.push(port);
+      ports.set(pid, list);
+    }
+    for (const list of ports.values()) list.sort((a, b) => a - b);
+    return ports;
+  }
+
+  async findDirectoryHolders(
+    dir: string,
+    options: FindDirectoryHoldersOptions = {}
+  ): Promise<DirectoryHolderScan> {
+    const native = this.options.native;
+    if (native === undefined) {
+      throw new Error("Directory scan unavailable: no native addon configured");
+    }
+    const deadline = Date.now() + (options.timeoutMs ?? PROCESS_SCAN_TIMEOUT_MS);
+    const within = <T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> =>
+      raceTimeout(work, Math.max(0, deadline - Date.now()));
+    const timedOut: DirectoryHolderScan = { holders: [], timedOut: true };
+
+    const processes = await within(native.listProcessesAsync(null));
+    if (processes === TIMED_OUT) return timedOut;
+    const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
+
+    // Never this process: whatever the scan finds is about to be killed.
+    const holders = new Map<number, { name: string; cwd: string | null }>();
+    for (const entry of processes) {
+      if (entry.pid === process.pid || entry.cwd === null) continue;
+      const cwd = relativeInside(entry.cwd, dir);
+      if (cwd !== null) holders.set(entry.pid, { name: entry.name, cwd });
+    }
+
+    const files = new Map<number, string[]>();
+    if (options.files === true && isWindows) {
+      const locking = await within(native.restartManagerHoldersAsync(dir));
+      if (locking === TIMED_OUT) return timedOut;
+      for (const { pid, name } of locking) {
+        if (pid === process.pid || holders.has(pid)) continue;
+        holders.set(pid, { name: byPid.get(pid)?.name ?? name, cwd: null });
+      }
+      if (holders.size > 0) {
+        const open = await within(native.openFilesUnderAsync(dir, [...holders.keys()]));
+        if (open === TIMED_OUT) return timedOut;
+        for (const { pid, path } of open) {
+          const relative = relativeInside(path, dir);
+          const list = files.get(pid) ?? [];
+          if (relative === null || relative === "." || list.includes(relative)) continue;
+          if (list.length < MAX_HOLDER_FILES) list.push(relative);
+          files.set(pid, list);
+        }
+      }
+    }
+
+    return {
+      timedOut: false,
+      holders: [...holders].map(([pid, { name, cwd }]) => ({
+        pid,
+        name,
+        commandLine: byPid.get(pid)?.commandLine ?? name,
+        files: files.get(pid) ?? [],
+        cwd,
+      })),
+    };
+  }
+
+  /** Every listening TCP socket; empty when the addon is missing, failed or hung. */
+  private async listeningSockets(): Promise<readonly { pid: number; port: number }[]> {
+    const native = this.options.native;
+    if (native === undefined) {
+      this.logger.warn("Listening socket scan unavailable: no native addon configured");
+      return [];
+    }
     try {
-      const processes =
-        process.platform === "win32"
-          ? await this.findListenersWindows(port)
-          : await this.findListenersPosix(port);
-      this.logger.debug("Scanned port for listeners", { port, count: processes.length });
-      return processes;
+      const sockets = await raceTimeout(native.listeningSocketsAsync(), PROCESS_SCAN_TIMEOUT_MS);
+      if (sockets === TIMED_OUT) {
+        this.logger.warn("Listening socket scan timed out");
+        return [];
+      }
+      return sockets;
     } catch (error) {
-      // Best-effort by contract: a caller must not read "none found" as "port
-      // free", so a failed scan is indistinguishable from an empty one.
-      this.logger.warn("Port listener scan failed", {
-        port,
-        error: getErrorMessage(error),
-      });
+      this.logger.warn("Listening socket scan failed", { error: getErrorMessage(error) });
       return [];
     }
   }
 
   increasePriority(pid: number): boolean {
     if (!isWindows) return false;
+    // An exited process can outlive its exit as a kernel object while any
+    // handle to it is open — and the native addon's process list (sysinfo)
+    // keeps one until its next scan drops the dead. The OS then still accepts
+    // a priority change, so liveness is asked first.
+    if (!pidExists(pid)) return false;
     try {
       setPriority(pid, osConstants.priority.PRIORITY_ABOVE_NORMAL);
       return true;
@@ -1169,145 +1137,5 @@ export class ExecaProcessRunner implements ProcessRunner {
       this.logger.warn("Process snapshot failed", { error: getErrorMessage(error) });
       return null;
     }
-  }
-
-  async findListeningPorts(
-    pids: readonly number[]
-  ): Promise<ReadonlyMap<number, readonly number[]>> {
-    if (pids.length === 0) return new Map();
-    try {
-      if (process.platform === "win32") {
-        const helper = this.options.windowsProcessHelper;
-        if (helper === undefined) return new Map();
-        const all = parseWindowsListenPorts(await this.scan(helper, ["listeners"]));
-        const wanted = new Set(pids);
-        return new Map([...all].filter(([pid]) => wanted.has(pid)));
-      }
-      if (process.platform === "darwin") {
-        // -a ANDs -p with -i; without it lsof ORs them and lists every socket.
-        // Nothing listening is the common case, and lsof then prints nothing.
-        return parseLsofListenPorts(
-          await this.scan(
-            "lsof",
-            ["-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-p", pids.join(","), "-Fpn"],
-            PROCESS_SCAN_TIMEOUT_MS,
-            true
-          )
-        );
-      }
-      return await this.findListeningPortsLinux(pids);
-    } catch (error) {
-      this.logger.warn("Listening port scan failed", { error: getErrorMessage(error) });
-      return new Map();
-    }
-  }
-
-  private async findListeningPortsLinux(pids: readonly number[]): Promise<Map<number, number[]>> {
-    const tables = await Promise.all(
-      ["/proc/net/tcp", "/proc/net/tcp6"].map((file) => readFile(file, "utf8").catch(() => ""))
-    );
-    const listening = new Map<number, number>();
-    for (const table of tables) {
-      for (const [inode, port] of parseProcNetTcpListeners(table)) listening.set(inode, port);
-    }
-    const result = new Map<number, number[]>();
-    if (listening.size === 0) return result;
-    await Promise.all(
-      pids.map(async (pid) => {
-        let fds: string[];
-        try {
-          fds = await readdir(`/proc/${pid}/fd`);
-        } catch {
-          return; // gone, or another user's
-        }
-        const ports: number[] = [];
-        await Promise.all(
-          fds.map(async (fd) => {
-            const inode = socketInode(await readlink(`/proc/${pid}/fd/${fd}`).catch(() => ""));
-            const port = inode === null ? undefined : listening.get(inode);
-            if (port !== undefined && !ports.includes(port)) ports.push(port);
-          })
-        );
-        if (ports.length > 0)
-          result.set(
-            pid,
-            ports.sort((a, b) => a - b)
-          );
-      })
-    );
-    return result;
-  }
-
-  /** Run a scan command, returning its stdout or "" if it failed or hung. */
-  private async scan(
-    command: string,
-    args: readonly string[],
-    timeout = PROCESS_SCAN_TIMEOUT_MS,
-    emptyIsNormal = false
-  ): Promise<string> {
-    const proc = this.run(command, args);
-    const result = await proc.wait(timeout);
-    if (result.running) {
-      await proc.kill(1000, 1000);
-      this.logger.warn("Process scan timed out", { command });
-      return "";
-    }
-    // A scan that produces nothing is indistinguishable from a free port at the
-    // call site, so say why here — a broken platform query is otherwise silent.
-    if (result.stdout.trim() === "" && !emptyIsNormal) {
-      this.logger.warn("Process scan produced no output", {
-        command,
-        exitCode: result.exitCode ?? -1,
-        stderr: result.stderr.slice(0, 500),
-      });
-    }
-    return result.stdout;
-  }
-
-  private async findListenersPosix(port: number): Promise<ListeningProcess[]> {
-    // -n/-P: no DNS or port-name lookups, which are slow and can hang.
-    // Exit code 1 means "nothing found", which parses to an empty list anyway.
-    const pids = parseLsofPids(
-      await this.scan("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fp"])
-    );
-    if (pids.length === 0) return [];
-
-    // lsof knows the command name but never the full command line; ps does.
-    const details = parsePsOutput(
-      await this.scan("ps", ["-o", "pid=,comm=,args=", "-p", pids.join(",")])
-    );
-    if (details.length > 0) return details;
-
-    // ps failed but we still know who holds the port — better to offer the pid
-    // than to pretend the scan found nothing.
-    return pids.map((pid) => ({ pid, name: "unknown", commandLine: "unknown" }));
-  }
-
-  private async findListenersWindows(port: number): Promise<ListeningProcess[]> {
-    // netstat, not Get-NetTCPConnection: that cmdlet goes through WMI, which on
-    // a loaded machine can stall past any budget — and a timed-out scan leaves
-    // the caller unable to name the holder of a port it knows is busy. netstat
-    // reads the TCP table directly and answers in well under a second.
-    const pids = parseNetstatListeners(await this.scan("netstat", ["-ano"]), port);
-    if (pids.length === 0) return [];
-
-    // -EncodedCommand, not -Command: the script travels as base64 of UTF-16LE,
-    // so nothing in it is subject to Windows command-line parsing. An inline
-    // -Command has to survive Node's argv escaping *and* PowerShell's own
-    // tokenizing, which is a standing source of silent breakage — a mangled
-    // script just produces no output.
-    const encoded = Buffer.from(windowsListenerDetailsQuery(pids), "utf16le").toString("base64");
-    const details = parseWindowsListeners(
-      await this.scan(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
-        LISTENER_DETAILS_TIMEOUT_MS
-      )
-    );
-    if (details.length > 0) return details;
-
-    // WMI failed or stalled but we still know who holds the port — better to
-    // offer the pid than to pretend the scan found nothing.
-    return pids.map((pid) => ({ pid, name: "unknown", commandLine: "unknown" }));
   }
 }

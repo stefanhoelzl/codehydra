@@ -1,5 +1,5 @@
 name: Setup
-description: Setup pnpm with caching, the .NET SDK and the Rust toolchain
+description: Setup pnpm with caching, and the Rust toolchain
 
 inputs:
   rust:
@@ -22,14 +22,6 @@ runs:
       run: |
         corepack enable pnpm
         pnpm --version
-
-    # The .NET SDK builds the Windows process helper codehydra-procs.exe
-    # (scripts/build-win-helper.ts) on every OS, so the shared Linux build
-    # bundles it. On CI a missing SDK fails the build instead of skipping.
-    # dotnet-install skips the download when the image already has the version.
-    - uses: actions/setup-dotnet@v5
-      with:
-        dotnet-version: 10.0.x
 
     # Rust builds the native addon (native/, scripts/build-native.ts). rustup is
     # on every GitHub-hosted image; this installs the toolchain that

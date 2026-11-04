@@ -23,10 +23,7 @@ import {
   type ProcessRunner,
   type SpawnedProcess,
 } from "../boundaries/platform/process";
-import {
-  isProcessRunning,
-  windowsProcessHelperPath,
-} from "../boundaries/platform/process.boundary-test-utils";
+import { isProcessRunning, nativeAddon } from "../boundaries/platform/process.boundary-test-utils";
 import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { delay } from "@shared/test-fixtures";
@@ -50,7 +47,6 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
   let lockingProcess: SpawnedProcess | null = null;
   let lockingPid: number | undefined;
   let processRunner: ProcessRunner;
-  let helperPath: string;
 
   beforeEach(async () => {
     // Create temp directory with unique name
@@ -62,8 +58,7 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
     // Create a file to lock
     await fs.writeFile(lockedFile, "test content");
 
-    processRunner = new ExecaProcessRunner(SILENT_LOGGER);
-    helperPath = windowsProcessHelperPath();
+    processRunner = new ExecaProcessRunner(SILENT_LOGGER, { native: nativeAddon() });
   });
 
   afterEach(async () => {
@@ -148,7 +143,6 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         // Detect blocking processes
         const { processes, timedOut } = await runDetectAction(
           processRunner,
-          helperPath,
           new Path(tempDir),
           "detect",
           createMockLogger(),
@@ -183,7 +177,6 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         // Detect blocking processes
         const { processes } = await runDetectAction(
           processRunner,
-          helperPath,
           new Path(tempDir),
           "detect",
           createMockLogger(),
@@ -207,7 +200,6 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         // No locking process, just query the empty temp dir
         const { processes } = await runDetectAction(
           processRunner,
-          helperPath,
           new Path(tempDir),
           "detect",
           createMockLogger(),

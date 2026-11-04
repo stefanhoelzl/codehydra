@@ -39,14 +39,14 @@ function spawnPortHolder(port: number): ChildProcess {
  *
  * The scan is best-effort and reports an empty result for a failed query as
  * well as a genuinely free port, so when the dialog does not appear these lines
- * are what distinguish "the tool is missing", "the query errored" and "it
+ * are what distinguish "the addon is missing", "the query errored" and "it
  * really saw nothing".
  */
 function scanLog(): string {
   const lines = appLogEntries()
     .filter((entry) => {
       const text = `${entry.scope?.logger ?? ""} ${entry.message ?? ""} ${JSON.stringify(entry.context ?? {})}`;
-      return /listener|scan|lsof|powershell|Get-NetTCPConnection|IDE server/i.test(text);
+      return /listen|scan|IDE server/i.test(text);
     })
     .map(
       (entry) =>

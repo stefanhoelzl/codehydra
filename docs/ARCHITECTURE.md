@@ -354,7 +354,7 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 
 **Resilient Deletion**: When `git worktree remove --force` fails but the worktree was successfully unregistered (e.g., due to locked files in VSCodium), the deletion is considered successful. The orphaned directory will be cleaned up on next startup.
 
-**Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), the `WindowsFileLockModule` handles blocking processes using the Windows Restart Manager API via a PowerShell script. The module provides three hook-based operations:
+**Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), the `WindowsFileLockModule` handles blocking processes: `ProcessRunner.findDirectoryHolders` finds them through the native addon (Restart Manager, the system handle table, and working directories from the process list). The module provides three hook-based operations:
 
 | Operation | Hook Point | Description                                  |
 | --------- | ---------- | -------------------------------------------- |

@@ -12,9 +12,9 @@
  * user guide (docs/USER_GUIDE.md) beside them.
  * Runtime copying to app-data/bin/ is handled by setupBinDirectory() from bin-setup.ts.
  *
- * `pnpm build:wrappers` then runs scripts/build-win-helper.ts, which compiles
- * the Windows process helper (codehydra-procs.exe) into dist/bin with the
- * .NET SDK, on any OS.
+ * `pnpm build:wrappers` then runs scripts/build-native.ts, which builds the
+ * native addon (native/, Rust) for this platform into dist/bin with
+ * `cargo`.
  */
 
 import { defineConfig, type Plugin } from "vite";

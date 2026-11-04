@@ -2,13 +2,14 @@
 /**
  * Integration tests for PosixProcessCleanupModule.
  *
- * Tests verify: lsof output parsing, termination via ProcessRunner.kill, and module release hook behavior
- * through mocked ProcessRunner (runs on all platforms).
+ * Tests verify: detection through ProcessRunner.findDirectoryHolders, termination
+ * via ProcessRunner.kill, and module release hook behavior through a mocked
+ * ProcessRunner (runs on all platforms).
  *
  * Paths here stay POSIX on purpose — unlike the rest of the integration suite,
- * which feeds the code under test OS-native paths. The input is `lsof` stdout,
- * and the module declares `requires: { posix: true }`, so a Windows path is a
- * shape this code is never handed.
+ * which feeds the code under test OS-native paths. The module declares
+ * `requires: { posix: true }`, so a Windows path is a shape this code is never
+ * handed.
  */
 
 import { AsyncLogScopeStore } from "../boundaries/platform/log-scope";
@@ -37,10 +38,14 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
 import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
 import type { MockProcessRunner } from "../boundaries/platform/process.state-mock";
+import { directoryHolders, type HolderScanCall } from "../boundaries/platform/process.state-mock";
 
 // =============================================================================
 // Test Helpers
 // =============================================================================
+
+/** A shell sitting in the workspace root. */
+const BASH = { pid: 1234, name: "bash", commandLine: "bash", cwd: "." };
 
 function makeDeleteIntent(overrides?: Partial<DeleteWorkspaceIntent["payload"]>): Intent {
   return {
@@ -95,171 +100,52 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
 // =============================================================================
 
 describe("detectCwdProcesses", () => {
-  it("parses lsof -Fpnc output for matching processes", async () => {
-    const lsofOutput = [
-      "p1234",
-      "cbash",
-      "n/workspaces/feature-1",
-      "p5678",
-      "cnode",
-      "n/workspaces/feature-1/subdir",
-    ].join("\n");
+  it("asks for the workspace's CWD holders, within its budget", async () => {
+    const calls: HolderScanCall[] = [];
+    const runner = createMockProcessRunner({ directoryHolders: directoryHolders([], calls) });
 
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
-    });
+    await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
-    const { processes: result } = await detectCwdProcesses(
-      runner,
-      "/workspaces/feature-1",
-      SILENT_LOGGER
-    );
-
-    expect(result).toEqual([
-      { pid: 1234, name: "bash", cwd: "/workspaces/feature-1" },
-      { pid: 5678, name: "node", cwd: "/workspaces/feature-1/subdir" },
-    ]);
+    expect(calls).toEqual([{ dir: "/workspaces/feature-1", files: false, timeoutMs: 10_000 }]);
   });
 
-  it("filters out processes outside workspace path", async () => {
-    const lsofOutput = [
-      "p1234",
-      "cbash",
-      "n/workspaces/feature-1",
-      "p5678",
-      "cnode",
-      "n/workspaces/other-workspace",
-      "p9999",
-      "czsh",
-      "n/home/user",
-    ].join("\n");
-
+  it("returns the holders with their working directory", async () => {
     const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
+      directoryHolders: directoryHolders([
+        { pid: 1234, name: "bash", commandLine: "bash", cwd: "." },
+        { pid: 5678, name: "node", commandLine: "node server.js", cwd: "subdir" },
+      ]),
     });
 
-    const { processes: result } = await detectCwdProcesses(
-      runner,
-      "/workspaces/feature-1",
-      SILENT_LOGGER
-    );
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
-    expect(result).toHaveLength(1);
-    expect(result[0]!.pid).toBe(1234);
-  });
-
-  it("returns empty array when no matches", async () => {
-    const lsofOutput = ["p1234", "cbash", "n/other/path"].join("\n");
-
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
+    expect(result).toEqual({
+      timedOut: false,
+      processes: [
+        { pid: 1234, name: "bash", cwd: "." },
+        { pid: 5678, name: "node", cwd: "subdir" },
+      ],
     });
-
-    const { processes: result } = await detectCwdProcesses(
-      runner,
-      "/workspaces/feature-1",
-      SILENT_LOGGER
-    );
-
-    expect(result).toEqual([]);
-  });
-
-  it("treats lsof exit code 1 as no files found (not error)", async () => {
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: "", exitCode: 1 }),
-    });
-
-    const { processes: result } = await detectCwdProcesses(
-      runner,
-      "/workspaces/feature-1",
-      SILENT_LOGGER
-    );
-
-    expect(result).toEqual([]);
-  });
-
-  it("returns empty array on lsof failure (exit > 1)", async () => {
-    const logger = createBehavioralLogger();
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: "", stderr: "lsof error", exitCode: 2 }),
-    });
-
-    const { processes: result } = await detectCwdProcesses(runner, "/workspaces/feature-1", logger);
-
-    expect(result).toEqual([]);
-    const warnings = logger.getMessagesByLevel("warn");
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]!.message).toBe("Process detection failed");
   });
 
   it("reports a timeout rather than an empty result", async () => {
+    const runner = createMockProcessRunner({ directoryHolders: directoryHolders("timeout") });
     const logger = createBehavioralLogger();
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: "", exitCode: null, running: true }),
-    });
 
     const result = await detectCwdProcesses(runner, "/workspaces/feature-1", logger);
 
     expect(result).toEqual({ processes: [], timedOut: true });
-    const warnings = logger.getMessagesByLevel("warn");
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]!.message).toBe("Process detection timed out");
+    expect(logger.getMessagesByLevel("warn")[0]?.message).toBe("Process detection timed out");
   });
 
-  it("returns all matching processes (no own-PID filtering)", async () => {
-    const lsofOutput = [
-      `p${process.pid}`,
-      "cbash",
-      `n/workspaces/feature-1`,
-      "p9999",
-      "cnode",
-      "n/workspaces/feature-1",
-    ].join("\n");
-
+  it("throws when the scan cannot run, rather than reporting nothing found", async () => {
     const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
+      directoryHolders: directoryHolders(new Error("no native addon")),
     });
 
-    const { processes: result } = await detectCwdProcesses(
-      runner,
-      "/workspaces/feature-1",
-      SILENT_LOGGER
-    );
-
-    expect(result).toHaveLength(2);
-    expect(result[0]!.pid).toBe(process.pid);
-    expect(result[1]!.pid).toBe(9999);
-  });
-
-  it("does not match workspace path as substring prefix", async () => {
-    const lsofOutput = ["p1234", "cbash", "n/workspaces/feature-10"].join("\n");
-
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
-    });
-
-    const { processes: result } = await detectCwdProcesses(
-      runner,
-      "/workspaces/feature-1",
-      SILENT_LOGGER
-    );
-
-    expect(result).toEqual([]);
-  });
-
-  it("invokes lsof with correct arguments", async () => {
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: "", exitCode: 0 }),
-    });
-
-    await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
-
-    expect(runner).toHaveSpawned([
-      {
-        command: "lsof",
-        args: ["-a", "-d", "cwd", "+c", "0", "-Fpnc", "+D", "/workspaces/feature-1"],
-      },
-    ]);
+    await expect(
+      detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER)
+    ).rejects.toThrow("no native addon");
   });
 });
 
@@ -307,52 +193,29 @@ describe("PosixProcessCleanupModule Integration", () => {
 
   describe("delete-workspace -> release", () => {
     it("detects and kills CWD-blocking processes", async () => {
-      let callIndex = 0;
-      runner = createMockProcessRunner({
-        onSpawn: () => {
-          callIndex++;
-          if (callIndex === 1) {
-            // Detection: return processes via lsof output
-            return {
-              stdout: "p1234\ncbash\nn/workspaces/feature-1\n",
-              exitCode: 0,
-            };
-          }
-          // Kill: success
-          return { exitCode: 0 };
-        },
-      });
+      const calls: HolderScanCall[] = [];
+      runner = createMockProcessRunner({ directoryHolders: directoryHolders([BASH], calls) });
 
       const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent());
 
-      // Verify detection was called (lsof)
-      const detectProc = runner.$.spawned(0);
-      expect(detectProc.$.command).toBe("lsof");
-
-      // Verify the detected process was terminated
+      // One scan of the workspace, nothing spawned, the holder terminated.
+      expect(calls.map((call) => call.dir)).toEqual(["/workspaces/feature-1"]);
+      expect(() => runner.$.spawned(0)).toThrow();
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
     it("still kills CWD-blocking processes when force=true", async () => {
-      runner = createMockProcessRunner({
-        onSpawn: (_command, args) =>
-          args.includes("+D")
-            ? { stdout: "p1234\ncbash\nn/workspaces/feature-1\n", exitCode: 0 }
-            : { exitCode: 0 },
-      });
+      runner = createMockProcessRunner({ directoryHolders: directoryHolders([BASH]) });
 
       const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent({ force: true }));
 
-      expect(runner.$.spawned(0).$.command).toBe("lsof");
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
     it("reports a timed-out detection on the release result without failing", async () => {
-      runner = createMockProcessRunner({
-        onSpawn: () => ({ exitCode: null, running: true }),
-      });
+      runner = createMockProcessRunner({ directoryHolders: directoryHolders("timeout") });
 
       const dispatcher = createReleaseSetup(runner);
       const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
@@ -362,23 +225,21 @@ describe("PosixProcessCleanupModule Integration", () => {
 
     it("reports a thrown detection error on the release result", async () => {
       runner = createMockProcessRunner({
-        onSpawn: () => {
-          throw new Error("spawn exploded");
-        },
+        directoryHolders: directoryHolders(new Error("scan exploded")),
       });
 
       const dispatcher = createReleaseSetup(runner);
       const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
 
-      expect(result.error).toBe("spawn exploded");
+      expect(result.error).toBe("scan exploded");
     });
 
     it("names the processes that survive the kill on the release result", async () => {
       runner = createMockProcessRunner({
-        onSpawn: () => ({
-          stdout: "p1234\ncbash\nn/workspaces/feature-1\np5678\ncnode\nn/workspaces/feature-1\n",
-          exitCode: 0,
-        }),
+        directoryHolders: directoryHolders([
+          BASH,
+          { pid: 5678, name: "node", commandLine: "node", cwd: "." },
+        ]),
         onKill: (pid) => ({ success: pid !== 1234 }),
       });
 
@@ -389,9 +250,7 @@ describe("PosixProcessCleanupModule Integration", () => {
     });
 
     it("reports nothing when every detected process is killed", async () => {
-      runner = createMockProcessRunner({
-        onSpawn: () => ({ stdout: "p1234\ncbash\nn/workspaces/feature-1\n", exitCode: 0 }),
-      });
+      runner = createMockProcessRunner({ directoryHolders: directoryHolders([BASH]) });
 
       const dispatcher = createReleaseSetup(runner);
       const result = await dispatcher.dispatch(makeDeleteIntent());
@@ -400,15 +259,11 @@ describe("PosixProcessCleanupModule Integration", () => {
     });
 
     it("skips kill when no processes detected", async () => {
-      runner = createMockProcessRunner({
-        onSpawn: () => ({ stdout: "", exitCode: 0 }),
-      });
+      runner = createMockProcessRunner({ directoryHolders: directoryHolders([]) });
 
       const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent());
 
-      // Only detection was spawned, no kill
-      expect(runner.$.spawned(0).$.command).toBe("lsof");
       expect(runner.$.killedPids).toEqual([]);
     });
   });
@@ -449,30 +304,17 @@ describe("PosixProcessCleanupModule Integration", () => {
     }
 
     it("detects and kills CWD-blocking processes (no force gate)", async () => {
-      let callIndex = 0;
-      runner = createMockProcessRunner({
-        onSpawn: () => {
-          callIndex++;
-          if (callIndex === 1) {
-            return {
-              stdout: "p1234\ncbash\nn/workspaces/feature-1\n",
-              exitCode: 0,
-            };
-          }
-          return { exitCode: 0 };
-        },
-      });
+      runner = createMockProcessRunner({ directoryHolders: directoryHolders([BASH]) });
 
       const dispatcher = createHibernateReleaseSetup(runner);
       await dispatcher.dispatch(makeHibernateIntent());
 
-      expect(runner.$.spawned(0).$.command).toBe("lsof");
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
     it("logs, rather than reports, a survivor during hibernation", async () => {
       runner = createMockProcessRunner({
-        onSpawn: () => ({ stdout: "p1234\ncbash\nn/workspaces/feature-1\n", exitCode: 0 }),
+        directoryHolders: directoryHolders([BASH]),
         onKill: () => ({ success: false }),
       });
       const logger = createBehavioralLogger();
