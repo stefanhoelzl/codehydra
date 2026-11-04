@@ -15,6 +15,7 @@ import { createBehavioralLogger } from "./logging.test-utils";
 import {
   isProcessRunning,
   isWindows,
+  nativeAddon,
   spawnIgnoringSignals,
   spawnLongRunning,
   spawnWithOutput,
@@ -400,10 +401,10 @@ describe("ExecaProcessRunner", () => {
   });
 
   describe("listProcesses / findListeningPorts", () => {
-    // The real platform scan (/proc, ps + lsof, or the Windows helper exe)
-    // against a real child: started in a directory of its own, listening on a
-    // port. The parsers are tested on canned output; only this shows the
-    // scan as a whole still reports cwd, parent, memory, CPU and ports.
+    // The real scans — the native addon for processes; /proc, lsof or the
+    // Windows helper exe for ports — against a real child: started in a
+    // directory of its own, listening on a port. Only this shows the scan
+    // reports cwd, parent, memory, CPU, environment and ports.
     const SNAPSHOT_TEST_TIMEOUT = 30_000;
 
     let dir: string;
@@ -411,10 +412,10 @@ describe("ExecaProcessRunner", () => {
 
     beforeEach(async () => {
       dir = await realpath(await mkdtemp(path.join(os.tmpdir(), "snapshot-test-")));
-      scanner = new ExecaProcessRunner(
-        SILENT_LOGGER,
-        isWindows ? { windowsProcessHelper: windowsProcessHelperPath() } : {}
-      );
+      scanner = new ExecaProcessRunner(SILENT_LOGGER, {
+        native: nativeAddon(),
+        ...(isWindows && { windowsProcessHelper: windowsProcessHelperPath() }),
+      });
     });
 
     /** Started in `dir`: killed before it is removed, which Windows refuses while a process sits in it. */

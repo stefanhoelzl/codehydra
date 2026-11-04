@@ -1438,16 +1438,43 @@ without it.
 Each command prints one JSON object and exits (`{"error": "…"}` with exit 1 on
 failure):
 
-| Command            | Output                                                                                                                   | Used by                                           |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| `snapshot [<var>]` | `{"processes":[{pid, ppid, name, commandLine, cwd, rssBytes, cpuTimeMs, startedAt, env}]}` (`env`: the value of `<var>`) | `ProcessRunner.listProcesses`                     |
-| `listeners`        | `{"listeners":[{pid, port}]}`                                                                                            | `ProcessRunner.findListeningPorts`                |
-| `detect <dir>`     | `{"blocking":[{pid, name, commandLine, files, cwd}]}` (handles + CWD)                                                    | windows-file-lock-module (after a failed removal) |
-| `detect-cwd <dir>` | same, CWD only                                                                                                           | windows-file-lock-module (release)                |
+| Command            | Output                                                                | Used by                                           |
+| ------------------ | --------------------------------------------------------------------- | ------------------------------------------------- |
+| `listeners`        | `{"listeners":[{pid, port}]}`                                         | `ProcessRunner.findListeningPorts`                |
+| `detect <dir>`     | `{"blocking":[{pid, name, commandLine, files, cwd}]}` (handles + CWD) | windows-file-lock-module (after a failed removal) |
+| `detect-cwd <dir>` | same, CWD only                                                        | windows-file-lock-module (release)                |
 
 The path reaches its users as `runtimePath("bin/codehydra-procs.exe")`, wired in
 `main.ts`. Boundary tests find the built exe with `windowsProcessHelperPath()`
 (`process.boundary-test-utils.ts`), which throws when it has not been built.
+
+### Native Addon (`codehydra-native.<platform>-<arch>.node`)
+
+OS queries made in process instead of by spawning a tool: a Rust crate built
+as a Node addon with napi-rs, on top of [sysinfo](https://crates.io/crates/sysinfo).
+It replaces `ps`/`lsof` on macOS, `/proc` parsing on Linux and the helper's
+former `snapshot` command on Windows for `ProcessRunner.listProcesses`.
+
+```
+native/src/lib.rs                  -> Source; #![deny(unsafe_code)]: the OS calls are sysinfo's
+native/rust-toolchain.toml         -> Pinned Rust version (rustup installs it on first use)
+dist/bin/codehydra-native.*.node   -> pnpm build:wrappers (scripts/build-native.ts; fails without `cargo`)
+out/main/assets/bin/               -> Bundled with the other binaries; packaged as bin/
+```
+
+Every export is async and runs on the libuv thread pool. What sysinfo reports
+is passed on as it is: Windows names keep `.exe` and working directories their
+trailing `\`, and processes the OS will not describe to us (other users' on
+macOS, protected ones on Windows) come back with little more than a name.
+
+A packaged build carries the addon of every platform, because CI builds once on
+Linux and packages that output for each OS: the `native` job of `build.yaml`
+builds the macOS (arm64, x64) and Windows addons on their own runners, and the
+Linux build adds its own. `main.ts` loads the file matching the running
+platform (`native-addon.ts`); a missing one fails startup rather than leaving
+the process monitor silently empty. Boundary tests load it with
+`nativeAddon()` (`process.boundary-test-utils.ts`), which throws when it has
+not been built.
 
 ---
 

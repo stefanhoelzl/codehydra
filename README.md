@@ -115,6 +115,7 @@ extensions.
 - Node.js 24+
 - pnpm 10
 - Git
+- Rust via [rustup](https://rustup.rs) (builds the native addon; `native/rust-toolchain.toml` pins the version, which rustup installs on first use)
 - .NET SDK 8+ (optional: builds the Windows helper `codehydra-procs.exe`; required on CI and to package Windows)
 
 ### Commands

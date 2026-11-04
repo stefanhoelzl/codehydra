@@ -1,0 +1,5 @@
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+# CI lints the crate (`cargo fmt --check`, `cargo clippy`).
+components = ["clippy", "rustfmt"]

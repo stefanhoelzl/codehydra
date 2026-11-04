@@ -32,6 +32,15 @@ jobs:
       - run: pnpm lint
       - run: pnpm site:check
       - run: pnpm site:build
+
+      # The native addon. Once is enough here too: its platform branches are
+      # `cfg!()` conditions, so every one of them compiles, and lints, on Linux.
+      - name: Lint the native addon
+        working-directory: native
+        run: |
+          cargo fmt --check
+          cargo clippy --release --locked -- -D warnings
+
       - run: git diff --exit-code
 
   validate:
@@ -140,6 +149,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+        with:
+          rust: "false"
 
       # Must come *after* the setup action, which exports its own _CHDEV_ROOT_DIR:
       # a later GITHUB_ENV write wins, whereas job-level `env:` would not.
@@ -280,6 +291,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+        with:
+          rust: "false"
 
       - name: Point the app at a disposable root
         shell: bash

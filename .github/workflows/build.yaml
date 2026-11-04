@@ -16,7 +16,57 @@ on:
         value: ${{ jobs.prepare.outputs.is_base_version }}
 
 jobs:
+  # The native addon for the platforms Linux cannot build it for, each on its
+  # own OS. `prepare` builds once on Linux and every package job reuses its
+  # output, so that output must carry the addon of every platform
+  # (scripts/build-native.ts); `prepare` builds the Linux one itself.
+  native:
+    name: Native addon (${{ matrix.target }})
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: macos-26
+            target: aarch64-apple-darwin
+          - runs-on: macos-26
+            target: x86_64-apple-darwin
+          - runs-on: windows-2025
+            target: x86_64-pc-windows-msvc
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      # Node runs the build script as it is (type stripping): no pnpm install needed.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install the Rust toolchain
+        working-directory: native
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - run: node scripts/build-native.ts --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.target }}
+          path: dist/bin/codehydra-native.*.node
+          retention-days: 1
+          if-no-files-found: error
+
   prepare:
+    needs: native
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -79,6 +129,14 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
+      # Before the build: build-native.ts keeps these and builds only Linux's.
+      - name: Download native addons
+        uses: actions/download-artifact@v8
+        with:
+          pattern: native-*
+          path: dist/bin
+          merge-multiple: true
+
       - name: Build
         env:
           _CH_BUILD_VERSION: ${{ steps.version.outputs.version }}
@@ -121,6 +179,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          rust: "false"
 
       - name: Download build output
         uses: actions/download-artifact@v8
@@ -185,6 +245,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          rust: "false"
 
       - name: Download build output
         uses: actions/download-artifact@v8

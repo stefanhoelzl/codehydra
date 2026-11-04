@@ -5,6 +5,7 @@ node_modules/
 dist/
 out/
 .vite/
+native/target/
 
 # Test coverage
 coverage/
