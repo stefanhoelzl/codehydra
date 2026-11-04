@@ -61,12 +61,12 @@ electron-builder automatically generates required metadata files:
 
 ### Prerequisites
 
-Releases can only be triggered from commits on the `main` branch. Branch protection ensures all commits have passed CI before merge, so no additional CI check is performed during release.
+Releases can only be triggered from commits on the `main` branch. Branch protection ensures all commits have passed CI before merge. A release still runs the `Build & test` matrix (the `test` job of `build.yaml`) itself: it builds the native addon of each platform and tests it, and the release packages exactly those files.
 
 **Required branch protection settings for `main`:**
 
 - Require status checks to pass before merging
-- Required checks: `validate (ubuntu-24.04)`, `validate (windows-2025)`, `build`
+- Required checks: kept in sync by `/ship` (the branch ruleset) — among them `build / Build & test (<os>)` for each OS and the other `build / …` jobs
 
 ## Artifacts
 

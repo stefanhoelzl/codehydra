@@ -1451,9 +1451,12 @@ query stuck past 500 ms is abandoned with its thread (and its handle leaked,
 never closed), within 5 s in total.
 
 A packaged build carries the addon of every platform, because CI builds once on
-Linux and packages that output for each OS: the `native` job of `build.yaml`
-builds the macOS (arm64, x64) and Windows addons on their own runners, and the
-Linux build adds its own. `main.ts` loads the file matching the running
+Linux and packages that output for each OS. The addons come from the
+`Build & test` matrix (the `test` job of `build.yaml`, which `ci.yaml` and `release.yaml` both call):
+each OS leg builds its platform's addon, runs the whole suite against it and
+uploads it, and `build.yaml` bundles exactly those files — what ships is what
+was tested. The macOS leg also cross-builds the x86_64 addon on its arm64
+runner; that one is built, not tested. `main.ts` loads the file matching the running
 platform (`native-addon.ts`); a missing one fails startup rather than leaving
 the process monitor silently empty. Boundary tests load it with
 `nativeAddon()` (`process.boundary-test-utils.ts`), which throws when it has

@@ -351,7 +351,7 @@ the shipped chain into a real `ClaudeCodeServerManager`.
   failure here says _Claude_ changed, and you want to be told which.
 - **Requires a real `claude` on PATH and `pnpm build:wrappers`** (the shipped hook handler).
   Both throw rather than skipping, so the coverage cannot be lost by accident. CI installs
-  the CLI, unpinned, in the `validate` and `canary` jobs.
+  the CLI, unpinned, in the `Build & test` jobs (build.yaml) and the `canary` job.
 - One `describe` per scenario, one `claude` per `describe`, ~8s for the file. A recording tap
   in front of the bridge is what correlates each hook with the status it produced — the
   manager exposes status only through `onStatusChange`, and only the URL carries the name.
