@@ -16,7 +16,7 @@ import { ExecaProcessRunner } from "../../../boundaries/platform/process";
 import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
-import { waitForHealthy } from "../../../utils/health-check";
+import { HealthCheckAbortError, waitForHealthy } from "../../../utils/health-check";
 import { createTestGitRepo } from "../../../utils/testing/test-utils";
 import {
   createMockLlmServer,
@@ -111,6 +111,8 @@ export interface OpencodeProcess {
   readonly pid: number;
   /** Stop the process gracefully */
   stop(): Promise<void>;
+  /** Whether the process has exited (on its own or stopped). */
+  exited(): boolean;
   /**
    * Everything the process wrote, for a failure message. Empty while it is
    * still running — SpawnedProcess.wait() hands over output only once the
@@ -205,8 +207,14 @@ async function startOpencode(
     throw new Error(`Failed to start opencode: ${result.stderr}`);
   }
 
+  let exited = false;
+  void proc.wait().then((result) => {
+    if (result.running !== true) exited = true;
+  });
+
   return {
     pid: proc.pid,
+    exited: () => exited,
     stop: async () => {
       // Use new kill() API: SIGTERM (5s wait) → SIGKILL (1s wait)
       await proc.kill(5000, 1000);
@@ -228,6 +236,9 @@ async function startOpencode(
  * startup failure in terms of opencode rather than of vitest.
  */
 const STARTUP_TIMEOUT_MS = Math.round(CI_TIMEOUT_MS * 0.6);
+
+/** How many ports a scenario tries for an opencode that exits before answering. */
+const MAX_START_ATTEMPTS = 3;
 
 /**
  * When every step of a scenario must be done, measured from its start. The
@@ -447,9 +458,7 @@ export async function withOpencode(
     llm.setMode(options.mockLlmMode, options.major === 2 ? "shell" : "bash");
     mockEntry.end = elapsed();
 
-    // Find free port for opencode
     const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
-    const port = await networkLayer.findFreePort();
 
     const major = options.major ?? 1;
     const permission = options.permission ?? { bash: "allow", edit: "allow", webfetch: "allow" };
@@ -494,60 +503,87 @@ export async function withOpencode(
             snapshot: false,
           };
 
-    const startEntry = begin(`start opencode on port ${port}`);
-    opencodeProcess = await startOpencode({
-      binaryPath: options.binaryPath,
-      port,
-      cwd: repo.path,
-      major,
-      config,
-      ...(major === 2 && { password: V2_TEST_PASSWORD }),
-    });
-
-    // Wait for opencode to be ready.
-    //
-    // A slice of the budget, not all of it: callers give `it` CI_TIMEOUT_MS, so
-    // spending the whole thing here means a server that never binds surfaces as
-    // vitest's bare "Test timed out" with nothing about opencode in it. Failing
-    // first leaves room to say what actually happened, and to say it with the
-    // process's own output.
-    //
-    // Over HTTP, the way OpenCodeServerManager checks health, and not with a
-    // bare TCP connect: opencode (seen on 1.18) binds its port before it can
-    // serve, and a connection opened and dropped in that window leaves the
-    // next request hanging until it times out — while a request that simply
-    // retries on refusal is answered as soon as the server is up.
-    //
     // 2.x has no `/path` (its web-UI catch-all answers 200 for anything);
     // its readiness endpoint is `GET /api/info`, authenticated — a healthy
     // check also proves the password works.
-    const healthUrl =
-      major === 2 ? `http://127.0.0.1:${port}/api/info` : `http://127.0.0.1:${port}/path`;
     const healthHeaders =
       major === 2
         ? {
             Authorization: `Basic ${Buffer.from(`opencode:${V2_TEST_PASSWORD}`).toString("base64")}`,
           }
         : undefined;
-    try {
-      await waitForHealthy({
-        checkFn: async () =>
-          (
-            await networkLayer.fetch(healthUrl, {
-              timeout: 2000,
-              ...(healthHeaders !== undefined && { headers: healthHeaders }),
-            })
-          ).ok,
-        timeoutMs: STARTUP_TIMEOUT_MS,
-        intervalMs: 100,
+
+    // findFreePort() releases the port before opencode binds it, and anything
+    // that takes it in between makes opencode exit at once (1.x says only
+    // `ServeError`). An opencode that exits before answering is started again
+    // on a fresh port, within the one startup budget below.
+    //
+    // That budget is a slice of the scenario's, not all of it: callers give
+    // `it` CI_TIMEOUT_MS, so spending the whole thing here means a server that
+    // never binds surfaces as vitest's bare "Test timed out" with nothing about
+    // opencode in it. Failing first leaves room to say what actually happened,
+    // and to say it with the process's own output.
+    const startupDeadline = Date.now() + STARTUP_TIMEOUT_MS;
+    let port = 0;
+    for (let attempt = 1; ; attempt++) {
+      port = await networkLayer.findFreePort();
+      const startEntry = begin(`start opencode on port ${port}`);
+      const proc = await startOpencode({
+        binaryPath: options.binaryPath,
+        port,
+        cwd: repo.path,
+        major,
+        config,
+        ...(major === 2 && { password: V2_TEST_PASSWORD }),
       });
-    } catch (error) {
-      throw new Error(
-        `opencode did not answer on port ${port} within ${STARTUP_TIMEOUT_MS}ms.\n${await report()}`,
-        { cause: error }
-      );
+      opencodeProcess = proc;
+
+      // Over HTTP, the way OpenCodeServerManager checks health, and not with a
+      // bare TCP connect: opencode (seen on 1.18) binds its port before it can
+      // serve, and a connection opened and dropped in that window leaves the
+      // next request hanging until it times out — while a request that simply
+      // retries on refusal is answered as soon as the server is up.
+      const healthUrl =
+        major === 2 ? `http://127.0.0.1:${port}/api/info` : `http://127.0.0.1:${port}/path`;
+      try {
+        await waitForHealthy({
+          checkFn: async () => {
+            const ok = await networkLayer
+              .fetch(healthUrl, {
+                timeout: 2000,
+                ...(healthHeaders !== undefined && { headers: healthHeaders }),
+              })
+              .then(
+                (response) => response.ok,
+                () => false
+              );
+            if (ok) return true;
+            if (proc.exited()) throw new HealthCheckAbortError("opencode exited");
+            return false;
+          },
+          timeoutMs: Math.max(startupDeadline - Date.now(), 0),
+          intervalMs: 100,
+        });
+        startEntry.end = elapsed();
+        break;
+      } catch (error) {
+        const exited = error instanceof HealthCheckAbortError;
+        if (exited && attempt < MAX_START_ATTEMPTS && Date.now() < startupDeadline) {
+          startEntry.end = elapsed();
+          begin(`opencode on port ${port} exited before answering; retrying`).end = elapsed();
+          // Ask for the dead attempt's log here, while it is still the
+          // current process: a later report only shows the last attempt.
+          console.warn(
+            `opencode exited before answering on port ${port}:\n${await proc.output().catch(() => "")}`
+          );
+          continue;
+        }
+        const what = exited
+          ? `opencode exited before answering on port ${port} (attempt ${attempt} of ${MAX_START_ATTEMPTS}).`
+          : `opencode did not answer on port ${port} within ${STARTUP_TIMEOUT_MS}ms.`;
+        throw new Error(`${what}\n${await report()}`, { cause: error });
+      }
     }
-    startEntry.end = elapsed();
 
     // Create clients
     const sdk = createOpencodeClient({ baseUrl: `http://127.0.0.1:${port}` });

@@ -9,7 +9,11 @@
  * (1.x) or `opencode --server` (2.x).
  */
 
-import type { ProcessRunner, SpawnedProcess } from "../../../boundaries/platform/process";
+import type {
+  ProcessResult,
+  ProcessRunner,
+  SpawnedProcess,
+} from "../../../boundaries/platform/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
   PROCESS_KILL_FORCE_TIMEOUT_MS,
@@ -19,7 +23,7 @@ import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { Logger } from "../../../boundaries/platform/logging";
 import { randomBytes } from "node:crypto";
 import type { IDisposable, Unsubscribe } from "./types";
-import { waitForHealthy } from "../../../utils/health-check";
+import { HealthCheckAbortError, waitForHealthy } from "../../../utils/health-check";
 import { Path } from "../../../utils/path/path";
 import type { PromptModel } from "../../../shared/api/types";
 import type {
@@ -110,6 +114,35 @@ type ServerEntry =
       readonly process: SpawnedProcess;
       readonly restartPromise: Promise<RestartServerResult>;
     };
+
+/**
+ * How many ports a start tries before it gives up on a server that keeps
+ * exiting before it answers.
+ *
+ * The port comes from `findFreePort()`, which releases it again before opencode
+ * binds it: anything that takes it in between makes opencode exit at once
+ * (1.x reports only a bare `ServeError`). Such a start is retried on a fresh
+ * port. Exit status is all there is to go by — opencode gives no code for why
+ * it exited — so every early exit is retried alike, and one that fails for
+ * another reason (a broken config) fails after this many quick attempts.
+ */
+const MAX_START_ATTEMPTS = 3;
+
+/**
+ * opencode exited while a start was still waiting for it to answer. Aborts the
+ * health check at once rather than waiting out its timeout.
+ */
+class ServerExitedError extends HealthCheckAbortError {
+  constructor(port: number, result: ProcessResult) {
+    const status = result.signal ?? `code ${result.exitCode ?? "unknown"}`;
+    const output = [result.stdout, result.stderr].join("\n").trim().slice(-500);
+    super(
+      `opencode exited (${status}) before answering on port ${port}` +
+        (output.length > 0 ? `:\n${output}` : "")
+    );
+    this.name = "ServerExitedError";
+  }
+}
 
 /**
  * Configuration options for OpenCodeServerManager.
@@ -278,11 +311,22 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * Internal method to start the server.
    */
   private async doStartServer(workspaceRef: WorkspaceRef): Promise<number> {
-    // Allocate a free port
-    const port = await this.portManager.findFreePort();
-
-    // Spawn server and wait for health check
-    const proc = await this.spawnServerOnPort(workspaceRef, port);
+    // Allocate a free port, and another if opencode exits before answering on
+    // it — see MAX_START_ATTEMPTS.
+    let port: number;
+    let proc: SpawnedProcess;
+    for (let attempt = 1; ; attempt++) {
+      port = await this.portManager.findFreePort();
+      try {
+        proc = await this.spawnServerOnPort(workspaceRef, port);
+        break;
+      } catch (error) {
+        if (!(error instanceof ServerExitedError) || attempt >= MAX_START_ATTEMPTS) throw error;
+        this.logger
+          .scoped({ workspace: workspaceRef })
+          .warn("Server exited before answering, retrying on another port", { port, attempt });
+      }
+    }
 
     // Update the server entry to running state
     this.servers.set(workspaceRef, { state: "running", port, process: proc });
@@ -417,9 +461,16 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       throw new Error(`Failed to spawn opencode: ${result.stderr}`);
     }
 
+    // Noted as soon as the process exits, so a server that dies on startup
+    // fails the health check at once instead of after its timeout.
+    let exit: ProcessResult | undefined;
+    void proc.wait().then((result) => {
+      if (result.running !== true) exit = result;
+    });
+
     // Wait for health check
     try {
-      await this.waitForHealthCheck(port, major, password);
+      await this.waitForHealthCheck(port, major, password, () => exit);
     } catch (error) {
       // Kill the process on health check failure
       await proc.kill(PROCESS_KILL_GRACEFUL_TIMEOUT_MS, PROCESS_KILL_FORCE_TIMEOUT_MS);
@@ -436,7 +487,12 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * 200 for anything) — its readiness endpoint is `GET /api/info`, which is
    * authenticated, so a healthy check also proves the password works.
    */
-  private async waitForHealthCheck(port: number, major: 1 | 2, password?: string): Promise<void> {
+  private async waitForHealthCheck(
+    port: number,
+    major: 1 | 2,
+    password: string | undefined,
+    exited: () => ProcessResult | undefined
+  ): Promise<void> {
     const url = major === 2 ? `http://127.0.0.1:${port}/api/info` : `http://127.0.0.1:${port}/path`;
     const headers =
       major === 2 && password !== undefined
@@ -445,11 +501,16 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
     await waitForHealthy({
       checkFn: async () => {
-        const response = await this.httpClient.fetch(url, {
-          timeout: 2000,
-          ...(headers && { headers }),
-        });
-        return response.ok;
+        const ok = await this.httpClient
+          .fetch(url, { timeout: 2000, ...(headers && { headers }) })
+          .then(
+            (response) => response.ok,
+            () => false
+          );
+        if (ok) return true;
+        const result = exited();
+        if (result !== undefined) throw new ServerExitedError(port, result);
+        return false;
       },
       timeoutMs: this.config.healthCheckTimeoutMs,
       intervalMs: this.config.healthCheckIntervalMs,
