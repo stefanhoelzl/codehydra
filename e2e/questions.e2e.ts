@@ -59,6 +59,15 @@ async function quickInput() {
 
 test.describe.configure({ mode: "serial" });
 
+// A question answered by the previous test is still on screen for a moment after
+// `ch` returns. Left there, quickInput() would take it for the next test's: a key
+// pressed then reaches nothing, and the real question waits for an answer forever.
+test.beforeEach(async () => {
+  if (!workspace) return; // the first test creates it
+  const widget = (await editor()).locator(".quick-input-widget");
+  await expect(widget).toBeHidden();
+});
+
 test("sets up a workspace whose editor is connected", async () => {
   await waitForConnectionDetails();
   await openProject(app(), repo.path);
@@ -222,6 +231,9 @@ test("pick-file browses the workspace and answers the chosen path", async () => 
   // The embedded editor's own dialog: a path box over the workspace's machine.
   await quickInput();
   const box = (await editor()).locator(".quick-input-box input");
+  // It opens on the workspace root and shows the start folder once that has
+  // loaded, overwriting whatever was typed by then.
+  await expect(box).toHaveValue(/docs[\\/]$/);
   await box.fill(target);
   await app().key("Enter");
 
