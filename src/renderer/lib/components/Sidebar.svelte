@@ -17,6 +17,7 @@
     HibernatedView,
     SidebarMode,
     UiNotification,
+    UiProcessTotals,
     UiProjectRow,
     UiSidebarFind,
     UiWorkspaceRow,
@@ -41,11 +42,7 @@
   import ProjectCard from "./sidebar/ProjectCard.svelte";
   import NoteCard from "./sidebar/NoteCard.svelte";
   import SidebarIcon from "./sidebar/SidebarIcon.svelte";
-  import {
-    describeProcessSummary,
-    formatProcessBadge,
-    sumProcessSummaries,
-  } from "$lib/utils/process-summary.js";
+  import { describeProcessTotals, formatProcessBadge } from "$lib/utils/process-summary.js";
   import { createRowMotion, highlight, noteIn, noteOut } from "./sidebar/motion";
 
   const logger = createLogger("ui");
@@ -78,6 +75,8 @@
     capturing?: boolean;
     /** Whether rows show their CPU and memory (config `sidebar.process-summary`). */
     processSummary?: boolean;
+    /** CodeHydra's whole footprint, for the footer (with the process summary on). */
+    processTotals?: UiProcessTotals | undefined;
   }
 
   let {
@@ -91,6 +90,7 @@
     shortcutModeActive = false,
     capturing = false,
     processSummary = false,
+    processTotals,
   }: SidebarProps = $props();
 
   const reducedMotion =
@@ -577,8 +577,6 @@
     automated: allRows.filter((row) => row.status === "ready" && rowGroup(row) === "automated")
       .length,
   });
-  /** With the process summary on, every workspace's CPU and memory together (null otherwise). */
-  const processTotal = $derived(sumProcessSummaries(allRows.map((row) => row.processes)));
   /** The footer summary names only the counts it shows: the non-zero ones. */
   const summaryTitle = $derived(
     [
@@ -715,11 +713,11 @@
         {#if summary.automated > 0}<i class="auto"
             ><SidebarIcon name="alarm" size={10} />{summary.automated}</i
           >{/if}
-        {#if processTotal !== null}<i
+        {#if processSummary && processTotals !== undefined}<i
             class="proc"
-            title={`All workspaces: ${describeProcessSummary(processTotal)}`}
-            aria-label={`All workspaces: ${describeProcessSummary(processTotal)}`}
-            >{formatProcessBadge(processTotal)}</i
+            title={describeProcessTotals(processTotals)}
+            aria-label={describeProcessTotals(processTotals)}
+            >{formatProcessBadge(processTotals.all)}</i
           >{/if}
       </div>
       <button

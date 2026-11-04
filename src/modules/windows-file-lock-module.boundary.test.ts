@@ -144,7 +144,6 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         const { processes, timedOut } = await runDetectAction(
           processRunner,
           new Path(tempDir),
-          "detect",
           createMockLogger(),
           SCAN_TIMEOUT
         );
@@ -178,7 +177,6 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         const { processes } = await runDetectAction(
           processRunner,
           new Path(tempDir),
-          "detect",
           createMockLogger(),
           SCAN_TIMEOUT
         );
@@ -201,7 +199,6 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         const { processes } = await runDetectAction(
           processRunner,
           new Path(tempDir),
-          "detect",
           createMockLogger(),
           SCAN_TIMEOUT
         );

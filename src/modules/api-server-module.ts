@@ -503,8 +503,8 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * takes its own MCP servers down with it, instead of us hunting their PIDs.
    *
    * Best-effort by construction — a workspace with no sidekick, no terminal, or
-   * a wedged extension host must not block the teardown. The Windows CWD scan
-   * remains as the backstop for whatever this does not reach.
+   * a wedged extension host must not block the teardown. The release sweep
+   * (release-sweep.ts) remains as the backstop for whatever this does not reach.
    */
   async function closeAgentTerminal(workspaceRef: WorkspaceRef): Promise<void> {
     const socket = connections.get(workspaceRef);

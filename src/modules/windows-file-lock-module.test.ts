@@ -25,17 +25,13 @@ describe("runDetectAction", () => {
     process.platform === "win32" ? "C:\\workspace\\test" : "/workspace/test"
   );
 
-  it("scans open files for `detect` and working directories only for `detect-cwd`", async () => {
+  it("scans open files as well as working directories, within its budget", async () => {
     const calls: HolderScanCall[] = [];
     const runner = createMockProcessRunner({ directoryHolders: directoryHolders([], calls) });
 
-    await runDetectAction(runner, testPath, "detect", createMockLogger(), 8_000);
-    await runDetectAction(runner, testPath, "detect-cwd", createMockLogger(), 45_000);
+    await runDetectAction(runner, testPath, createMockLogger(), 8_000);
 
-    expect(calls).toEqual([
-      { dir: testPath.toNative(), files: true, timeoutMs: 8_000 },
-      { dir: testPath.toNative(), files: false, timeoutMs: 45_000 },
-    ]);
+    expect(calls).toEqual([{ dir: testPath.toNative(), files: true, timeoutMs: 8_000 }]);
   });
 
   it("returns what the scan found", async () => {
@@ -48,7 +44,7 @@ describe("runDetectAction", () => {
     };
     const runner = createMockProcessRunner({ directoryHolders: directoryHolders([holder]) });
 
-    const result = await runDetectAction(runner, testPath, "detect", createMockLogger(), 8_000);
+    const result = await runDetectAction(runner, testPath, createMockLogger(), 8_000);
 
     expect(result).toEqual({ processes: [holder], timedOut: false });
   });
@@ -58,16 +54,16 @@ describe("runDetectAction", () => {
       directoryHolders: directoryHolders(new Error("addon missing")),
     });
 
-    await expect(
-      runDetectAction(runner, testPath, "detect", createMockLogger(), 8_000)
-    ).rejects.toThrow("addon missing");
+    await expect(runDetectAction(runner, testPath, createMockLogger(), 8_000)).rejects.toThrow(
+      "addon missing"
+    );
   });
 
   it("reports timedOut (not a clean empty scan) on timeout", async () => {
     const runner = createMockProcessRunner({ directoryHolders: directoryHolders("timeout") });
     const logger = createMockLogger();
 
-    const result = await runDetectAction(runner, testPath, "detect", logger, 8_000);
+    const result = await runDetectAction(runner, testPath, logger, 8_000);
 
     // The distinction that matters: an empty list from a timed-out scan must
     // NOT be reported as "nothing is blocking".

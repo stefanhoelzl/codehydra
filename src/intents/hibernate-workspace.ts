@@ -22,8 +22,8 @@
  * Background (fire-and-forget):
  * 6. "shutdown" hook — view-module destroys the view, agent-module stops the
  *    agent server
- * 7. "release" hook — best-effort kill of CWD-rooted processes (Windows
- *    file-lock cleanup; multi-second PowerShell scan)
+ * 7. "release" hook — best-effort kill of every process the workspace started
+ *    (the process monitor's attribution, wherever the process runs now)
  * 8. Emit workspace:hibernated (always, via finally) so the dispatcher's
  *    idempotency interceptor releases the per-workspace lock and the renderer
  *    clears its pending entry
@@ -121,7 +121,7 @@ export const hibernatePipelineHookInputSchema = hookCtxSchema(
 
 /**
  * Per-handler result for the "release" hook point.
- * Best-effort CWD-rooted process kill.
+ * Best-effort kill of the workspace's processes.
  */
 export const hibernateReleaseHookResultSchema = z
   .object({

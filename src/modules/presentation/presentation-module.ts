@@ -207,10 +207,13 @@ export interface PresentationModuleDeps {
   readonly onOpenNewWorkspace: (projectRef: ProjectRef | null, deselecting: boolean) => void;
   /**
    * The process monitor. The presenter owns `sidebar.process-summary`: it turns
-   * the monitor's polling on while the summary shows, and puts each
-   * workspace's totals on its row.
+   * the monitor's polling on while the summary shows, puts each workspace's
+   * totals on its row and CodeHydra's whole footprint on the sidebar (footer).
    */
-  readonly processMonitor: Pick<ProcessMonitorModule, "summaries" | "onSummaries" | "setWatching">;
+  readonly processMonitor: Pick<
+    ProcessMonitorModule,
+    "summaries" | "totals" | "onSummaries" | "setWatching"
+  >;
 }
 
 export type { RunningHook } from "./running-hooks";
@@ -946,6 +949,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
 
     const main = buildMain();
+    const processTotals = processSummary ? deps.processMonitor.totals() : null;
     return {
       // Clamp the stored width to the shared minimum so a hand-edited
       // config.json below the floor still yields a sane snapshot; the renderer
@@ -956,6 +960,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         mode: sidebarModeConfig.get(),
         find,
         processSummary,
+        ...(processTotals !== null && { processTotals }),
       },
       frames,
       main,

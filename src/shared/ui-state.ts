@@ -176,6 +176,16 @@ export interface UiProcessSummary {
   readonly count: number;
 }
 
+/** CodeHydra's whole footprint: its own process tree and every workspace's processes. */
+export interface UiProcessTotals {
+  /** `workspaces` and `codehydra` together, each process once. */
+  readonly all: UiProcessSummary;
+  /** Every process attributed to a workspace, wherever it runs. */
+  readonly workspaces: UiProcessSummary;
+  /** The rest of CodeHydra's process tree: the app, its helpers, the IDE server. */
+  readonly codehydra: UiProcessSummary;
+}
+
 export interface UiProjectRow {
   readonly id: string;
   readonly name: string;
@@ -256,6 +266,11 @@ export interface UiState {
     readonly find: UiSidebarFind | null;
     /** Whether rows show their workspace's CPU and memory (config `sidebar.process-summary`). */
     readonly processSummary: boolean;
+    /**
+     * Everything CodeHydra accounts for (the footer's summary), while
+     * `processSummary` is on and a scan has finished.
+     */
+    readonly processTotals?: UiProcessTotals;
   };
   /**
    * Mounted workspace iframes: key → IDE server URL. Every workspace with a

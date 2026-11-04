@@ -76,7 +76,8 @@ called that any more. Give it a different label with a title instead.
 ### Hibernation
 
 A workspace you're not using can be put to sleep to free its editor and agent
-server. A hibernated workspace keeps its branch and files and shows a
+server. Hibernating stops every [process](#processes) the workspace started.
+A hibernated workspace keeps its branch and files and shows a
 screenshot of where you left it — wake it any time to pick up where you left
 off, or give it a [wakeup script](#wakeup-scripts) that wakes it when
 something happens.
@@ -127,9 +128,11 @@ Projects are sorted by name.
   button, the **gear** (settings) and **?** (this guide). Hover any sidebar icon
   for what it does.
 - The **process summary** shows the CPU, memory and number of processes of what
-  each workspace runs, e.g. `12% 874M · 7`: at the end of each awake row, in a
-  collapsed project's header for the whole project, and in the footer for all
-  workspaces. Toggle it with the pulse button
+  each workspace runs, e.g. `12% 874M · 7`: at the end of each awake row, and
+  in a collapsed project's header for the whole project. The footer shows all
+  of CodeHydra: every workspace's processes plus CodeHydra's own (its window,
+  the editor server and their helpers), each counted once; hover it for the
+  split between the two. Toggle it with the pulse button
   (highlighted while on) or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>; the
   choice is saved as `sidebar.process-summary` (off by default). It refreshes
   every few seconds, only while it is on, and hibernated workspaces have none.
@@ -385,7 +388,7 @@ uncommitted or unmerged work is refused unless told to ignore warnings.)
 
 Deleting the workspace you are on moves you to another one. Select the
 deleting workspace to watch it: a progress panel shows the steps — terminating
-processes, stopping the agent server, closing the editor, running the
+[processes](#processes), stopping the agent server, closing the editor, running the
 plugins' `before-worktree-deleted` hooks (if any plugin has one; **Cancel**
 stops it while it runs), removing the worktree. If the deletion finishes while you are on it,
 you are moved away again; if it fails, you stay, and the panel offers
@@ -516,13 +519,19 @@ There are three ways to look:
   row for its command line and directory. It refreshes every few seconds
   while it is visible; the refresh button asks right away.
 - **The process summary** in the sidebar (see [The sidebar](#the-sidebar)):
-  every workspace's total at a glance.
+  every workspace's total at a glance, and in the footer all of CodeHydra.
+  CodeHydra's own processes — its window, the editor server — belong to no
+  workspace; they count only there.
 - **`ch ws processes`** (MCP `workspace_list_processes`) prints the same tree
   as JSON, for an agent checking what it left running.
 
 They only show: to stop a process, use its terminal, or hibernate or delete
-the workspace, which stops everything in it. Processes that other users or
-the system own (and, on Windows, elevated ones) cannot be inspected, and are
+the workspace, which stops everything in it — every process the workspace
+started, by the rules above, wherever it runs now: a dev server left running
+in the background, a program started from one of its terminals. Deleting also
+stops any other process whose working directory is inside the worktree, since
+the directory is going away; hibernating leaves those alone. Processes that
+other users or the system own (and, on Windows, elevated ones) cannot be inspected, and are
 missing from the list.
 
 On Windows, CodeHydra keeps typing in terminals responsive when the machine is

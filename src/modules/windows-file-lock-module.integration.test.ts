@@ -36,6 +36,13 @@ import type { MockProcessRunner } from "../boundaries/platform/process.state-moc
 import { wsPath, projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
 import { projectRefFor } from "../utils/ref";
 import { directoryHolders, type HolderScanCall } from "../boundaries/platform/process.state-mock";
+import type { WorkspaceRef } from "../intents/contract";
+import type { ProcessMonitorModule } from "./process-monitor/process-monitor-module";
+import { teardownMonitor, type TeardownCall } from "./release-sweep.test-utils";
+
+const WORKSPACE_REF = "ch::m::my-app::feature-1" as WorkspaceRef;
+/** A monitor that finds nothing running: for the hooks that do not ask it. */
+const NOTHING_RUNS = teardownMonitor([]);
 
 // =============================================================================
 // Test Helpers
@@ -69,6 +76,7 @@ const releaseOperation = createMinimalOperation<ReleaseHookResult>(
     hookContext: (ctx) => ({
       intent: ctx.intent,
       projectPath: testPath("/projects/my-app").toNative(),
+      workspaceRef: WORKSPACE_REF,
       workspacePath:
         ((ctx.intent as DeleteWorkspaceIntent).payload as { workspacePath?: string })
           .workspacePath ?? "",
@@ -119,7 +127,11 @@ function createFlushOperation(blockingPids: readonly number[]): Operation<Operat
 // Test Setup Helpers
 // =============================================================================
 
-function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
+function createReleaseSetup(
+  runner: MockProcessRunner,
+  processMonitor: Pick<ProcessMonitorModule, "teardownProcesses">,
+  logger = SILENT_LOGGER
+) {
   const dispatcher = new Dispatcher({
     logScope: new AsyncLogScopeStore(),
     logger: createMockLogger(),
@@ -129,6 +141,7 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
 
   const module = createWindowsFileLockModule({
     processRunner: runner,
+    processMonitor,
     logger,
   });
   dispatcher.registerModule(module);
@@ -146,6 +159,7 @@ function createDetectSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
 
   const module = createWindowsFileLockModule({
     processRunner: runner,
+    processMonitor: NOTHING_RUNS,
     logger,
   });
   dispatcher.registerModule(module);
@@ -167,6 +181,7 @@ function createFlushSetup(
 
   const module = createWindowsFileLockModule({
     processRunner: runner,
+    processMonitor: NOTHING_RUNS,
     logger,
   });
   dispatcher.registerModule(module);
@@ -190,26 +205,26 @@ describe("WindowsFileLockModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("delete-workspace -> release", () => {
-    it("kills CWD-blocking processes", async () => {
-      const calls: HolderScanCall[] = [];
-      runner = createMockProcessRunner({
-        directoryHolders: directoryHolders(
-          [{ pid: 1234, name: "node.exe", commandLine: "node server.js", cwd: "." }],
-          calls
-        ),
-      });
+    const NODE = { pid: 1234, name: "node.exe" };
 
-      const dispatcher = createReleaseSetup(runner);
+    it("kills what the workspace runs and what sits in its directory", async () => {
+      const calls: TeardownCall[] = [];
+      const holderScans: HolderScanCall[] = [];
+      runner = createMockProcessRunner({ directoryHolders: directoryHolders([], holderScans) });
+
+      const dispatcher = createReleaseSetup(runner, teardownMonitor([NODE], calls));
       await dispatcher.dispatch(makeDeleteIntent());
 
-      // A CWD-only scan of the workspace (the release runs before the removal)...
+      // The monitor's answer, directory included (the release runs before the
+      // removal); no directory scan of its own...
       expect(calls).toEqual([
         {
-          dir: testPath("/workspaces/feature-1").toNative(),
-          files: false,
-          timeoutMs: expect.any(Number) as number,
+          ref: WORKSPACE_REF,
+          path: testPath("/workspaces/feature-1").toNative(),
+          cwdInside: true,
         },
       ]);
+      expect(holderScans).toEqual([]);
       // ...and nothing spawned: the kill goes through the boundary, which waits
       // for the process to actually be gone rather than assuming a returning
       // taskkill means dead.
@@ -217,76 +232,42 @@ describe("WindowsFileLockModule Integration", () => {
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
-    it("still kills CWD-blocking processes when force=true", async () => {
+    it("still kills when force=true", async () => {
       // Dismiss after a refused pre-delete: that attempt stopped before this
       // hook, so an agent that ignored its close is still sitting in the
-      // worktree. Skipping the scan here left it holding the directory and the
+      // worktree. Skipping the sweep here left it holding the directory and the
       // force removal failing silently (EBUSY, swallowed as a force error).
-      const calls: HolderScanCall[] = [];
-      runner = createMockProcessRunner({
-        directoryHolders: directoryHolders(
-          [{ pid: 1234, name: "node.exe", commandLine: "claude", cwd: "." }],
-          calls
-        ),
-      });
-
-      const dispatcher = createReleaseSetup(runner);
+      const dispatcher = createReleaseSetup(runner, teardownMonitor([NODE]));
       await dispatcher.dispatch(makeDeleteIntent({ force: true }));
 
-      expect(calls.map((call) => call.files)).toEqual([false]);
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
-    it("reports a timed-out scan instead of silently passing", async () => {
-      runner = createMockProcessRunner({ directoryHolders: directoryHolders("timeout") });
-
-      const dispatcher = createReleaseSetup(runner);
+    it("reports a failed scan instead of silently passing", async () => {
+      const dispatcher = createReleaseSetup(runner, teardownMonitor(null));
       const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
 
       // Non-fatal — the removal is still attempted — but a scan that never
-      // finished must not look like a scan that found nothing. This used to be
-      // discarded by a bare catch, leaving the user with a failed deletion and
-      // a dialog claiming nothing was blocking.
-      expect(result.error).toContain("scan timed out");
+      // finished must not look like a scan that found nothing: that left a
+      // user with a failed deletion and a dialog claiming nothing was blocking.
+      expect(result.error).toContain("process scan failed");
+      expect(runner.$.killedPids).toEqual([]);
     });
 
     it("reports processes it could not terminate", async () => {
-      runner = createMockProcessRunner({
-        directoryHolders: directoryHolders([
-          { pid: 1234, name: "node.exe", commandLine: "node server.js", cwd: "." },
-        ]),
-        onKill: () => ({ success: false }),
-      });
+      runner = createMockProcessRunner({ onKill: () => ({ success: false }) });
 
-      const dispatcher = createReleaseSetup(runner);
+      const dispatcher = createReleaseSetup(runner, teardownMonitor([NODE]));
       const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
 
       expect(result.error).toContain("node.exe");
       expect(result.error).toContain("1234");
     });
 
-    it("skips kill when no processes detected", async () => {
-      const calls: HolderScanCall[] = [];
-      runner = createMockProcessRunner({ directoryHolders: directoryHolders([], calls) });
-
-      const dispatcher = createReleaseSetup(runner);
+    it("skips kill when nothing runs", async () => {
+      const dispatcher = createReleaseSetup(runner, teardownMonitor([]));
       await dispatcher.dispatch(makeDeleteIntent());
 
-      // Only the scan ran, and nothing was killed
-      expect(calls).toHaveLength(1);
-      expect(runner.$.killedPids).toEqual([]);
-    });
-
-    it("reports a scan that cannot run on the release result, killing nothing", async () => {
-      // A scan that never ran is not a workspace nothing holds.
-      runner = createMockProcessRunner({
-        directoryHolders: directoryHolders(new Error("no native addon")),
-      });
-
-      const dispatcher = createReleaseSetup(runner);
-      const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
-
-      expect(result.error).toContain("no native addon");
       expect(runner.$.killedPids).toEqual([]);
     });
   });
@@ -400,6 +381,7 @@ describe("WindowsFileLockModule Integration", () => {
         hookContext: (ctx) => ({
           intent: ctx.intent,
           projectPath: testPath("/projects/my-app").toNative(),
+          workspaceRef: WORKSPACE_REF,
           workspacePath:
             (ctx.intent as { payload: { workspacePath?: string } }).payload.workspacePath ?? "",
           projectId: "proj-1",
@@ -408,7 +390,10 @@ describe("WindowsFileLockModule Integration", () => {
       }
     );
 
-    function createHibernateReleaseSetup(r: MockProcessRunner) {
+    function createHibernateReleaseSetup(
+      r: MockProcessRunner,
+      processMonitor: Pick<ProcessMonitorModule, "teardownProcesses">
+    ) {
       const dispatcher = new Dispatcher({
         logScope: new AsyncLogScopeStore(),
         logger: createMockLogger(),
@@ -418,6 +403,7 @@ describe("WindowsFileLockModule Integration", () => {
       dispatcher.registerModule(
         createWindowsFileLockModule({
           processRunner: r,
+          processMonitor,
           logger: SILENT_LOGGER,
         })
       );
@@ -431,26 +417,21 @@ describe("WindowsFileLockModule Integration", () => {
       } as unknown as Intent;
     }
 
-    it("kills CWD-blocking processes (no force gate)", async () => {
-      const calls: HolderScanCall[] = [];
-      runner = createMockProcessRunner({
-        directoryHolders: directoryHolders(
-          [{ pid: 1234, name: "node.exe", commandLine: "node", cwd: "." }],
-          calls
-        ),
-      });
+    it("kills what the workspace runs, not what only sits in its directory", async () => {
+      const calls: TeardownCall[] = [];
 
-      const dispatcher = createHibernateReleaseSetup(runner);
+      const dispatcher = createHibernateReleaseSetup(
+        runner,
+        teardownMonitor([{ pid: 1234, name: "node.exe" }], calls)
+      );
       await dispatcher.dispatch(makeHibernateIntent());
 
-      expect(calls.map((call) => call.files)).toEqual([false]);
+      expect(calls.map((call) => call.cwdInside)).toEqual([false]);
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
-    it("swallows errors from detection during hibernation", async () => {
-      runner = createMockProcessRunner({ directoryHolders: directoryHolders(new Error("boom")) });
-
-      const dispatcher = createHibernateReleaseSetup(runner);
+    it("swallows errors from the scan during hibernation", async () => {
+      const dispatcher = createHibernateReleaseSetup(runner, teardownMonitor(new Error("boom")));
       const result = await dispatcher.dispatch(makeHibernateIntent());
 
       expect(result).toEqual({});

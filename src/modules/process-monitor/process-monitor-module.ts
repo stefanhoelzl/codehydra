@@ -7,12 +7,16 @@
  * `_CH_WORKSPACE` variable, working directory and ancestry (attribution.ts), then the listening ports of the
  * attributed processes only.
  *
- * Two consumers, two rhythms:
+ * Three consumers, three rhythms:
  * - The sidebar's process summary (`sidebar.process-summary`, owned by the
  *   presenter): while it is on (`setWatching(true)`), a scan runs every
  *   POLL_INTERVAL_MS — a chained timer, so a slow scan never stacks — and the
- *   per-workspace totals are published (`summaries`, `onSummaries`). Off, no
- *   timer runs and nothing is scanned.
+ *   per-workspace totals are published (`summaries`, `onSummaries`), with the
+ *   footer's totals of everything CodeHydra accounts for (`totals`: its own
+ *   process tree and every workspace's processes). Off, no timer runs and
+ *   nothing is scanned.
+ * - Hibernate and delete (`teardownProcesses`, the cleanup modules' release
+ *   sweep): a fresh scan of its own each time, without CPU or ports.
  * - `workspace.processes` (`ch ws processes`, MCP, the sidekick's Processes
  *   view): `list()` answers from a scan at most FRESH_MS old, joining one in
  *   flight rather than starting another. CPU is a rate, so a call with no
@@ -41,8 +45,12 @@ import { getErrorMessage } from "../../shared/error-utils";
 import {
   attributeProcesses,
   buildWorkspaceProcesses,
+  codeHydraTotals,
   cpuPercents,
+  teardownProcesses,
+  type CodeHydraTotals,
   type MonitoredWorkspace,
+  type TeardownProcess,
   WORKSPACE_ENV_VAR,
 } from "./attribution";
 
@@ -71,15 +79,31 @@ export interface ProcessMonitorModuleDeps {
 export interface ProcessMonitorModule extends IntentModule, ProcessMonitorAccess {
   /** Each workspace's totals from the last sidebar scan; empty while not watching. */
   summaries(): ReadonlyMap<WorkspaceRef, ProcessTotals>;
+  /**
+   * Everything CodeHydra accounts for — its own process tree and every
+   * workspace's processes — from the last sidebar scan; null while not watching.
+   */
+  totals(): CodeHydraTotals | null;
   /** Called after each sidebar scan, and when watching stops. */
   onSummaries(listener: () => void): Unsubscribe;
   /** Start or stop the sidebar's periodic scan. */
   setWatching(watching: boolean): void;
+  /**
+   * What tearing `workspace` down must stop, from a fresh scan (no CPU, no
+   * ports): every process attributed to it and, with `cwdInside`, every process
+   * whose working directory is in its worktree. Never the app or its
+   * ancestors. Null when the scan failed.
+   */
+  teardownProcesses(
+    workspace: MonitoredWorkspace,
+    options: { readonly cwdInside: boolean }
+  ): Promise<readonly TeardownProcess[] | null>;
 }
 
 interface Scan {
   readonly snapshot: ProcessSnapshot;
   readonly workspaces: ReadonlyMap<WorkspaceRef, WorkspaceProcesses>;
+  readonly totals: CodeHydraTotals;
 }
 
 export function createProcessMonitorModule(deps: ProcessMonitorModuleDeps): ProcessMonitorModule {
@@ -96,6 +120,7 @@ export function createProcessMonitorModule(deps: ProcessMonitorModuleDeps): Proc
   let lastScan: Scan | null = null;
   let inFlight: Promise<Scan | null> | null = null;
   let summaries = new Map<WorkspaceRef, ProcessTotals>();
+  let totals: CodeHydraTotals | null = null;
   /** The last scan failed: logged once, again only after a success. */
   let failing = false;
 
@@ -140,6 +165,7 @@ export function createProcessMonitorModule(deps: ProcessMonitorModuleDeps): Proc
     const scan: Scan = {
       snapshot: current,
       workspaces: buildWorkspaceProcesses(current, owners, cpu, ports),
+      totals: codeHydraTotals(current.processes, owners, cpu, deps.appPid),
     };
     lastScan = scan;
     return scan;
@@ -162,6 +188,7 @@ export function createProcessMonitorModule(deps: ProcessMonitorModuleDeps): Proc
     // A failed scan keeps the last totals: a blip should not blank the sidebar.
     if (scan !== null) {
       summaries = new Map([...scan.workspaces].map(([ref, entry]) => [ref, entry.total]));
+      totals = scan.totals;
     }
     for (const listener of listeners) listener();
   }
@@ -219,6 +246,8 @@ export function createProcessMonitorModule(deps: ProcessMonitorModuleDeps): Proc
 
     summaries: () => summaries,
 
+    totals: () => totals,
+
     onSummaries(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -235,6 +264,7 @@ export function createProcessMonitorModule(deps: ProcessMonitorModuleDeps): Proc
       deps.logger.info("Process monitoring stopped");
       stopPolling();
       summaries = new Map();
+      totals = null;
       for (const listener of listeners) listener();
     },
 
@@ -252,6 +282,27 @@ export function createProcessMonitorModule(deps: ProcessMonitorModuleDeps): Proc
           processes: [],
         }
       );
+    },
+
+    async teardownProcesses(workspace, options) {
+      try {
+        // Always fresh: the shutdown just before it stopped (and started) things.
+        const [current, known] = await Promise.all([snapshot(), workspaces()]);
+        // The app is always running: a snapshot without it did not see the
+        // machine, and "nothing to stop" from it would be a guess.
+        if (current === null || !current.processes.some((entry) => entry.pid === deps.appPid)) {
+          return null;
+        }
+        // A workspace being deleted may already be gone from the list.
+        const monitored = known.some((entry) => entry.ref === workspace.ref)
+          ? known
+          : [...known, workspace];
+        const owners = attributeProcesses(current.processes, monitored, deps.appPid);
+        return teardownProcesses(current.processes, owners, workspace, deps.appPid, options);
+      } catch (error) {
+        deps.logger.warn("Process scan for teardown failed", { error: getErrorMessage(error) });
+        return null;
+      }
     },
   };
 }

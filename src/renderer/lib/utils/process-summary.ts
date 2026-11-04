@@ -3,7 +3,7 @@
  * the row (`12% 874M · 7`) and a spelled-out tooltip. Pure.
  */
 
-import type { UiProcessSummary } from "@shared/ui-state";
+import type { UiProcessSummary, UiProcessTotals } from "@shared/ui-state";
 
 const KIB = 1024;
 const MIB = KIB * 1024;
@@ -36,8 +36,19 @@ export function describeProcessSummary(summary: UiProcessSummary): string {
 }
 
 /**
- * The summaries added up: a collapsed project's, or every workspace's (the
- * footer). Null when none of them has one (the summary is off, or every row
+ * The footer badge's tooltip: CodeHydra's whole footprint, then its split into
+ * the workspaces' processes and CodeHydra's own.
+ */
+export function describeProcessTotals(totals: UiProcessTotals): string {
+  return [
+    `All of CodeHydra: ${describeProcessSummary(totals.all)}`,
+    `Workspaces: ${describeProcessSummary(totals.workspaces)}`,
+    `CodeHydra itself: ${describeProcessSummary(totals.codehydra)}`,
+  ].join("\n");
+}
+
+/**
+ * The summaries added up: a collapsed project's. Null when none of them has one (the summary is off, or every row
  * is hibernated). CPU stays null only when none has a reading yet.
  */
 export function sumProcessSummaries(

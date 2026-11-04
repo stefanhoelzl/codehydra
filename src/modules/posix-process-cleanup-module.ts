@@ -1,63 +1,28 @@
 /**
- * PosixProcessCleanupModule — Kills processes whose CWD is under the workspace path during deletion or hibernation.
+ * PosixProcessCleanupModule — stops what still runs in a workspace when it is
+ * deleted or hibernated.
  *
- * Hooks (flow and error policy shared with windows-file-lock-module, see cwd-release-kill):
- * - delete-workspace → release: find the processes whose CWD is inside the
- *   workspace, terminate them; a timed-out scan, a failure or a survivor is
+ * Hooks (flow and error policy shared with windows-file-lock-module, see release-sweep):
+ * - delete-workspace → release: terminate every process the workspace started
+ *   and every process whose CWD is inside it; a failed scan or a survivor is
  *   reported on the release result
- * - hibernate-workspace → release: Same CWD scan + terminate, runs after shutdown;
- *   failures are logged
+ * - hibernate-workspace → release: terminate every process the workspace
+ *   started, after shutdown; failures are logged
  *
- * Detection is `ProcessRunner.findDirectoryHolders` (the native addon's process
- * list, filtered by working directory): no `lsof`, which may be missing, and
- * no walk of the workspace tree, which `lsof +D` did and node_modules made slow.
+ * What the workspace started is the process monitor's attribution
+ * (`teardownProcesses`); termination is `ProcessRunner.kill`.
  */
 
 import type { IntentModule } from "../intents/lib/module";
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { ProcessRunner } from "../boundaries/platform/process";
+import type { ProcessMonitorModule } from "./process-monitor/process-monitor-module";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../intents/hibernate-workspace";
-import { createCwdReleaseHandlers, type CwdScan } from "./cwd-release-kill";
+import { createReleaseSweepHandlers } from "./release-sweep";
 import { defineHooks } from "../intents/declarations";
 
-/** A process with its working directory inside the workspace. */
-export interface DetectedProcess {
-  readonly pid: number;
-  readonly name: string;
-  /** Relative to the workspace ("." for the workspace itself). */
-  readonly cwd: string;
-}
-
-const DETECT_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
-
-/**
- * Detect processes whose CWD is under the given workspace path.
- *
- * A scan that cannot run throws, so the release reports it rather than
- * mistaking it for a workspace nothing holds.
- * Exported for testing.
- */
-export async function detectCwdProcesses(
-  processRunner: ProcessRunner,
-  workspacePath: string,
-  logger: Logger
-): Promise<CwdScan & { readonly processes: readonly DetectedProcess[] }> {
-  const scan = await processRunner.findDirectoryHolders(workspacePath, {
-    timeoutMs: DETECT_TIMEOUT_MS,
-  });
-  if (scan.timedOut) {
-    logger.scoped({ path: workspacePath }).warn("Process detection timed out");
-    return { processes: [], timedOut: true };
-  }
-  return {
-    processes: scan.holders.flatMap(({ pid, name, cwd }) =>
-      cwd === null ? [] : [{ pid, name, cwd }]
-    ),
-    timedOut: false,
-  };
-}
 
 /**
  * Terminate a list of PIDs and wait until they are gone.
@@ -72,7 +37,7 @@ export async function detectCwdProcesses(
  * Exported for testing.
  */
 export async function killPosixProcesses(
-  processRunner: ProcessRunner,
+  processRunner: Pick<ProcessRunner, "kill">,
   pids: readonly number[]
 ): Promise<number[]> {
   const outcomes = await Promise.all(
@@ -85,14 +50,15 @@ export async function killPosixProcesses(
 }
 
 interface PosixProcessCleanupModuleDeps {
-  readonly processRunner: ProcessRunner;
+  readonly processRunner: Pick<ProcessRunner, "kill">;
+  readonly processMonitor: Pick<ProcessMonitorModule, "teardownProcesses">;
   readonly logger: Logger;
 }
 
 export function createPosixProcessCleanupModule(deps: PosixProcessCleanupModuleDeps): IntentModule {
-  const { deleteRelease, hibernateRelease } = createCwdReleaseHandlers(
+  const { deleteRelease, hibernateRelease } = createReleaseSweepHandlers(
     {
-      detect: (workspacePath) => detectCwdProcesses(deps.processRunner, workspacePath, deps.logger),
+      processMonitor: deps.processMonitor,
       kill: (pids) => killPosixProcesses(deps.processRunner, pids),
     },
     deps.logger

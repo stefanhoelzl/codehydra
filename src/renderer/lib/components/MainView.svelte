@@ -175,6 +175,7 @@
     sidebarMode={ui.sidebar.mode}
     find={ui.sidebar.find}
     processSummary={ui.sidebar.processSummary}
+    processTotals={ui.sidebar.processTotals}
     notifications={ui.notifications}
     {mode}
     shortcutModeActive={mode === "shortcut"}

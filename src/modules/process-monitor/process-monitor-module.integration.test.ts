@@ -244,3 +244,77 @@ describe("process monitor: sidebar polling", () => {
     expect(setup.scans).toBe(scans);
   });
 });
+
+describe("process monitor: CodeHydra's totals", () => {
+  it("publishes the app's tree and every workspace's processes while watched, none after", async () => {
+    const setup = createSetup();
+    // The app (pid 1) with an IDE server (2) and a terminal (3) in alpha, plus
+    // an orphan of beta's that left the app's tree.
+    setup.setMachine([
+      proc(APP_PID, 0, "/"),
+      proc(2, APP_PID, "/"),
+      proc(3, APP_PID, "/ws/alpha"),
+      proc(40, 0, "/ws/beta"),
+      proc(50, 0, "/home"),
+    ]);
+    await setup.start();
+    expect(setup.monitor.totals()).toBeNull();
+
+    setup.monitor.setWatching(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(setup.monitor.totals()).toMatchObject({
+      all: { count: 4 },
+      workspaces: { count: 2, rssBytes: 1024 * (3 + 40) },
+      codehydra: { count: 2, rssBytes: 1024 * (APP_PID + 2) },
+    });
+
+    setup.monitor.setWatching(false);
+    expect(setup.monitor.totals()).toBeNull();
+  });
+});
+
+describe("process monitor: teardownProcesses", () => {
+  const alpha = { ref: ALPHA, path: "/ws/alpha" };
+
+  it("answers from a fresh scan: what the workspace started, wherever it runs", async () => {
+    const setup = createSetup();
+    setup.setMachine([
+      proc(APP_PID, 0, "/"),
+      proc(10, APP_PID, "/ws/alpha"),
+      proc(20, 0, "/srv"), // a detached dev server
+      proc(30, 0, "/ws/alpha/pkg"), // beta's build in alpha's worktree
+    ]);
+    setup.setEnvironments({ 20: { _CH_WORKSPACE: ALPHA }, 30: { _CH_WORKSPACE: BETA } });
+
+    await expect(setup.monitor.teardownProcesses(alpha, { cwdInside: false })).resolves.toEqual([
+      { pid: 10, name: "p10" },
+      { pid: 20, name: "p20" },
+    ]);
+    await expect(setup.monitor.teardownProcesses(alpha, { cwdInside: true })).resolves.toEqual([
+      { pid: 10, name: "p10" },
+      { pid: 20, name: "p20" },
+      { pid: 30, name: "p30" },
+    ]);
+    // Two calls, two scans: never a cached one.
+    expect(setup.scans).toBe(2);
+  });
+
+  it("still knows a workspace already gone from the project list", async () => {
+    const setup = createSetup();
+    setup.setMachine([proc(APP_PID, 0, "/"), proc(10, APP_PID, "/ws/gone")]);
+    const gone = { ref: "ch::m::p::gone" as WorkspaceRef, path: "/ws/gone" };
+
+    await expect(setup.monitor.teardownProcesses(gone, { cwdInside: false })).resolves.toEqual([
+      { pid: 10, name: "p10" },
+    ]);
+  });
+
+  it("is null when the scan failed, or saw nothing (not even the app)", async () => {
+    const setup = createSetup({ failScan: true });
+    await expect(setup.monitor.teardownProcesses(alpha, { cwdInside: true })).resolves.toBeNull();
+
+    setup.setFailing(false);
+    setup.setMachine([]);
+    await expect(setup.monitor.teardownProcesses(alpha, { cwdInside: true })).resolves.toBeNull();
+  });
+});
