@@ -338,6 +338,9 @@
     background: var(--ch-sb-s3);
     color: var(--ch-sb-fg);
   }
+  .ib[data-act="remove"] {
+    color: var(--ch-sb-danger);
+  }
   .ws.hibernated .title {
     color: var(--ch-sb-fg-3);
   }

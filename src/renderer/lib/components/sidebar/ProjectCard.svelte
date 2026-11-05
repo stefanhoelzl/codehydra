@@ -346,6 +346,9 @@
     background: var(--ch-sb-s2);
     color: var(--ch-sb-fg);
   }
+  .ib[data-act="closeproj"] {
+    color: var(--ch-sb-danger);
+  }
   .hov {
     display: none;
   }
