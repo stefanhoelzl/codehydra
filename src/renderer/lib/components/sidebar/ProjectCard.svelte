@@ -2,7 +2,7 @@
   ProjectCard.svelte
 
   One project: a header bar (letter badge, name, hibernated/automated counts
-  or the collapsed counts, close and +) over its rows. Every row is always in
+  or the collapsed counts, the process total, close and +) over its rows. Every row is always in
   the page and folds open or closed, so collapsing, opening the hibernated list
   or entering Find animates.
 
@@ -24,6 +24,7 @@
     type RowAction,
     type SidebarView,
   } from "$lib/utils/sidebar-model.js";
+  import { watchFit } from "$lib/utils/watch-fit.js";
   import SidebarIcon from "./SidebarIcon.svelte";
   import Highlighted from "./Highlighted.svelte";
   import {
@@ -94,11 +95,15 @@
   // Only an idle agent, as the row's green dot and the footer count it: a
   // workspace with no agent (yet, e.g. during startup) is not waiting for you.
   const idle = $derived(project.workspaces.filter((row) => rowGlyph(row) === "idle").length);
-  // With the process summary on, a collapsed card totals its rows' CPU and
-  // memory, since the rows themselves are hidden (null otherwise).
+  // With the process summary on, the header totals its rows' CPU and memory
+  // (null otherwise); as just an icon with a tooltip when the numbers don't fit.
   const processTotal = $derived(
     sumProcessSummaries(project.workspaces.map((row) => row.processes))
   );
+  const processTip = $derived(
+    processTotal === null ? "" : `${project.name}: ${describeProcessSummary(processTotal)}`
+  );
+  let totalFits = $state(true);
   const hibernatedOpen = $derived(project.hibernatedView !== "hidden");
   const color = $derived(projectColor(project.colorIndex));
 
@@ -180,7 +185,9 @@
 >
   <div
     class="proj-h"
+    class:stats={processTotal !== null}
     data-act="toggle"
+    use:watchFit={(fits) => (totalFits = fits)}
     title={`${folds.expanded ? "Collapse" : "Expand"} ${project.name}`}
   >
     <span class="mono-av">{project.name.slice(0, 1).toUpperCase()}</span>
@@ -191,14 +198,6 @@
         {#if running > 0}<i><span class="ring busy"></span>{running}</i>{/if}
         {#if idle > 0}<i><span class="dot idle"></span>{idle}</i>{/if}
       </span>
-      {#if processTotal !== null}
-        <span
-          class="cnt proc"
-          title={`${project.name}: ${describeProcessSummary(processTotal)}`}
-          aria-label={`${project.name}: ${describeProcessSummary(processTotal)}`}
-          >{formatProcessBadge(processTotal)}</span
-        >
-      {/if}
     {:else if hibernated.length + automated.length > 0}
       <button
         type="button"
@@ -213,7 +212,20 @@
           >{/if}</button
       >
     {/if}
-    <span class="spacer"></span>
+    {#if processTotal !== null}
+      <span
+        class="cnt proc"
+        class:overflowed={!totalFits}
+        title={processTip}
+        aria-label={processTip}>{formatProcessBadge(processTotal)}</span
+      >
+      {#if !totalFits}
+        <span class="proc-icon" data-fit-skip title={processTip} aria-label={processTip}
+          ><SidebarIcon name="pulse" /></span
+        >
+      {/if}
+    {/if}
+    <span class="spacer" data-fit-grow></span>
     <button
       type="button"
       class="ib hov"
@@ -269,6 +281,7 @@
     box-shadow: var(--ch-sb-card-shadow);
   }
   .proj-h {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 5px;
@@ -355,6 +368,15 @@
   .proj-h:hover .hov {
     display: grid;
   }
+  /* With a process total, the close button's room is always taken: hovering
+     must not change what fits. */
+  .proj-h.stats .hov {
+    display: grid;
+    visibility: hidden;
+  }
+  .proj-h.stats:hover .hov {
+    visibility: visible;
+  }
   .proj-h :global(.sb-icon.chev) {
     width: 12px;
     height: 12px;
@@ -413,8 +435,22 @@
     flex: none;
     padding: 0 4px;
   }
+  /* The worst-case width (see watchFit): digits changing can't flip it. */
   .cnt.proc {
     color: var(--ch-sb-fg-2);
+    min-width: 13ch; /* `999% 12G · 99` and the padding */
+  }
+  .cnt.proc.overflowed {
+    position: absolute;
+    left: 0;
+    top: 0;
+    visibility: hidden;
+  }
+  .proc-icon {
+    display: grid;
+    place-items: center;
+    flex: none;
+    color: var(--ch-sb-accent);
   }
   .cnt i {
     font-style: normal;

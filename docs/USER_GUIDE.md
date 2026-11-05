@@ -128,11 +128,14 @@ Projects are sorted by name.
   button, the **gear** (settings) and **?** (this guide). Hover any sidebar icon
   for what it does.
 - The **process summary** shows the CPU, memory and number of processes of what
-  each workspace runs, e.g. `12% 874M · 7`: at the end of each awake row, and
-  in a collapsed project's header for the whole project. The footer shows all
+  each workspace runs, e.g. `12% 874M · 7`: on the second line of each awake
+  row, and in each project's header for the whole project. The footer shows all
   of CodeHydra: every workspace's processes plus CodeHydra's own (its window,
   the editor server and their helpers), each counted once; hover it for the
-  split between the two. Toggle it with the pulse button
+  split between the two. Where a header or the footer has no room for the
+  numbers they make way: a header shows a pulse icon with the numbers as its
+  tooltip, and the footer's total moves to the pulse button's tooltip. Toggle
+  it with the pulse button
   (highlighted while on) or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>; the
   choice is saved as `sidebar.process-summary` (off by default). It refreshes
   every few seconds, only while it is on, and hibernated workspaces have none.
@@ -148,8 +151,7 @@ projects open, colors repeat.
 - Click the header bar to **collapse** the project to its header, and again to
   expand it; each project remembers this, also after a restart. A collapsed
   project counts its working and waiting workspaces
-  ([status](#status-indicators)), and with the process summary on shows the
-  project's CPU and memory. Collapsing
+  ([status](#status-indicators)). Collapsing
   the project you are in moves you to the first awake workspace of the next
   expanded project, as <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>↓</kbd> would from its
   last workspace; there is none when every other project is collapsed, and
@@ -181,10 +183,11 @@ projects open, colors repeat.
 
 A workspace row shows its title (or its name if it has none); with a title, the
 second line shows the branch. Tags follow, each in its color and with its label,
-and its description on hover. A title that does not fit ends in "…". The end
-of the row says **working** while the agent works (with the process summary
-on, the workspace's CPU and memory instead), and for a hibernated workspace
-how long it has slept. Hovering a row shows its actions: hibernate
+and its description on hover. With the process summary on, every awake row has
+a second line, ending in the workspace's CPU and memory; the branch and tags
+clip to leave them room. A title that does not fit ends in "…". The end of the
+row says **working** while the agent works, and for a hibernated workspace how
+long it has slept. Hovering a row shows its actions: hibernate
 (moon) and remove (trash), or retry and remove for one that could not be
 opened, or remove for a hibernated one.
 
