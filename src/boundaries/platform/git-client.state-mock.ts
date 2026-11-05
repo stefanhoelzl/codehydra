@@ -87,6 +87,8 @@ interface RepositoryState {
   remoteUrl?: string;
   /** What `resolveCommit` answers: revision -> commit hash */
   revisions: Map<string, string>;
+  /** What `exportFolder` writes: `<commit>:<folder>` -> relative file path -> content */
+  folders: Map<string, Readonly<Record<string, string>>>;
 }
 
 // =============================================================================
@@ -141,6 +143,8 @@ export interface RepositoryInit {
   readonly remoteUrl?: string;
   /** What `resolveCommit` answers: revision -> commit hash (a 40-hex revision always resolves to itself) */
   readonly revisions?: Readonly<Record<string, string>>;
+  /** What `exportFolder` writes: `<commit>:<folder>` -> relative file path -> content */
+  readonly folders?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
 
 /**
@@ -357,6 +361,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         currentBranch,
         isBare: init.isBare ?? false,
         revisions: new Map(Object.entries(init.revisions ?? {})),
+        folders: new Map(Object.entries(init.folders ?? {})),
       };
       if (init.serverDefaultBranch !== undefined) {
         repoState.serverDefaultBranch = init.serverDefaultBranch;
@@ -496,6 +501,23 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         prunable: false,
       });
       await options?.fileSystem?.mkdir(worktreePath);
+    },
+
+    async exportFolder(
+      repoPath: Path,
+      commit: string,
+      folder: string,
+      destination: Path
+    ): Promise<boolean> {
+      const repo = getRepoOrThrow(repoPath);
+      const files = repo.folders.get(`${commit}:${folder}`);
+      if (files === undefined) return false;
+      for (const [name, content] of Object.entries(files)) {
+        const path = new Path(destination, name);
+        await options?.fileSystem?.mkdir(path.dirname);
+        await options?.fileSystem?.writeFile(path, content);
+      }
+      return true;
     },
 
     async resolveCommit(repoPath: Path, rev: string): Promise<string | null> {
@@ -795,6 +817,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
           ["origin/HEAD", fakeCommit(url, "main")],
           ["origin/main", fakeCommit(url, "main")],
         ]),
+        folders: new Map(),
       });
       await options?.fileSystem?.mkdir(targetPath);
     },
@@ -827,6 +850,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         currentBranch: hasCommit ? "main" : null,
         isBare: false,
         revisions: new Map(),
+        folders: new Map(),
       });
     },
   };

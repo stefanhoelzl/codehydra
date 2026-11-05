@@ -22,7 +22,8 @@
  *   every tick raises one card, not one per tick — with an Open log button for
  *   its newest failed run (scripts/failure-cards.ts);
  * - the failure is forgotten, and its card closed, when the job next succeeds
- *   or is no longer collected (its automation removed, its workspace woken).
+ *   or is no longer collected (its automation removed, its workspace woken). A
+ *   job not due this tick says so (`markWaiting`), and keeps its failure.
  *   A failure that left no run log (the script never started) is kept as past
  *   until restart; one with a log is recorded by its log.
  *
@@ -98,6 +99,11 @@ export interface PollModule extends IntentModule {
    * app started, optionally of one owner — the ones with a log are their logs.
    */
   pastErrors(owner?: string): readonly PollError[];
+  /**
+   * A job its owner left out of this tick because it is not due, not because it
+   * is gone: its failure stands. Called while collecting.
+   */
+  markWaiting(job: Pick<PollJob, "owner" | "id">): void;
 }
 
 function jobKey(job: Pick<PollJob, "owner" | "id">): string {
@@ -358,5 +364,8 @@ export function createPollModule(deps: PollModuleDeps): PollModule {
       [...failures.values()].filter((entry) => owner === undefined || entry.owner === owner),
     pastErrors: (owner) =>
       past.list().filter((entry) => owner === undefined || entry.owner === owner),
+    markWaiting: (job) => {
+      reported.add(jobKey(job));
+    },
   };
 }

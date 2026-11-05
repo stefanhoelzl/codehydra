@@ -3,9 +3,10 @@
  *
  * The plugins themselves live in the plugin module and are reached through
  * `deps.plugins`; these entries turn a caller into the scope a list is read in
- * and shape the answer. A repository's plugins belong to the caller's workspace
+ * and shape the answer. A repository's hooks belong to the caller's workspace
  * — the one `ch` resolved from its working directory, or the one `--workspace` names — so a
- * caller outside every workspace sees the user's own plugins only.
+ * caller outside every workspace sees the user's own plugins, and only what open
+ * projects hold on their default branches.
  */
 
 import { isAbsolute } from "node:path";
@@ -23,6 +24,7 @@ import type {
 } from "./deps";
 import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
+import type { Dispatcher } from "../../intents/lib/dispatcher";
 import { createTargetResolver, targetFields, type TargetInput } from "./target";
 
 const idSchema = z
@@ -65,12 +67,15 @@ function sourceRow(source: PluginSourceListing): Record<string, string> {
   };
 }
 
-export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
-  const { dispatcher } = deps;
+/**
+ * The workspace an input names, else the caller's — and its project; none
+ * outside one. Where a repository's plugins are read and written.
+ */
+export function createPluginScopeResolver(
+  dispatcher: Dispatcher
+): (ctx: OperationContext, input: TargetInput) => Promise<PluginScope> {
   const resolveTarget = createTargetResolver(dispatcher);
-
-  /** The workspace the input names, else the caller's — and its project; none outside one. */
-  const scopeOf = async (ctx: OperationContext, input: TargetInput): Promise<PluginScope> => {
+  return async (ctx, input) => {
     const named = input.workspace !== undefined || input.project !== undefined;
     if (!named && ctx.workspaceRef === null) return { workspace: null };
     const workspaceRef = await resolveTarget(ctx, input);
@@ -86,6 +91,10 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       },
     };
   };
+}
+
+export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
+  const scopeOf = createPluginScopeResolver(deps.dispatcher);
 
   const list = defineEntry({
     name: "plugin.list",
@@ -95,7 +104,8 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "One row per plugin: its name (<type>:<entry>:<name> — local:default:<name> for yours " +
       "in ~/.codehydra/plugins, local:<entry>:<name> and remote:<entry>:<name> for the folders " +
       "and repositories plugins.config lists, project:<project>:<name> for this repository's " +
-      "in .codehydra/plugins), whether it is enabled, disabled or not asked about yet (ask), " +
+      "in .codehydra/plugins, and every open project's on its default branch, which is where " +
+      "its automations run from), whether it is enabled, disabled or not asked about yet (ask), " +
       "the platforms it has scripts for, a remote's checkout (commit, when fetched — or " +
       "cloning, or why the fetch failed) and where it is. A remote not checked out yet shows " +
       "as remote:<entry>:*. What a plugin contributes is in its manifest; `ch plugin errors` " +
@@ -197,7 +207,8 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "Fetches one remote entry of plugins.config, or every one, and switches it to what its " +
       "ref names now. Remotes are otherwise fetched only when CodeHydra starts. A script " +
       "already running finishes in the checkout it started in. A fetch that fails leaves the " +
-      "last checkout running; the row says why.",
+      "last checkout running; the row says why. Without a name, the open projects are fetched " +
+      "too, which is how a merge reaches a repository's automations.",
     input: z.object({
       name: z.string().min(1).optional().describe("The entry's name (default: every remote)"),
     }),

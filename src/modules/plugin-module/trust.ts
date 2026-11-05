@@ -20,6 +20,10 @@
  * A plugin the repository adds later is at `ask` again, so the dialog comes
  * back for it alone. `ch plugin enable|disable` sets the same state.
  *
+ * One answer covers all a plugin contributes: its hooks, read from the worktree,
+ * and its automations, read from the default branch. An automation never waits
+ * for it (`checkNow`): it is skipped until the question is answered.
+ *
  * It is asked for every dispatch, whatever its source. There is always a window
  * to show it in, and the alternative — skipping silently when the caller is the
  * CLI — would mean a repository's deletion gate could be walked past by typing
@@ -73,7 +77,8 @@ export interface TrustProject {
 
 export interface TrustRequest {
   readonly project: TrustProject;
-  readonly workspaceRef: WorkspaceRef;
+  /** The workspace the question is about, for its sidebar row; none for an automation. */
+  readonly workspaceRef?: WorkspaceRef;
   /** The workspace plugins about to run, by name. */
   readonly plugins: readonly string[];
 }
@@ -88,6 +93,19 @@ export interface PluginTrust {
    * whatever the user allows when asked about those at `ask`.
    */
   check(request: TrustRequest): Promise<ReadonlySet<string>>;
+  /**
+   * The same answer for something that must not wait and runs again and again:
+   * an automation. What is enabled, or was allowed until restart, may run;
+   * anything unanswered is `waiting`, and asked about in the background.
+   *
+   * "Just this time" holds until restart here, and a dismissal or an unchecked
+   * box counts as no until then: a poll comes round every minute, and would
+   * otherwise ask every minute.
+   */
+  checkNow(
+    project: TrustProject,
+    plugins: readonly string[]
+  ): { readonly allowed: ReadonlySet<string>; readonly waiting: ReadonlySet<string> };
   /**
    * Bring answers stored by older versions to today's keys: `local:<name>` is
    * the default folder's (`local:default:<name>`), `workspace:` is `project:`,
@@ -228,7 +246,7 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
       kind: "modal",
       // The first question usually comes from after-worktree-created, while the
       // row is still a placeholder; it has its ref already.
-      workspaceRef: request.workspaceRef,
+      ...(request.workspaceRef !== undefined && { workspaceRef: request.workspaceRef }),
     });
 
     try {
@@ -296,8 +314,52 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
     return allowed;
   }
 
+  /** Automations' answers until restart, by plugin key. */
+  const untilRestart = new Map<string, boolean>();
+  /** Plugin keys a background question is out for. */
+  const beingAsked = new Set<string>();
+
+  function checkNow(
+    project: TrustProject,
+    plugins: readonly string[]
+  ): { readonly allowed: ReadonlySet<string>; readonly waiting: ReadonlySet<string> } {
+    const allowed = new Set<string>();
+    const waiting = new Set<string>();
+    const unasked: string[] = [];
+    const keyOf = (name: string): string => trustKey(PROJECT_SOURCE, name, project.ref);
+
+    for (const name of plugins) {
+      const current = state(PROJECT_SOURCE, name, project);
+      if (current === "enabled") allowed.add(name);
+      if (current !== "ask") continue;
+      const answer = untilRestart.get(keyOf(name));
+      if (answer === true) allowed.add(name);
+      if (answer !== undefined) continue;
+      waiting.add(name);
+      if (!beingAsked.has(keyOf(name))) unasked.push(name);
+    }
+
+    if (unasked.length > 0) {
+      for (const name of unasked) beingAsked.add(keyOf(name));
+      void check({ project, plugins: unasked })
+        .then((answers) => {
+          for (const name of unasked) untilRestart.set(keyOf(name), answers.has(name));
+        })
+        .catch((error: unknown) => {
+          deps.logger.warn("Could not ask about a repository's automations", {
+            error: getErrorMessage(error),
+          });
+        })
+        .finally(() => {
+          for (const name of unasked) beingAsked.delete(keyOf(name));
+        });
+    }
+    return { allowed, waiting };
+  }
+
   return {
     state,
+    checkNow,
     async set(source, name, next, project) {
       await persist({
         [trustKey(source, name, project)]: next === "ask" ? undefined : next === "enabled",
