@@ -9,6 +9,8 @@
  */
 
 import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessRunner, SpawnedProcess } from "./process";
 import { loadNativeAddon, nativeAddonFileName, type NativeAddon } from "./native-addon";
@@ -134,6 +136,9 @@ export function spawnWithExitCode(runner: ProcessRunner, exitCode: number): Spaw
   return runner.run(process.execPath, ["-e", script]);
 }
 
+/** How long `spawnIgnoringSignals` waits for the shell to reach its trap. */
+const TRAP_INSTALL_TIMEOUT_MS = 2000;
+
 /**
  * Spawn a process that ignores SIGTERM.
  * **Unix-only** - use with it.skipIf(isWindows).
@@ -141,23 +146,41 @@ export function spawnWithExitCode(runner: ProcessRunner, exitCode: number): Spaw
  * On Windows, SIGTERM is not trappable - it calls TerminateProcess
  * which immediately kills the process (similar to SIGKILL on Unix).
  *
+ * Resolves only once the shell has installed its trap. Until then SIGTERM still
+ * kills it, and a test that signals that early races the shell's startup: on
+ * macOS the lookup before a tree kill takes about as long as `sh` takes to reach
+ * `trap`. The shell creates a marker file after `trap` to say it got there.
+ *
  * @param runner - ProcessRunner to use for spawning
- * @returns SpawnedProcess handle
- * @throws Error if called on Windows
+ * @returns SpawnedProcess handle, already ignoring SIGTERM
+ * @throws Error if called on Windows, or if the shell does not get there in time
  *
  * @example
  * it.skipIf(isWindows)("escalates SIGTERM to SIGKILL", async () => {
- *   const proc = spawnIgnoringSignals(runner);
- *   proc.kill("SIGTERM"); // Ignored on Unix
- *   proc.kill("SIGKILL"); // Works
+ *   const proc = await spawnIgnoringSignals(runner);
+ *   await proc.kill(500, 1000); // SIGTERM is ignored, so this escalates to SIGKILL
  * });
  */
-export function spawnIgnoringSignals(runner: ProcessRunner): SpawnedProcess {
+export async function spawnIgnoringSignals(runner: ProcessRunner): Promise<SpawnedProcess> {
   if (isWindows) {
     throw new Error("spawnIgnoringSignals is only supported on Unix platforms");
   }
-  // Use shell trap to ignore SIGTERM, then sleep
-  return runner.run("sh", ["-c", 'trap "" TERM; sleep 60']);
+  const dir = await mkdtemp(join(tmpdir(), "spawn-ignoring-signals-"));
+  try {
+    const marker = join(dir, "trap-installed");
+    const proc = runner.run("sh", ["-c", 'trap "" TERM; : > "$1"; sleep 60', "sh", marker]);
+    const deadline = Date.now() + TRAP_INSTALL_TIMEOUT_MS;
+    while (!existsSync(marker)) {
+      if (Date.now() >= deadline) {
+        await proc.kill(0, 100);
+        throw new Error(`sh did not install its trap within ${TRAP_INSTALL_TIMEOUT_MS}ms`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    return proc;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 /**
