@@ -187,6 +187,7 @@ Nested `AGENTS.md` files load automatically when you work in their directory; sk
 | Native addon (OS queries)      | docs/INTENTS.md (Native Addon)                                |
 | Config, state.json, logs       | docs/CONFIGURATION.md, skill `config-key`                     |
 | Driving the app (UI debugging) | skill `appctrl`                                               |
+| Reviewing a change in the app  | skill `app-review`                                            |
 | PostHog crash / bug reports    | skill `posthog-issue`                                         |
 | Architecture, core concepts    | docs/ARCHITECTURE.md                                          |
 | Implementation patterns        | docs/PATTERNS.md                                              |
