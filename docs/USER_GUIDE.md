@@ -311,9 +311,10 @@ is easy to spot. Turn this off with `auto-tag.new`.
   the focus). While it has the focus every project is expanded and their
   hibernated workspaces are shown; <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> steps
   all projects at once through hibernated shown, automated shown too, and
-  none. Typing filters the rows: the text must appear in the workspace's
-  title, name, project, or a tag's name, label or description, and it is
-  marked where it matches. A marker sits on the current workspace (else the
+  none. Typing filters the rows: every space-separated word must appear in the
+  workspace's title, name, project, or a tag's name, label or description
+  (`sna 4-` finds the `4-…` workspaces of `snapsync`), and each is marked where
+  it first matches. A marker sits on the current workspace (else the
   first match); <kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Page Up</kbd>/<kbd>Page Down</kbd>,
   <kbd>Home</kbd>/<kbd>End</kbd> move it, and <kbd>Enter</kbd> goes to its
   workspace (waking it if it is hibernated). <kbd>Escape</kbd> clears the field

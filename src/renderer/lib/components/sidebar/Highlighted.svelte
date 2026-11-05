@@ -1,7 +1,7 @@
 <!--
   Highlighted.svelte
 
-  Text with the first match of the Find text marked.
+  Text with the first match of each word of the Find text marked.
 -->
 <script lang="ts">
   import { highlightParts } from "$lib/utils/sidebar-model.js";
@@ -16,7 +16,8 @@
   const parts = $derived(highlightParts(text, query));
 </script>
 
-{#if parts === null}{text}{:else}{parts.before}<mark>{parts.match}</mark>{parts.after}{/if}
+{#each parts as part, index (index)}{#if part.marked}<mark>{part.text}</mark
+    >{:else}{part.text}{/if}{/each}
 
 <style>
   mark {
