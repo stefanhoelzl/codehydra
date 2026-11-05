@@ -43,14 +43,12 @@ import {
   workspaceSchema,
   workspaceTargetShape,
 } from "./contract";
-import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import {
   INTENT_RESOLVE_PROJECT,
   type ResolveProjectIntent,
   type ResolveProjectResult,
 } from "./resolve-project";
 import { asProjectRef, makeWorkspaceRef } from "../utils/ref";
-import { activeWorkspaceRef } from "./lib/active-workspace";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "./list-projects";
 import type { OpenProjectIntent } from "./open-project";
 import { looksLikeGitUrl, matchOpenProject } from "../utils/project-reference";
@@ -548,14 +546,6 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     const { projectPath, projectRef } = projResolved;
     const resolvedProjectId = projResolved.projectId;
 
-    // Baseline for the focus decision at the end. The presenter's creating
-    // placeholder is view-model-only — nothing activates it main-side — so the
-    // active ref still points at wherever the user was when this started. If it
-    // has moved by the time we finish, they deliberately went elsewhere and
-    // completing must not yank them back. Only the focus-stealing path needs it.
-    const trackFocus = ctx.intent.payload.stealFocus !== false;
-    const activeAtStart = trackFocus ? await activeWorkspaceRef(ctx.dispatch) : null;
-
     // Hook: "create" — worktree creation (fatal on error)
     const createCtx: CreateHookInput = { intent: ctx.intent, ...opening, projectPath, projectRef };
     const { results: createResults, errors: createErrors } = await ctx.hooks.collect(
@@ -712,28 +702,9 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     };
     ctx.emit(event);
 
-    // Focus decision. stealFocus false: switch only when nothing is active, so
-    // the user sees the new workspace rather than an empty view. Otherwise:
-    // switch only if the active workspace is still the one this creation
-    // started from — unchanged means the user waited for it (or was on the
-    // creation panel, null → null) and lands on it; changed means they moved on
-    // mid-creation, and a completion that steals the view back is exactly the
-    // yank this avoids.
-    //
-    // A project's reopens never switch: project:open lands on a workspace
-    // before it opens any, and its rows are listed (and selectable) while they
-    // load — nothing active by now means the user left for the creation panel.
-    const activeNow = await activeWorkspaceRef(ctx.dispatch);
-    const shouldSwitch = trackFocus
-      ? activeNow === activeAtStart
-      : activeNow === null && ctx.intent.payload.source !== "open-project";
-
-    if (shouldSwitch) {
-      await ctx.dispatch<SwitchWorkspaceIntent>({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspaceRef, focus: true },
-      });
-    }
+    // No switch here: whether this lands is the presenter's call on workspace:created.
+    // Only it knows whether the user is still waiting or left, for another workspace
+    // or the creation panel (which looks the same from here).
 
     return workspace;
   }

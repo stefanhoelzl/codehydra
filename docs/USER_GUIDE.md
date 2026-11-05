@@ -149,7 +149,8 @@ has, and keeps it until you close it, also across restarts. With more than 12
 projects open, colors repeat.
 
 - Click the header bar to **collapse** the project to its header, and again to
-  expand it; each project remembers this, also after a restart. The header
+  expand it; each project remembers this, also after a restart, until you close
+  it. Switching to a workspace in a collapsed project expands it. The header
   counts the project's workspaces like the footer
   ([status](#status-indicators)). Short of room, the process summary makes way
   first, then the name is cut off, the counts never; a click on a count
@@ -157,9 +158,10 @@ projects open, colors repeat.
   button below. Collapsing
   the project you are in moves you to the first awake workspace of the next
   expanded project, as <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>↓</kbd> would from its
-  last workspace; there is none when every other project is collapsed, and
-  you stay, your row still shown under the collapsed header. Shortcut
-  navigation skips the workspaces of collapsed projects.
+  last workspace, or to the New workspace form when there is none. Shortcut
+  navigation skips the workspaces of collapsed projects, and CodeHydra never
+  moves you into one by itself: at start, or after you delete, hibernate or
+  close what you were on, you land in an expanded project or on the form.
 - Its **hibernated workspaces** are folded away. In an expanded project, a
   button in the header counts the hibernated and the **automated** ones (with a
   [wakeup script](#wakeup-scripts), they wake by themselves; see
@@ -247,8 +249,8 @@ opening them takes a while (git and an agent start each). Each awake one shows
 a spinner until it is open. They open one at a time, top to bottom, except that
 the one you are looking at goes next; selecting a row that is still opening
 shows its **Loading workspace...** panel. Hibernated workspaces are not
-opened. When nothing was active, you land on the project's first awake
-workspace. A workspace still opening cannot be hibernated or deleted yet.
+opened. Opening a project does not move you: its rows appear in the sidebar,
+and you pick one. A workspace still opening cannot be hibernated or deleted yet.
 
 A workspace that could not be opened keeps its row with a warning triangle; hover
 it for the reason. Its panel (and its row, on hover) offers **Retry**, which
@@ -257,7 +259,7 @@ opens it again, and **Delete**.
 **At start** CodeHydra reopens every project it had open this way. The
 **Loading workspace...** screen only lasts until each project has listed its
 workspaces; then you land on the topmost awake workspace of an expanded project
-(of a collapsed one only when no expanded project has one) while the rest keep
+(on the New workspace form when no expanded project has one) while the rest keep
 opening.
 
 To **close** a project, hover its header and click the trash icon. By default
@@ -294,7 +296,8 @@ project. The form has:
 **Create** is enabled once the form is valid; **Reset** or <kbd>Escape</kbd>
 clears it (otherwise it keeps what you typed). The new row shows a spinner
 until the workspace is ready; you can select it meanwhile (its panel says
-**Loading workspace...**), and you land on it when it is done.
+**Loading workspace...**), and you land on it when it is done, unless you moved
+away in the meantime: then you stay where you went.
 
 Every new workspace gets a blue **new** tag until you first switch to it, so
 one you left while it was being created — or one an agent or automation made —
@@ -320,10 +323,12 @@ is easy to spot. Turn this off with `auto-tag.new`.
   <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> on the active workspace (or
   `ch ws hibernate`). Any workspace can hibernate, busy or not, without a
   confirmation; the row flies into its project's moon, and hibernating the
-  active one moves you to another.
+  active one moves you to another, or to the New workspace form when there is none.
 - **Wake** — click its row (it wakes and you go there), click the screenshot
   of the hibernated workspace you are on, or press <kbd>Alt</kbd>+<kbd>X</kbd>,
-  <kbd>H</kbd> again.
+  <kbd>H</kbd> again. If you switch anywhere while it wakes, you stay there. A
+  wake you did not ask for (a wakeup script, an agent, `ch ws wake`) never moves
+  you.
 - **How long it has slept** — a hibernated row shows its age (`now`, `40m`,
   `5h`, `3d`, `2w`) at the end of the row; hovering the age, and the
   hibernated screen, add the date and time it was hibernated. `ch ws status`
@@ -396,7 +401,7 @@ changes and commits not merged into its base; confirming deletes anyway. Tick
 **Keep branch** to keep the git branch. (From `ch` or MCP, a workspace with
 uncommitted or unmerged work is refused unless told to ignore warnings.)
 
-Deleting the workspace you are on moves you to another one. Select the
+Deleting the workspace you are on moves you to another one, or to the New workspace form when there is none. Select the
 deleting workspace to watch it: a progress panel shows the steps — terminating
 [processes](#processes), stopping the agent server, closing the editor, running the
 plugins' `before-worktree-deleted` hooks (if any plugin has one; **Cancel**

@@ -602,7 +602,7 @@ Both gates run before any teardown or progress emission, so a refusal leaves the
 
 The `open-project` operation runs `select-folder` (when no path/URL given), `prepare` (e.g. git init), then `resolve` (clone if URL, validate git), `register` (generate ID, store state, persist), and `discover` (find existing workspaces).
 
-After the hooks, the operation emits `project:opened` (the discovered workspaces, none open yet — the sidebar lists them as loading), switches to the first awake workspace in sidebar order when nothing is active, then dispatches `workspace:open` per awake workspace (best-effort, continues on failure), one at a time: the active one when it is still pending (asked before each open, so switching to a loading row moves it up), else the next in sidebar order. The returned project carries the opened workspaces' URLs; the event does not. A per-key idempotency rule prevents concurrent/duplicate opens of the same project path.
+After the hooks, the operation emits `project:opened` (the discovered workspaces, none open yet — the sidebar lists them as loading), then dispatches `workspace:open` per awake workspace (best-effort, continues on failure), one at a time: the active one when it is still pending (asked before each open, so switching to a loading row moves it up), else the next in sidebar order. The returned project carries the opened workspaces' URLs; the event does not. A per-key idempotency rule prevents concurrent/duplicate opens of the same project path.
 
 The `close-project` operation uses these hook modules:
 
@@ -657,7 +657,7 @@ Dispatcher delivers to subscribers
 The `workspace:switched` event is emitted through the intent dispatcher via `SwitchWorkspaceOperation`:
 
 - `SwitchWorkspaceOperation` runs the `activate` hook (resolves workspace; view-module records the new active surface) then emits `workspace:switched` via `ctx.emit()` — the renderer swaps the visible workspace iframe when the event lands
-- Other operations dispatch `workspace:switch` intents for active-workspace changes (e.g., `OpenWorkspaceOperation` dispatches after creating a workspace)
+- Other operations dispatch `workspace:switch` intents for active-workspace changes (e.g., `HibernateWorkspaceOperation` moves away from the workspace it hibernates). `workspace:open` does not: the presenter lands on `workspace:created`, as only it knows whether the user is still waiting
 - Null deactivation (delete last workspace, close last project) emits `workspace:switched(null)` directly via `ctx.emit()` without going through the intent
 - The presenter subscribes to `workspace:switched`, updates the active workspace in its view-model, and pushes the new `UiState` snapshot (the renderer swaps the visible iframe)
 - `WindowTitleModule` subscribes to `workspace:switched` and updates the window title

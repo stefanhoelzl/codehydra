@@ -55,7 +55,7 @@ import {
   EVENT_PROJECT_OPEN_FAILED,
   INTENT_OPEN_PROJECT,
 } from "../../intents/open-project";
-import { EVENT_WORKSPACE_WAKE_FAILED } from "../../intents/wake-workspace";
+import { EVENT_WORKSPACE_WAKE_FAILED, INTENT_WAKE_WORKSPACE } from "../../intents/wake-workspace";
 import { EVENT_PROJECT_CLOSED, CLOSE_PROJECT_OPERATION_ID } from "../../intents/close-project";
 import type { CloseConfirmHookResult } from "../../intents/close-project";
 import {
@@ -74,7 +74,10 @@ import {
   INTENT_DELETE_WORKSPACE,
 } from "../../intents/delete-workspace";
 import { ANY_VALUE } from "../../intents/lib/operation";
-import { EVENT_WORKSPACE_SWITCHED } from "../../intents/switch-workspace";
+import {
+  EVENT_WORKSPACE_SWITCHED,
+  SWITCH_WORKSPACE_OPERATION_ID,
+} from "../../intents/switch-workspace";
 import {
   GET_ACTIVE_WORKSPACE_OPERATION_ID,
   GetActiveWorkspaceOperation,
@@ -863,26 +866,6 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(snapshot.main).toEqual({ kind: "workspace", frameKey: keyOf("feat") });
   });
 
-  it("workspace:created adopts the new workspace when nothing is active", async () => {
-    const deps = createDeps();
-    const module = await startModule(deps);
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
-
-    await emit(module, EVENT_WORKSPACE_CREATED, {
-      projectId: PROJECT_ID,
-      workspaceName: "deps" as WorkspaceName,
-      workspaceRef: makeWorkspaceRef(PROJECT_REF, "deps"),
-      projectRef: PROJECT_REF,
-      branch: "deps",
-      metadata: {},
-      workspaceUrl: "http://127.0.0.1:1/deps",
-      fresh: true,
-    });
-    await flush();
-
-    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: keyOf("deps") });
-  });
-
   it("workspace:loading is name-guarded against existing workspaces", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
@@ -1629,7 +1612,7 @@ describe("PresentationModule - sidebar resize", () => {
     expect(stateValue(deps)).toEqual([]);
   });
 
-  it("a collapsed project stays collapsed after it is closed and reopened", async () => {
+  it("a collapsed project reopens expanded after it is closed", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const open = (): Promise<void> =>
@@ -1641,7 +1624,287 @@ describe("PresentationModule - sidebar resize", () => {
     await open();
     await flush();
 
-    expect(lastSnapshot(deps).sidebar.projects[0]!.collapsed).toBe(true);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.collapsed).toBe(false);
+    expect(stateValue(deps)).toEqual([]);
+  });
+
+  it("switching to a workspace in a collapsed project expands it, and leaving keeps it so", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const a = makeWorkspace("a");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a]) });
+    await openBeta(module, { hibernated: false });
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
+
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
+    await flush();
+
+    expect(stateValue(deps)).toEqual([]);
+    await emit(module, EVENT_WORKSPACE_SWITCHED, null);
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects.map((p) => p.collapsed)).toEqual([false, false]);
+  });
+
+  it("creating in a collapsed project expands it as soon as the view moves there", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("a")]) });
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
+
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      projectRef: PROJECT_REF,
+      workspaceName: "background",
+      stealFocus: false,
+    } as never);
+    expect(stateValue(deps)).toEqual([PROJECT_REF]);
+
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      projectRef: PROJECT_REF,
+      workspaceName: "fresh",
+    } as never);
+    expect(stateValue(deps)).toEqual([]);
+  });
+
+  describe("a finished creation", () => {
+    const created = (name: string, extra: object = {}): object => ({
+      projectId: PROJECT_ID,
+      workspaceName: name as WorkspaceName,
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, name),
+      projectRef: PROJECT_REF,
+      branch: name,
+      metadata: {},
+      workspaceUrl: `http://127.0.0.1:1/${name}`,
+      fresh: true,
+      ...extra,
+    });
+
+    async function creating(deps: Deps, extra: object = {}): Promise<UiPresenter> {
+      const module = await startModule(deps);
+      await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("a")]) });
+      await emit(module, EVENT_WORKSPACE_LOADING, {
+        projectRef: PROJECT_REF,
+        workspaceName: "fresh",
+        ...extra,
+      } as never);
+      return module;
+    }
+
+    function recordSwitches(deps: Deps): unknown[] {
+      const switches: unknown[] = [];
+      deps.dispatcher = {
+        dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+          if (intent.type === "workspace:switch") switches.push(intent.payload);
+          return Promise.resolve(null);
+        }),
+        withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
+      } as unknown as Deps["dispatcher"];
+      return switches;
+    }
+
+    it("lands when the view stayed on its placeholder", async () => {
+      const deps = createDeps();
+      const module = await creating(deps);
+      const switches = recordSwitches(deps);
+
+      await emit(module, EVENT_WORKSPACE_CREATED, created("fresh") as never);
+
+      expect(switches).toEqual([{ workspaceRef: makeWorkspaceRef(PROJECT_REF, "fresh") }]);
+    });
+
+    it("does not pull you back after you left for the creation panel", async () => {
+      const deps = createDeps();
+      const module = await creating(deps);
+      await emit(module, EVENT_WORKSPACE_SWITCHED, null);
+      await flush();
+      const switches = recordSwitches(deps);
+
+      await emit(module, EVENT_WORKSPACE_CREATED, created("fresh") as never);
+      await flush();
+
+      expect(switches).toEqual([]);
+      expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+    });
+
+    it("does not pull you back after you left for another workspace", async () => {
+      const deps = createDeps();
+      const module = await creating(deps);
+      await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(makeWorkspace("a")));
+      await flush();
+      const switches = recordSwitches(deps);
+
+      await emit(module, EVENT_WORKSPACE_CREATED, created("fresh") as never);
+
+      expect(switches).toEqual([]);
+    });
+
+    it("a background one lands only on an empty view nobody left", async () => {
+      const deps = createDeps();
+      const module = await creating(deps, { stealFocus: false });
+      const switches = recordSwitches(deps);
+
+      await emit(module, EVENT_WORKSPACE_CREATED, created("fresh", { stealFocus: false }) as never);
+      expect(switches).toEqual([{ workspaceRef: makeWorkspaceRef(PROJECT_REF, "fresh") }]);
+
+      switches.length = 0;
+      await emit(module, EVENT_WORKSPACE_LOADING, {
+        projectRef: PROJECT_REF,
+        workspaceName: "peeked",
+        stealFocus: false,
+      } as never);
+      emitUiEvent(deps, {
+        kind: "switch-workspace",
+        key: lastSnapshot(deps).sidebar.projects[0]!.workspaces.find((w) => w.name === "peeked")!
+          .key,
+      });
+      await emit(module, EVENT_WORKSPACE_SWITCHED, null);
+      await flush();
+      await emit(
+        module,
+        EVENT_WORKSPACE_CREATED,
+        created("peeked", { stealFocus: false }) as never
+      );
+      expect(switches).toEqual([]);
+    });
+
+    it("a background one does not land in a collapsed project", async () => {
+      const deps = createDeps();
+      const module = await startModule(deps);
+      await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("a")]) });
+      emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
+      await flush();
+      const switches = recordSwitches(deps);
+
+      await emit(module, EVENT_WORKSPACE_CREATED, created("bg", { stealFocus: false }) as never);
+
+      expect(switches).toEqual([]);
+    });
+
+    describe("a wake", () => {
+      const a = makeWorkspace("a");
+      const reopened = (extra: object = {}): never =>
+        ({
+          ...created("a", { fresh: false, workspaceRef: a.ref }),
+          ...extra,
+        }) as never;
+      async function waking(deps: Deps, payload: object = {}): Promise<UiPresenter> {
+        const module = await startModule(deps);
+        await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a]) });
+        const found = (module.interceptors ?? []).find((i) => i.id === "track-wake-landing");
+        await found!.before!({
+          type: INTENT_WAKE_WORKSPACE,
+          payload: { workspaceRef: a.ref, ...payload },
+        } as never);
+        return module;
+      }
+
+      it("lands when you asked for it and stayed", async () => {
+        const deps = createDeps();
+        const module = await waking(deps);
+        const switches = recordSwitches(deps);
+
+        await emit(module, EVENT_WORKSPACE_CREATED, reopened());
+
+        expect(switches).toEqual([{ workspaceRef: a.ref }]);
+      });
+
+      it("does not pull you back after any switch, also one back to where you were", async () => {
+        const deps = createDeps();
+        const module = await waking(deps);
+        await module.hooks![SWITCH_WORKSPACE_OPERATION_ID]!.activate!.handler({
+          workspaceRef: null,
+        } as never);
+        const switches = recordSwitches(deps);
+
+        await emit(module, EVENT_WORKSPACE_CREATED, reopened());
+
+        expect(switches).toEqual([]);
+      });
+
+      it("in the background never lands, even with nothing active", async () => {
+        const deps = createDeps();
+        const module = await waking(deps, { stealFocus: false });
+        const switches = recordSwitches(deps);
+
+        await emit(module, EVENT_WORKSPACE_CREATED, reopened({ stealFocus: false }));
+
+        expect(switches).toEqual([]);
+      });
+
+      it("does not land when the open was downgraded to the background", async () => {
+        const deps = createDeps();
+        const module = await waking(deps);
+        const switches = recordSwitches(deps);
+
+        await emit(module, EVENT_WORKSPACE_CREATED, reopened({ stealFocus: false }));
+
+        expect(switches).toEqual([]);
+      });
+
+      it("a failed one is forgotten", async () => {
+        const deps = createDeps();
+        const module = await waking(deps);
+        await emit(module, EVENT_WORKSPACE_WAKE_FAILED, {
+          workspaceRef: a.ref,
+          error: "nope",
+        } as never);
+        const switches = recordSwitches(deps);
+
+        await emit(module, EVENT_WORKSPACE_CREATED, reopened());
+
+        expect(switches).toEqual([]);
+      });
+    });
+
+    it("leaving a placeholder for the workspace still active main-side moves the view", async () => {
+      const deps = createDeps();
+      const module = await creating(deps);
+      const a = makeWorkspace("a");
+
+      await module.hooks![SWITCH_WORKSPACE_OPERATION_ID]!.activate!.handler({
+        workspaceRef: a.ref,
+      } as never);
+      await flush();
+
+      expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: keyOf("a") });
+    });
+  });
+
+  it("auto-select is told to skip collapsed projects", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("a")]) });
+    await openBeta(module, { hibernated: false });
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
+
+    const output = await module.hooks![SWITCH_WORKSPACE_OPERATION_ID]!["find-candidates"]!.handler(
+      {} as never
+    );
+
+    expect(output).toEqual({ result: { excludedProjects: [PROJECT_REF] } });
+  });
+
+  it("closing the active project lands in an expanded one, else on nothing", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const a = makeWorkspace("a");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a]) });
+    await openBeta(module, { hibernated: false });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
+    await flush();
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: BETA_ID });
+    const dispatched: Array<{ type: string; payload: unknown }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
+    } as unknown as Deps["dispatcher"];
+
+    await emit(module, EVENT_PROJECT_CLOSED, { projectId: PROJECT_ID, projectRef: PROJECT_REF });
+
+    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: null } }]);
+    expect(stateValue(deps)).toEqual([projectRefFor(projPath("/projects/beta"))]);
   });
 
   it("orders hibernated (newest first), then automated, then awake by name", async () => {
@@ -3167,11 +3430,22 @@ describe("PresentationModule - shortcut navigation", () => {
       { type: "workspace:switch", payload: { workspaceRef: betaB, focus: false } },
     ]);
 
-    // Collapsing a project the active workspace is not in moves nothing; with
-    // every other project collapsed there is nowhere to go.
+    // Collapsing a project the active workspace is not in moves nothing.
     dispatched.length = 0;
     emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: BETA_ID });
     expect(dispatched).toEqual([]);
+  });
+
+  it("collapsing the last expanded project leaves nothing active", async () => {
+    const deps = createDeps();
+    await withWorkspaces(deps, ["a"], "a");
+    const dispatched = recordDispatches(deps);
+
+    emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspaceRef: null, focus: false } },
+    ]);
   });
 
   it("f opens Find", async () => {
@@ -4273,7 +4547,7 @@ describe("PresentationModule - startup screen", () => {
     expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: betaB } }]);
   });
 
-  it("lands in a collapsed project when no expanded one has an awake row", async () => {
+  it("lands on nothing when no expanded project has an awake row", async () => {
     const deps = createDeps();
     (deps.stateService.values as Map<string, unknown>).set("sidebar.collapsed-projects", [
       PROJECT_REF,
@@ -4297,7 +4571,42 @@ describe("PresentationModule - startup screen", () => {
     await openBeta(module, { hibernated: true, startupPath: BETA_PATH });
     await flush();
 
-    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: a.ref } }]);
+    // Nothing to land on: the creation panel, and the project stays collapsed.
+    expect(dispatched).toEqual([]);
+    expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+    expect(lastSnapshot(deps).sidebar.projects[0]!.collapsed).toBe(true);
+  });
+
+  it("a landing that arrived before the end of startup does not expand, and is undone", async () => {
+    const deps = createDeps();
+    (deps.stateService.values as Map<string, unknown>).set("sidebar.collapsed-projects", [
+      PROJECT_REF,
+    ]);
+    const a = makeWorkspace("a");
+    const dispatched: Array<{ type: string; payload: unknown }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+        if (intent.type === INTENT_GET_ACTIVE_WORKSPACE) {
+          return Promise.resolve({ projectId: PROJECT_ID, workspaceName: a.name, ref: a.ref });
+        }
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
+    } as unknown as Deps["dispatcher"];
+    const module = await toRunning(deps);
+    await trackOpens(module).before({ type: INTENT_OPEN_PROJECT, payload: { path: PROJECT_PATH } });
+
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
+    expect(lastSnapshot(deps).sidebar.projects[0]!.collapsed).toBe(true);
+
+    // The open never announced itself under its path: app:started ends startup.
+    await emit(module, EVENT_APP_STARTED, {});
+    await flush();
+
+    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: null } }]);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.collapsed).toBe(true);
   });
 
   it("ignores project:opens outside startup", async () => {

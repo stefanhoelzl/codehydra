@@ -210,8 +210,8 @@ component), derived declaratively from the `frames` map of the `UiState` snapsho
   modal lasts only until every startup `project:open` has emitted
   `project:opened` or `project:open-failed` (the presenter tracks them with an
   interceptor; `app:started` ends it at the latest), then lands on the topmost
-  awake row of an expanded project (of a collapsed one only when no expanded
-  project has one). No view-level load tracking exists.
+  awake row of an expanded project (nothing active, so the creation panel, when
+  no expanded project has one). No view-level load tracking exists.
 - **Recovery**: `frame-watchdog-module` has two witnesses for a frame that
   stays mounted but no longer shows a workbench. All workspace iframes share
   one renderer process, and Electron emits no event when a subframe's process

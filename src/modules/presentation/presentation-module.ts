@@ -80,6 +80,9 @@ import {
 import {
   EVENT_WORKSPACE_SWITCHED,
   INTENT_SWITCH_WORKSPACE,
+  SWITCH_WORKSPACE_OPERATION_ID,
+  type FindCandidatesHookResult,
+  type SwitchWorkspaceHookResult,
   type SwitchWorkspaceIntent,
 } from "../../intents/switch-workspace";
 import { activeWorkspaceRef } from "../../intents/lib/active-workspace";
@@ -98,6 +101,7 @@ import {
   INTENT_WAKE_WORKSPACE,
   EVENT_WORKSPACE_WAKE_FAILED,
   type WakeWorkspaceIntent,
+  type WakeWorkspacePayload,
 } from "../../intents/wake-workspace";
 import { isShortcutKey } from "../../shared/shortcuts";
 import type { AggregatedAgentStatus, UIMode } from "../../shared/ipc";
@@ -533,9 +537,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   // Projects (by ref) whose sidebar card is collapsed to its header. A
   // user-toggled runtime preference (the card's header bar), so it lives in
-  // state.json, not config. A ref stays listed after its project closes, so
-  // the choice survives reopening it. Read at snapshot-build time and when
-  // navigating (the arrows skip collapsed projects), so flipping it re-pushes.
+  // state.json, not config. Closing a project drops its ref, so it reopens
+  // expanded. The active workspace's project is never collapsed: arriving in
+  // one expands it, and automatic landings skip them. Read at snapshot-build
+  // time and when navigating (the arrows skip collapsed projects), so flipping
+  // it re-pushes.
   const collapsedProjectsState = deps.stateService.register("sidebar.collapsed-projects", {
     default: [] as readonly string[],
     description: "Projects whose sidebar card is collapsed",
@@ -550,6 +556,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       validate: validateRefList,
     }),
   });
+
+  // Background creations whose placeholder the user clicked: once they leave
+  // it, finishing must not land them back on it.
+  const viewedPlaceholders = new Set<WorkspaceRef>();
+
+  // The workspace an in-flight wake will land on when it is open: the last one
+  // the user asked to wake. Any switch since cancels it, also one that changes
+  // nothing main-side, so leaving and coming back does not revive it.
+  let pendingWakeLanding: WorkspaceRef | null = null;
 
   function isCollapsed(project: ProjectModel): boolean {
     return collapsedProjectsState.get().includes(project.ref);
@@ -903,6 +918,16 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     },
   };
 
+  const trackWakeLanding: IntentInterceptor = {
+    id: "track-wake-landing",
+    before: async (intent: Intent): Promise<Intent | null> => {
+      if (intent.type !== INTENT_WAKE_WORKSPACE) return intent;
+      const { workspaceRef, stealFocus } = intent.payload as WakeWorkspacePayload;
+      if (stealFocus !== false) pendingWakeLanding = workspaceRef;
+      return intent;
+    },
+  };
+
   function buildSnapshot(): UiState {
     // Poll only while the summary shows. Idempotent; here so that a change of
     // the key from anywhere (settings dialog, `ch config`) applies on the next push.
@@ -1137,7 +1162,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         // its lifetime is owned solely by workspace:created (swap) and
         // workspace:create-failed (remove).
         if (workspace.phase === "creating") {
+          viewedPlaceholders.add(workspace.ref);
           model.activeRef = workspace.ref;
+          expandActiveProject();
           scheduleUpdate();
           return;
         }
@@ -1284,33 +1311,54 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    *
    * Collapsing the project of the active workspace moves on, as Alt+X, Down
    * would from its last workspace: to the first awake workspace of the next
-   * expanded project, wrapping round. With none, the active workspace stays
-   * (and the collapsed card keeps showing its row).
+   * expanded project, wrapping round. With none, nothing is active and the
+   * creation panel shows.
    */
   function toggleCollapsed(project: ProjectModel): void {
-    const current = collapsedProjectsState.get();
-    const collapsing = !current.includes(project.ref);
-    const next = collapsing
-      ? [...current, project.ref]
-      : current.filter((ref) => ref !== project.ref);
-    void collapsedProjectsState.set(next).catch((error: unknown) => {
-      logger.warn("Failed to persist collapsed project", { error: getErrorMessage(error) });
-    });
-    scheduleUpdate();
+    const collapsing = !isCollapsed(project);
+    setCollapsedProjects(
+      collapsing
+        ? [...collapsedProjectsState.get(), project.ref]
+        : collapsedProjectsState.get().filter((ref) => ref !== project.ref)
+    );
     if (!collapsing || model.active()?.project !== project) return;
     const projects = sortedProjects();
     const index = projects.findIndex(([candidate]) => candidate === project);
     const after = [...projects.slice(index + 1), ...projects.slice(0, index)];
-    for (const [candidate, workspaces] of after) {
-      if (isCollapsed(candidate)) continue;
+    dispatchDetached({
+      type: INTENT_SWITCH_WORKSPACE,
+      payload: { workspaceRef: firstAwakeExpanded(after), focus: false },
+    });
+  }
+
+  function setCollapsedProjects(next: readonly string[]): void {
+    void collapsedProjectsState.set(next).catch((error: unknown) => {
+      logger.warn("Failed to persist collapsed project", { error: getErrorMessage(error) });
+    });
+    scheduleUpdate();
+  }
+
+  /** Where an automatic landing goes among `projects`: never into a collapsed one. */
+  function firstAwakeExpanded(
+    projects: ReadonlyArray<readonly [ProjectModel, readonly WorkspaceModel[]]>
+  ): WorkspaceRef | null {
+    for (const [project, workspaces] of projects) {
+      if (isCollapsed(project)) continue;
       const target = workspaces.find((w) => !w.hibernated && w.phase !== "creating");
-      if (target === undefined) continue;
-      dispatchDetached({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspaceRef: target.ref, focus: false },
-      });
-      return;
+      if (target !== undefined) return target.ref;
     }
+    return null;
+  }
+
+  /**
+   * Arriving in a collapsed project expands it, as a click on its header does.
+   * Not at startup: projects keep their saved state, and the landing that ends
+   * startup skips collapsed ones.
+   */
+  function expandActiveProject(): void {
+    const project = model.active()?.project;
+    if (project === undefined || !startup.isDone() || !isCollapsed(project)) return;
+    setCollapsedProjects(collapsedProjectsState.get().filter((ref) => ref !== project.ref));
   }
 
   /** Show part of a project's hibernated list, or fold it away ("hidden"). */
@@ -1426,18 +1474,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         if (!project) return;
         const containedActive = model.active()?.project === project;
         model.removeProject(projectRef);
+        // Closed means forgotten: opening it again starts expanded.
+        if (isCollapsed(project)) {
+          setCollapsedProjects(collapsedProjectsState.get().filter((ref) => ref !== projectRef));
+        }
         if (containedActive) {
-          // Mirror the renderer's fallback: first workspace of the first
-          // remaining project (insertion order), else none.
-          const firstProject = model.projects.values().next().value;
-          let first: WorkspaceRef | null = null;
-          for (const entry of model.workspaces.values()) {
-            if (entry.project === firstProject) {
-              first = entry.workspace.ref;
-              break;
-            }
+          const target = firstAwakeExpanded(sortedProjects());
+          model.activeRef = target;
+          // With no project left, project:close has already deselected.
+          if (model.projects.size > 0) {
+            dispatchDetached({ type: INTENT_SWITCH_WORKSPACE, payload: { workspaceRef: target } });
           }
-          model.activeRef = first;
         }
         scheduleUpdate();
       },
@@ -1458,20 +1505,28 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           // A wake delivers a fresh URL; any cached screenshot is stale.
           screenshots.delete(p.workspaceRef);
         }
-        // Adopt the finished workspace only when nothing is active. Staying on
-        // the creation already leaves the active ref on this very row (the
-        // placeholder), so that case is a no-op; having navigated away
-        // mid-creation, the user must NOT be yanked back when it completes —
-        // the operation declines its switch for the same reason, and the row
-        // (plus its "new" tag) is the signal that it finished.
-        if (p.stealFocus !== false && model.activeRef === null) {
-          model.activeRef = p.workspaceRef;
-        } else if (model.activeRef === p.workspaceRef && p.fresh) {
-          // The view is on this placeholder — the user may have clicked it,
-          // which only moves the view (a placeholder has no workspace to switch
-          // to yet): make it the active workspace main-side too, which the
-          // operation declines once the user has moved. A no-op when the
-          // operation switches itself.
+        // A finished creation lands only if the view is still on its placeholder
+        // (only the view is ever on one: a placeholder has no workspace to
+        // switch to yet), or, for a background creation nobody looked at, if
+        // nothing is active. Having left it, for another workspace or the
+        // creation panel, the user is not pulled back: the row (plus its "new"
+        // tag) is the signal that it finished.
+        // A background one never lands in a collapsed project.
+        //
+        // A wake lands only if the user asked for it (no stealFocus false) and
+        // has not switched anywhere since; it has no placeholder to stay on.
+        const viewed = viewedPlaceholders.delete(p.workspaceRef);
+        const wakeLanding = pendingWakeLanding === p.workspaceRef;
+        if (wakeLanding) pendingWakeLanding = null;
+        const landing = p.fresh
+          ? model.activeRef === p.workspaceRef ||
+            (p.stealFocus === false &&
+              model.activeRef === null &&
+              !viewed &&
+              project !== undefined &&
+              !isCollapsed(project))
+          : wakeLanding && p.stealFocus !== false;
+        if (landing) {
           dispatchDetached({
             type: INTENT_SWITCH_WORKSPACE,
             payload: { workspaceRef: p.workspaceRef },
@@ -1510,7 +1565,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         // panel, which only shows while nothing is active). A background
         // creation shows the row from the same moment but must not take the
         // view — visibility and focus are separate concerns.
-        if (p.stealFocus !== false) model.activeRef = ref;
+        if (p.stealFocus !== false) {
+          model.activeRef = ref;
+          expandActiveProject();
+        }
         scheduleUpdate();
       },
     },
@@ -1540,6 +1598,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       // report workspace:create-failed): the row must not stay loading.
       handler: async (event): Promise<void> => {
         const p = event.payload;
+        if (pendingWakeLanding === p.workspaceRef) pendingWakeLanding = null;
         const workspace = model.find(p.workspaceRef)?.workspace;
         if (workspace?.phase !== "loading") return;
         workspace.phase = "open-failed";
@@ -1593,6 +1652,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           logger.debug("Active workspace lookup failed", { error: getErrorMessage(error) });
         }
         model.activeRef = ref;
+        expandActiveProject();
         scheduleUpdate();
       },
     },
@@ -1754,7 +1814,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     trackRunningHook: (hook) => runningHooks.track(hook),
     cancelRunningHooks: (workspaceRef) => runningHooks.cancelFor(workspaceRef),
     events,
-    interceptors: [suppressBackgroundFocus, startup.interceptor],
+    interceptors: [suppressBackgroundFocus, trackWakeLanding, startup.interceptor],
     hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         init: {
@@ -1801,6 +1861,31 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             scheduleUpdate();
             return { result: {} };
           },
+        },
+      },
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        // Leaving a placeholder for the workspace that is still active main-side
+        // (where the creation started) is a no-op switch with no event, so the
+        // view moves here.
+        activate: {
+          handler: async (ctx): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
+            pendingWakeLanding = null;
+            if (model.active()?.workspace.phase === "creating" && ctx.workspaceRef !== null) {
+              model.activeRef = ctx.workspaceRef;
+              scheduleUpdate();
+            }
+            return { result: {} };
+          },
+        },
+        // Auto-select never lands in a collapsed project.
+        "find-candidates": {
+          handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => ({
+            result: {
+              excludedProjects: [...model.projects.values()]
+                .filter(isCollapsed)
+                .map((project) => project.ref),
+            },
+          }),
         },
       },
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {

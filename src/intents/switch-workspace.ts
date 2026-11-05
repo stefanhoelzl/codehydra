@@ -61,11 +61,6 @@ export const switchWorkspaceAutoPayloadSchema = z
     auto: z.literal(true),
     currentRef: workspaceRefSchema,
     focus: z.boolean().optional(),
-    /** When true, if no other candidate is selectable, switch to currentRef
-     *  instead of emitting workspace:switched(null). Used by hibernate so the
-     *  user lands on the hibernation overlay rather than the empty backdrop
-     *  when the only workspace was just hibernated. */
-    fallbackToCurrent: z.boolean().optional(),
   })
   .readonly();
 
@@ -116,6 +111,8 @@ export const switchWorkspaceHookResultSchema = z
 export const findCandidatesHookResultSchema = z
   .object({
     candidates: z.array(workspaceCandidateSchema).readonly().optional(),
+    /** Projects auto-select must not land in (the sidebar's collapsed ones). */
+    excludedProjects: z.array(projectRefSchema).readonly().optional(),
   })
   .readonly();
 
@@ -380,10 +377,10 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
     // 1. Find candidates via hook
     const hookCtx: HookContext = { intent: ctx.intent };
     const { results } = await ctx.hooks.collect("find-candidates", hookCtx);
-    const allCandidates: WorkspaceCandidate[] = [];
-    for (const r of results) {
-      if (r.candidates) allCandidates.push(...r.candidates);
-    }
+    const excluded = new Set(results.flatMap((r) => r.excludedProjects ?? []));
+    const allCandidates = results
+      .flatMap((r) => r.candidates ?? [])
+      .filter((candidate) => !excluded.has(candidate.projectRef));
 
     // 2. Select best candidate via hook
     const selectCtx: SelectNextHookInput = {
@@ -394,19 +391,17 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
     const { results: selectResults } = await ctx.hooks.collect("select-next", selectCtx);
     const best = onlyDefined(selectResults, "selected", "workspace:switch select-next");
 
-    const targetRef =
-      best?.workspaceRef ?? (payload.fallbackToCurrent ? payload.currentRef : undefined);
-    if (targetRef !== undefined) {
+    if (best !== undefined) {
       const switchIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          workspaceRef: targetRef,
+          workspaceRef: best.workspaceRef,
           ...(payload.focus !== undefined && { focus: payload.focus }),
         },
       };
       await ctx.dispatch(switchIntent);
     } else {
-      // No candidate and no fallback: emit workspace:switched(null)
+      // No candidate: emit workspace:switched(null)
       const nullEvent: WorkspaceSwitchedEvent = {
         type: EVENT_WORKSPACE_SWITCHED,
         payload: null,

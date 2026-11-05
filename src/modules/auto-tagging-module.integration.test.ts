@@ -314,14 +314,16 @@ describe("AutoTaggingModule", () => {
       expect(setup.createdEvents[0]?.payload.metadata[NEW_TAG_KEY]).toBeUndefined();
     });
 
-    it("tags then clears when nothing is active, since the operation switches anyway", async () => {
-      // stealFocus false still switches when no workspace is active, so the user
-      // lands on the workspace and the tag self-corrects rather than lying.
+    it("keeps the tag with nothing active until something lands on the workspace", async () => {
+      // The presenter makes the landing switch, or leaves it when the user moved
+      // away mid-creation: then the tag is the signal that it finished.
       const setup = createTestSetup();
 
       await setup.dispatcher.dispatch(openIntent({ stealFocus: false }));
       await flushEvents();
+      expect(setup.writes.map((w) => w.value)).toEqual([NEW_TAG_VALUE]);
 
+      await switchTo(setup, WORKSPACE_PATH);
       expect(setup.writes.map((w) => w.value)).toEqual([NEW_TAG_VALUE, null]);
       expect(metadataFor(setup, WORKSPACE_PATH)[NEW_TAG_KEY]).toBeUndefined();
     });

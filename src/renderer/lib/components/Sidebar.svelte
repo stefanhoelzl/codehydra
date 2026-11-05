@@ -585,9 +585,9 @@
   /** The rail: per expanded project its awake rows (and the active one); a dot per question. */
   const railGroups = $derived(
     projects.map((project) => {
-      const shown = project.workspaces.filter((row) =>
-        project.collapsed ? row.active : !row.hibernated || row.active
-      );
+      const shown = project.collapsed
+        ? []
+        : project.workspaces.filter((row) => !row.hibernated || row.active);
       const offRail = notifications.filter(
         (note) =>
           isQuestion(note) &&

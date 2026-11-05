@@ -175,16 +175,13 @@ export function rowOn(project: UiProjectRow, row: UiWorkspaceRow, view: SidebarV
   if (view.find !== null) {
     return matches(project, row, normalizedQuery(view)) && findShows(view.find.hibernatedView, row);
   }
-  // A collapsed project still shows the workspace you are on (Alt+X, T
-  // collapses the active workspace's project without moving away).
-  if (project.collapsed) return row.active;
+  if (project.collapsed) return false;
   return !isAutomated(row) || automatedShown(project);
 }
 
 /**
  * The project's folds: whether it is expanded (its header says so), whether
- * its body is open (expanded, or collapsed around the active row) and its
- * hibernated list.
+ * its body is open and its hibernated list.
  */
 export function projectFolds(
   project: UiProjectRow,
@@ -203,7 +200,7 @@ export function projectFolds(
   }
   return {
     expanded: !project.collapsed,
-    bodyOpen: !project.collapsed || project.workspaces.some((row) => row.active),
+    bodyOpen: !project.collapsed,
     hibernatedOpen:
       project.hibernatedView !== "hidden" ||
       project.workspaces.some((row) => row.active && row.hibernated),

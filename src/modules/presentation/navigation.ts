@@ -76,13 +76,12 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
   }
 
   /**
-   * The rows the arrows walk: those of expanded projects in sidebar order, plus
-   * the active row wherever it is as the starting point, rotated to start just
-   * after the active one (reversed for a step backwards). Without an active
-   * row the walk starts at the top (backwards: at the bottom).
+   * The rows the arrows walk: those of expanded projects in sidebar order,
+   * rotated to start just after the active one (reversed for a step backwards).
+   * Without an active row the walk starts at the top (backwards: at the bottom).
    */
   function rotation(direction: -1 | 1): RowEntry[] {
-    const rows = deps.rows().filter((entry) => entry.row.active || !deps.collapsed(entry.project));
+    const rows = deps.rows().filter((entry) => !deps.collapsed(entry.project));
     const index = rows.findIndex((entry) => entry.row.active);
     const forward = index === -1 ? rows : [...rows.slice(index + 1), ...rows.slice(0, index)];
     return direction === 1 ? forward : forward.reverse();

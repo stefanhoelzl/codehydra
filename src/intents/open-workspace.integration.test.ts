@@ -21,8 +21,7 @@
  * #15: existingWorkspace skips worktree creation
  * #16: existingWorkspace uses projectPath directly
  * #18: project:resolve failure propagates error
- * #20: stealFocus=false with no active workspace dispatches switch
- * #21: stealFocus=false with active workspace skips switch
+ * #21: workspace:open never switches: the presenter lands
  *
  * Regression coverage (APP_LIFECYCLE_INTENTS #10):
  * The agentModule's setup hook behavior (starting per-workspace server) is tested
@@ -1211,96 +1210,30 @@ describe("OpenWorkspace Operation", () => {
     });
   });
 
-  describe("a completing creation never yanks the view back", () => {
-    const OTHER_WORKSPACE: WorkspaceLocator = {
-      ref: makeWorkspaceRef(PROJECT_REF, "other-ws"),
-      projectId: PROJECT_ID,
-      workspaceName: "other-ws" as WorkspaceName,
-    };
-
-    it("skips the switch when the user navigated away mid-creation", async () => {
-      // Nothing active at dispatch (the creation panel), then the user picks
-      // another workspace while the worktree is still being made. Landing them
-      // on the new one now would pull them out of what they moved to.
-      let active: WorkspaceLocator | null = null;
-      const setup = createTestSetup({ activeWorkspaceRefFn: () => active });
-      // Move the active workspace from inside the pipeline, between the
-      // baseline read and the final one.
-      setup.dispatcher.registerModule({
-        name: "test-user-navigates-away",
-        hooks: {
-          [OPEN_WORKSPACE_OPERATION_ID]: {
-            setup: {
-              handler: async (): Promise<HookOutput<SetupHookResult>> => {
-                active = OTHER_WORKSPACE;
-                return {};
-              },
-            },
-          },
-        },
-      });
-
+  describe("workspace:open never switches: the presenter lands (#21)", () => {
+    it("does not switch for a new worktree or a reopen, with nothing active", async () => {
+      const setup = createTestSetup({ activeWorkspaceRefFn: () => null });
       const switched: DomainEvent[] = [];
       setup.dispatcher.subscribe("workspace:switched", (event) => {
         switched.push(event);
       });
 
       await setup.dispatcher.dispatch(createIntent());
+      await setup.dispatcher.dispatch(
+        createIntent({
+          workspaceName: "reopened",
+          existingWorkspace: {
+            path: WORKSPACE_PATH,
+            name: "reopened",
+            branch: WORKSPACE_BRANCH,
+            metadata: {},
+          } satisfies ExistingWorkspaceData,
+        })
+      );
 
       expect(switched).toHaveLength(0);
     });
 
-    it("switches when the user stayed put", async () => {
-      // Same workspace active throughout: the user waited for the creation, so
-      // it lands as usual.
-      const setup = createTestSetup({ activeWorkspaceRefFn: () => OTHER_WORKSPACE });
-
-      const switched: DomainEvent[] = [];
-      setup.dispatcher.subscribe("workspace:switched", (event) => {
-        switched.push(event);
-      });
-
-      await setup.dispatcher.dispatch(createIntent());
-
-      expect(switched).toHaveLength(1);
-    });
-
-    it("switches when nothing was or is active (creation panel)", async () => {
-      const setup = createTestSetup({ activeWorkspaceRefFn: () => null });
-
-      const switched: DomainEvent[] = [];
-      setup.dispatcher.subscribe("workspace:switched", (event) => {
-        switched.push(event);
-      });
-
-      await setup.dispatcher.dispatch(createIntent());
-
-      expect(switched).toHaveLength(1);
-    });
-  });
-
-  describe("stealFocus=false with no active workspace dispatches switch (#20)", () => {
-    it("switches when no workspace is currently active", async () => {
-      const setup = createTestSetup({ activeWorkspaceRef: null });
-
-      const switchedIntents: DomainEvent[] = [];
-      setup.dispatcher.subscribe("workspace:switched", (event) => {
-        switchedIntents.push(event);
-      });
-
-      const result = await setup.dispatcher.dispatch(createIntent({ stealFocus: false }));
-
-      // Operation succeeds
-      expect(result).toBeDefined();
-      const workspace = result as Workspace;
-      expect(workspace.path).toBe(WORKSPACE_PATH);
-
-      // Switch was dispatched (workspace:switched event emitted)
-      expect(switchedIntents.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  describe("stealFocus=false with active workspace skips switch (#21)", () => {
     it("does not switch when another workspace is active", async () => {
       const setup = createTestSetup({
         activeWorkspaceRef: {

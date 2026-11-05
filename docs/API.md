@@ -179,7 +179,7 @@ const workspace = await api.workspace.create("refactor-api", "main", {
 
 - The new workspace is created in the same project as the current workspace
 - `initialPrompt` can be a string (uses default agent) or `{ prompt, agent }` object
-- If `stealFocus` is `false`, the UI stays on the current workspace (unless no workspace is active); if `true` or omitted, it switches to the new one — but only when the user has not moved to a different workspace while it was being created, since a completing creation never pulls the view back
+- If `stealFocus` is `false`, the UI stays on the current workspace (unless no workspace is active and the project is not collapsed); if `true` or omitted, it switches to the new one — but only when the user has not moved away (to another workspace or the creation panel) while it was being created, since a completing creation never pulls the view back. The switch lands just after the call returns
 - The new workspace appears in the sidebar as a "creating" row as soon as the call starts, regardless of `stealFocus`
 - The initial prompt is queued on the agent's session during creation; the workspace does not wait for the turn it starts (fire-and-forget). If the agent cannot take it over, it is delivered on the next open
 
