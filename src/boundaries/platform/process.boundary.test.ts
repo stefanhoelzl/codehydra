@@ -658,7 +658,7 @@ describe("ExecaProcessRunner", () => {
       "kill() escalates to SIGKILL when SIGTERM is ignored",
       async () => {
         // Spawn process that ignores SIGTERM using trap (Unix-only utility)
-        const proc = spawnIgnoringSignals(runner);
+        const proc = await spawnIgnoringSignals(runner);
         runningProcesses.push(proc);
         trackProcess(proc);
 
@@ -670,7 +670,11 @@ describe("ExecaProcessRunner", () => {
 
         // Should have escalated to SIGKILL since SIGTERM was ignored
         expect(killResult.success).toBe(true);
-        expect(killResult.reason).toBe("SIGKILL");
+        const { signal, exitCode } = await proc.wait(1000);
+        expect(
+          killResult.reason,
+          `process ended with signal ${String(signal)}, exit code ${String(exitCode)}`
+        ).toBe("SIGKILL");
 
         // Verify process is actually dead at OS level
         const died = await waitForProcessDeath(pid!, 500);
