@@ -120,6 +120,9 @@ export default defineConfig({
           environment: "happy-dom",
           include: ["src/renderer/**/*.{test,spec}.{js,ts}"],
           setupFiles: ["./src/test/setup.ts", "./src/test/setup-renderer.ts"],
+          // Testing Library's own cleanup hooks register in a worker's first
+          // test file only; setup-renderer.ts registers them for every file.
+          env: { STL_SKIP_AUTO_CLEANUP: "true" },
         },
       },
       {

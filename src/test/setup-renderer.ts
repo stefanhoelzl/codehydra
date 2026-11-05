@@ -4,6 +4,23 @@
  */
 
 import { PropertySymbol } from "happy-dom";
+import { beforeEach } from "vitest";
+import { act, cleanup, setup } from "@testing-library/svelte/pure";
+
+// Unmount what each test rendered, in every test file. Testing Library's own
+// hooks don't do it: with `globals: true` its Vite plugin leaves cleanup to
+// hooks that `@testing-library/svelte` registers when first imported, and with
+// `isolate: false` a worker imports it once, so only its first test file got
+// them. Every later file kept its components mounted, along with anything they
+// subscribe to (a shared clock, say). This file runs again for every test
+// file; the library's own hooks are off (STL_SKIP_AUTO_CLEANUP, vitest.config.ts).
+beforeEach(async () => {
+  await setup();
+  return async () => {
+    await act();
+    cleanup();
+  };
+});
 
 // Neuter <iframe> page loading. happy-dom's HTMLIFrameElement navigates a real
 // child frame whenever it is connected, or its src/srcdoc changes — for
