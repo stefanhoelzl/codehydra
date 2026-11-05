@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { mkdtemp, mkdir, writeFile, chmod, rm, realpath, readFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -352,6 +352,33 @@ describe("ExecaProcessRunner", () => {
     // its flakiness.
   });
 
+  describe("kill of a process that refuses", () => {
+    it("logs the refusal, which the caller only sees as a survivor", async () => {
+      // Stands in for another user's process: no real one is available to a
+      // test, and it exists but answers EPERM to every real signal.
+      const refused = Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+      const spy = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+        if (signal === 0) return true;
+        throw refused;
+      });
+      const logger = createBehavioralLogger();
+      try {
+        const result = await new ExecaProcessRunner(logger, { native: nativeAddon() }).kill(
+          999_999,
+          1,
+          1
+        );
+
+        expect(result.success).toBe(false);
+        expect(logger.getMessagesByLevel("warn").map((m) => m.context)).toContainEqual(
+          expect.objectContaining({ pid: 999_999, code: "EPERM" })
+        );
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
   describe("findListeningProcesses", () => {
     // The native addon's socket table against a real socket: only this shows
     // the query still works (a broken one finds nothing, which reads as "nobody"),
@@ -375,6 +402,12 @@ describe("ExecaProcessRunner", () => {
           expect(holders.map((holder) => holder.pid)).toContain(process.pid);
           const self = holders.find((holder) => holder.pid === process.pid);
           expect(self?.name).not.toBe("unknown");
+          expect(self?.origin).toMatchObject({
+            sameSession: true,
+            detailsReadable: true,
+            parentPid: process.ppid,
+          });
+          expect(self?.origin?.startedAt).toEqual(expect.any(String));
         } finally {
           await new Promise((resolve) => server.close(resolve));
         }

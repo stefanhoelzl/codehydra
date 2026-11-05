@@ -210,6 +210,12 @@ export interface IdeServerModuleDeps {
    * `start` hook point, two after `show-ui`, so the UI is up by then.
    */
   readonly ui: Pick<UiPresenter, "dialog">;
+  /**
+   * Send a telemetry event. Gated on `telemetry.enabled` by the composition
+   * root. A terminate that works ends in a running app, so no crash report tells
+   * that a holder was there.
+   */
+  readonly captureEvent: (event: string, properties: Record<string, unknown>) => void;
 }
 
 // =============================================================================
@@ -581,7 +587,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       });
       // Escape means the same as Quit: we are not starting.
       offDismiss = handle.onDismiss(() => {
-        settle("quit");
+        settle("dismiss");
       });
     });
   }
@@ -679,6 +685,45 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   }
 
   /**
+   * Say who holds the port. These lines leave the machine in crash reports, so
+   * they carry no command line: a foreign process's arguments can hold secrets.
+   */
+  function logHolders(port: number, holders: readonly ListeningProcess[]): void {
+    for (const { pid, name, origin } of holders) {
+      logger.warn("Port holder", { port, pid, name, ...origin });
+    }
+  }
+
+  /** Whether a holder runs where this app starts its IDE server: our own, left over. */
+  function isOwnIdeServer(holder: ListeningProcess): boolean {
+    const cwd = holder.origin?.cwd ?? null;
+    if (cwd === null) return false;
+    try {
+      return new Path(cwd).equals(deps.pathProvider.dataPath("runtime"));
+    } catch {
+      return false; // Not a path this app can read, so not one it would have set.
+    }
+  }
+
+  /**
+   * Report the holders a terminate cleared. No cwd or command line: those can
+   * name users and projects, and whether it is our own server is all that matters.
+   */
+  function reportTerminated(port: number, holders: readonly ListeningProcess[]): void {
+    deps.captureEvent("ide_port_holder_terminated", {
+      port,
+      holders: holders.map((holder) => ({
+        name: holder.name,
+        own_ide_server: isOwnIdeServer(holder),
+        same_session: holder.origin?.sameSession ?? null,
+        details_readable: holder.origin?.detailsReadable ?? null,
+        started_at: holder.origin?.startedAt ?? null,
+        parent_name: holder.origin?.parentName ?? null,
+      })),
+    });
+  }
+
+  /**
    * Offer to clear whatever holds the IDE server's port, and return once it is
    * free. Throws the ordinary busy-port error if it is not.
    *
@@ -692,26 +737,46 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     let holders = await deps.processRunner.findListeningProcesses(port);
     // The scan is best-effort, and an empty result means "could not tell", not
     // "free" — with nothing to show there is no offer worth making.
-    if (holders.length === 0) throw portConflictError(port);
+    if (holders.length === 0) {
+      logger.warn("Port in use; no holder found", { port });
+      throw portConflictError(port);
+    }
 
     logger.warn("Port in use; offering to terminate", {
       port,
       pids: holders.map((holder) => holder.pid).join(","),
     });
+    logHolders(port, holders);
 
     const handle = deps.ui.dialog(portConflictDialog(port, holders));
+    const openedAt = Date.now();
     try {
       for (;;) {
-        if ((await nextAction(handle)) !== "terminate") {
+        const action = await nextAction(handle);
+        // Warn level, like everything here: it is the default, and only what is
+        // logged at it reaches a crash report. Whether the port is free by now
+        // tells a holder that went away by itself from one still running.
+        logger.warn("Port conflict answered", {
+          port,
+          action,
+          openMs: Date.now() - openedAt,
+          portFree: await deps.portManager.isPortAvailable(port),
+        });
+        if (action !== "terminate") {
           throw portConflictError(port);
         }
 
         const failure = await terminateHolders(port, holders);
-        if (failure === null) return;
+        if (failure === null) {
+          reportTerminated(port, holders);
+          return;
+        }
+        logger.warn("Port still busy after terminating", { port, failure });
 
         // Re-scan: the survivors are what the next attempt acts on, and the
         // port may have changed hands entirely.
         holders = await deps.processRunner.findListeningProcesses(port);
+        logHolders(port, holders);
         if (holders.length === 0) {
           if (await deps.portManager.isPortAvailable(port)) return;
           throw portConflictError(port);
