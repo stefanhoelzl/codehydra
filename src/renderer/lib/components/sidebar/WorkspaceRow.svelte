@@ -2,9 +2,10 @@
   WorkspaceRow.svelte
 
   One workspace in a project card: status glyph, title (or name), branch and
-  tags on the second line, a short meta text at the end (the hibernation age,
-  "working", or with the process summary on the workspace's CPU and memory), its questions as cards, and hover actions. Clicks are reported
-  to the sidebar, which owns what they do.
+  tags on the second line, with the process summary on the workspace's CPU and
+  memory at that line's end, a short meta text at the row's end (the hibernation
+  age or "working"), its questions as cards, and hover actions. Clicks are
+  reported to the sidebar, which owns what they do.
 -->
 <script lang="ts">
   import type { UiNotification, UiWorkspaceRow } from "@shared/ui-state";
@@ -52,15 +53,12 @@
       ? describeHibernation(row.hibernatedAt, minuteNow())
       : null
   );
-  // An awake row with the process summary on shows its CPU and memory in
-  // place of "working" (the busy spinner still says it); a hibernated row has
-  // none and keeps its age.
+  // An awake row with the process summary on shows its CPU and memory on the
+  // second line; a hibernated row has none.
   const processBadge = $derived(
-    row.processes === undefined ? null : formatProcessBadge(row.processes)
+    row.processes === undefined || row.hibernated ? null : formatProcessBadge(row.processes)
   );
-  const meta = $derived(
-    row.hibernated ? (age?.short ?? "") : (processBadge ?? (glyph === "busy" ? "working" : ""))
-  );
+  const meta = $derived(row.hibernated ? (age?.short ?? "") : glyph === "busy" ? "working" : "");
   // The status cell is the row's button for assistive tech (a click anywhere in
   // the row switches, see ProjectCard): "alpha in web - 1 agent idle".
   const accessibleName = $derived(
@@ -95,8 +93,7 @@
     retry: "Retry",
   };
   const ACTION_ICON = { hibernate: "moon", remove: "trash", retry: "refresh" } as const;
-  // Hovering the row swaps the meta text for the hover actions, so the
-  // process summary's spelled-out form is the row's tooltip instead.
+  // The process summary's spelled-out form is the row's tooltip.
   const tip = $derived(
     automated && row.wakeupScript !== undefined
       ? `Wakes automatically: ${row.wakeupScript}`
@@ -138,34 +135,36 @@
   <div class="txt">
     <span class="title"><Highlighted text={label} {query} /></span>
     {#if pendingText !== null}
-      <span class="sub" title={row.status === "open-failed" ? row.openError : undefined}
-        >{pendingText}</span
-      >
-    {:else if row.title !== undefined || row.tags.length > 0}
+      <span class="sub" title={row.status === "open-failed" ? row.openError : undefined}>
+        <span class="sub-main">{pendingText}</span>
+        {#if processBadge !== null}<span class="proc">{processBadge}</span>{/if}
+      </span>
+    {:else if row.title !== undefined || row.tags.length > 0 || processBadge !== null}
       <span class="sub">
-        {#if row.title !== undefined}
-          <SidebarIcon name="branch" class="sm" /><span class="mono"
-            ><Highlighted text={row.name} {query} /></span
-          >
-        {/if}
-        {#each row.tags as tag (tag.name)}
-          <span
-            class="tagp"
-            style:--c={tag.color ?? "var(--ch-sb-fg-3)"}
-            title={tag.description ?? undefined}
-            ><Highlighted text={tag.label ?? tag.name} {query} /></span
-          >
-        {/each}
+        <span class="sub-main">
+          {#if row.title !== undefined}
+            <SidebarIcon name="branch" class="sm" /><span class="mono"
+              ><Highlighted text={row.name} {query} /></span
+            >
+          {/if}
+          {#each row.tags as tag (tag.name)}
+            <span
+              class="tagp"
+              style:--c={tag.color ?? "var(--ch-sb-fg-3)"}
+              title={tag.description ?? undefined}
+              ><Highlighted text={tag.label ?? tag.name} {query} /></span
+            >
+          {/each}
+        </span>
+        {#if processBadge !== null}<span class="proc">{processBadge}</span>{/if}
       </span>
     {/if}
   </div>
   {#if shortcut !== null}
     <span class="meta"><kbd>{shortcut}</kbd></span>
   {:else}
-    <span
-      class="meta"
-      class:proc={processBadge !== null && !row.hibernated}
-      title={age === null ? undefined : `Hibernated ${age.relative} (${age.date})`}>{meta}</span
+    <span class="meta" title={age === null ? undefined : `Hibernated ${age.relative} (${age.date})`}
+      >{meta}</span
     >
   {/if}
   <span class="enter"><kbd>↵</kbd></span>
@@ -282,6 +281,21 @@
     white-space: nowrap;
     overflow: hidden;
   }
+  /* Branch and tags clip to leave the process summary its room. */
+  .sub-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+  }
+  /* CPU and memory read as numbers, not as the row's status color. */
+  .proc {
+    flex: none;
+    color: var(--ch-sb-fg-2);
+    font-variant-numeric: tabular-nums;
+  }
   .sub :global(.sb-icon.sm) {
     width: 11px;
     height: 11px;
@@ -301,10 +315,6 @@
   }
   .ws.idle .meta {
     color: var(--ch-sb-idle);
-  }
-  /* CPU and memory read as numbers, not as the row's status color. */
-  .ws .meta.proc {
-    color: var(--ch-sb-fg-2);
   }
   .hover-acts {
     position: absolute;

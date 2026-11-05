@@ -43,6 +43,7 @@
   import NoteCard from "./sidebar/NoteCard.svelte";
   import SidebarIcon from "./sidebar/SidebarIcon.svelte";
   import { describeProcessTotals, formatProcessBadge } from "$lib/utils/process-summary.js";
+  import { watchFit } from "$lib/utils/watch-fit.js";
   import { createRowMotion, highlight, noteIn, noteOut } from "./sidebar/motion";
 
   const logger = createLogger("ui");
@@ -577,6 +578,15 @@
     automated: allRows.filter((row) => row.status === "ready" && rowGroup(row) === "automated")
       .length,
   });
+  // The footer total moves to the pulse button's tooltip when it doesn't fit.
+  let footerTotalFits = $state(true);
+  const hiddenTotals = $derived(
+    processSummary && processTotals !== undefined && !footerTotalFits
+      ? describeProcessTotals(processTotals)
+      : null
+  );
+  const pulseHint = $derived(`${processSummary ? "Hide" : "Show"} process summary (Alt+X, P)`);
+
   /** The footer summary names only the counts it shows: the non-zero ones. */
   const summaryTitle = $derived(
     [
@@ -702,7 +712,11 @@
     </div>
 
     <div class="sb-foot">
-      <div class="sum" title={summaryTitle || undefined}>
+      <div
+        class="sum"
+        title={summaryTitle || undefined}
+        use:watchFit={(fits) => (footerTotalFits = fits)}
+      >
         {#if summary.busy > 0}<i><span class="ring busy"></span>{summary.busy}</i>{/if}
         {#if summary.loading > 0}<i class="loading"><span class="ring"></span>{summary.loading}</i
           >{/if}
@@ -714,7 +728,9 @@
             ><SidebarIcon name="alarm" size={10} />{summary.automated}</i
           >{/if}
         {#if processSummary && processTotals !== undefined}<i
+            id="sidebar-process-total"
             class="proc"
+            class:overflowed={!footerTotalFits}
             title={describeProcessTotals(processTotals)}
             aria-label={describeProcessTotals(processTotals)}
             >{formatProcessBadge(processTotals.all)}</i
@@ -735,8 +751,9 @@
         type="button"
         class="ib"
         class:on={processSummary}
-        title={`${processSummary ? "Hide" : "Show"} process summary (Alt+X, P)`}
+        title={hiddenTotals === null ? pulseHint : `${hiddenTotals}\n${pulseHint}`}
         aria-label={processSummary ? "Hide process summary" : "Show process summary"}
+        aria-describedby={hiddenTotals === null ? undefined : "sidebar-process-total"}
         aria-pressed={processSummary}
         onclick={() =>
           api.emitEvent({ kind: "set-sidebar-process-summary", enabled: !processSummary })}
@@ -1042,7 +1059,10 @@
     gap: 1px;
   }
   .sum {
+    position: relative;
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
     font-size: 11px;
     color: var(--ch-sb-fg-3);
     padding-left: 6px;
@@ -1069,10 +1089,18 @@
   .sum .auto {
     color: var(--ch-sb-auto);
   }
+  /* The worst-case width (see watchFit): digits changing can't flip it. */
   .sum .proc {
     color: var(--ch-sb-fg-2);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+    min-width: 11.7ch; /* `999% 12G · 99` */
+  }
+  .sum .proc.overflowed {
+    position: absolute;
+    left: 0;
+    top: 0;
+    visibility: hidden;
   }
   .sum .d {
     background: var(--ch-sb-idle);
