@@ -8,7 +8,7 @@ User scripts attached to CodeHydra: YAML manifests contributing **hooks** and **
 - `discovery.ts` — finding plugins in a source; `manifest.ts` — strict zod manifest schema; `plugin-config.ts` — a manifest's `config:` settings and their values.
 - `sources.ts` — parses `plugins.config` (`parseSourcesConfig`), edits its text keeping comments (`ch plugin add|remove`); `remotes.ts` — git sources.
 - `hook-map.ts` — the hook contract (entries, input/output schemas, hook-point bindings); `hook-output.ts` — parsing a hook's stdout; `output-sink.ts` — hook output to the workspace IDE's `CodeHydra Plugins` output channel, buffered until its sidekick connects.
-- `automations.ts` — what automation items mean (workspace reconciliation, `auto-workspaces` state); `items.ts` — item schemas; `template-render.ts` — Liquid for `ch plugin render`.
+- `automations.ts` — what automation items mean (workspace reconciliation, `auto-workspaces` state); `items.ts` — item schemas; `template-render.ts` — Liquid for `ch plugin render`; `schedule.ts` — an automation's cron `schedule`; `project-automations.ts` — a repository's plugins as its default branch has them; `automation-files.ts` — the manifests `ch automation add|remove` manage (`src/api/entries/automation.ts`).
 - `trust.ts` — enabled/disabled/ask, the trust dialog; `errors.ts` — the error book (`ch plugin errors`).
 - Outside this directory: `src/modules/scripts/` (`script-runner.ts`, `shells.ts`, `run-log.ts`, `failure-cards.ts` — shared with poll and wakeup scripts), `src/modules/poll-module.ts`, `src/api/adapters/plugin-actions.ts` + `plugin-actions-map.ts`.
 
@@ -17,7 +17,7 @@ User scripts attached to CodeHydra: YAML manifests contributing **hooks** and **
 - A plugin is `<name>.yaml` or `<name>/plugin.yaml` in a **source**:
   - **local**: `~/.codehydra/plugins` (entry `default`, `PathProvider.homePath("plugins")`) and folders `plugins.config` lists. Every project, enabled by default, hooks + automations.
   - **remote**: git repositories `plugins.config` lists. Same as local.
-  - **project**: a worktree's `.codehydra/plugins`. That worktree only, hooks only (an `automations:` section is ignored with a warning), trusted per plugin.
+  - **project**: `.codehydra/plugins` in a repository, trusted per plugin. Hooks are read from the worktree they apply to; automations from the project's default branch (`project-automations.ts`), so an `automations:` section in a worktree does nothing until merged.
 - Name `<type>:<entry>:<plugin>`: `local:default:x`, `local:work:x`, `remote:acme:x`, `project:<project name>:x`. Parsed by splitting at the first and last `:` (a project name may hold one, a plugin name never does).
 - `plugins.config` is one YAML-valued setting, a mapping of entries `{type: local|remote|project, …, config: {<plugin>: {<setting>: value}}}`. A `project` entry adds no plugins, only values for a repository's plugins. `omit: true` (holds tokens).
 - Remote (`remotes.ts`): under `<data>/plugins/remotes/<entry>-<url-hash>/` a bare `repo.git/`, one detached checkout per commit in `trees/<commit>/`, and `current.json`. Fetched at app start (`app:started`, background), when an entry is new or its ref changed, and on `ch plugin add|update` — never otherwise. A running script leases its tree (`acquire`); a fetch checks out beside the old tree and switches `current`; a tree neither current nor leased is pruned.
@@ -41,9 +41,12 @@ User scripts attached to CodeHydra: YAML manifests contributing **hooks** and **
 
 ## Automations
 
-- `automations.<name>: <script>` (local and remote plugins only), identity `<plugin>/<name>`. Run every poll tick (`poll.interval`) as `poll:tick` jobs: the plugin module collects them and acts on their items; `poll-module.ts` runs them and owns their failures (timeout `poll.timeout`, exit 75 = temporary, run logs, failure cards; `ch plugin errors` reads them back).
+- `automations.<name>: <script>` or `{script, schedule}`, identity `<plugin>/<name>` (a repository's: `project:<projectRef>:<plugin>/<name>`, shown by its `label`, because project names can repeat). Run every poll tick (`poll.interval`), or the first tick after a time the 5-field cron `schedule` names, as `poll:tick` jobs: the plugin module collects them and acts on their items; `poll-module.ts` runs them and owns their failures (timeout `poll.timeout`, exit 75 = temporary, run logs, failure cards; `ch plugin errors` reads them back).
 - The script prints a JSON array of items `{action, …that operation's input}`. `action` is the discriminator over the registry operations the exhaustive `plugin-actions-map.ts` allows; item schemas (`items.ts`) are the registry's input schemas made strict (an unknown field refuses the item).
-- `plugin-actions.ts` invokes actions as an app-global caller; a `workspace` input resolves like `--workspace`.
+- `plugin-actions.ts` invokes actions as an app-global caller; a `workspace` input resolves like `--workspace`. A repository's automation scopes a bare name and a project-less create to its own project.
+- A schedule's last run is in memory (`dueNow`): no run at startup, no catching up. A job not due calls `poll.markWaiting`, or the poll module would forget its failure.
+- A repository's automation runs in its project's folder with `{project, projectPath}` on stdin, and holds a lease on its copy from collect to result. Its tracking stands while its project is closed or unreadable or its question unanswered (`keepsTracking`).
+- `ch automation add|remove` write and delete a `<name>.yaml` in `~/.codehydra/plugins` or, with `repo`, the worktree's folder; never commit; `remove` refuses anything `holdsOnlyAutomation` does not recognise.
 - `workspace.create` items add `event` (default `false`: desired state, tracked by `key` in `auto-workspaces`; `true`: fire every time printed), `key` (default `name`), `metadata`.
 - `ch plugin render <template> [items]` (`plugin.render`; items default to stdin) is the opt-in Liquid filter.
 
@@ -57,4 +60,5 @@ User scripts attached to CodeHydra: YAML manifests contributing **hooks** and **
 
 - `trust.ts`, persisted in state `plugins.state`: `Record<key, boolean>`; absent = local/remote `enabled`, project `ask`. Project keys use the project's ref (`project:<projectRef>:<name>`), not its name.
 - Asked when a plugin would actually run, whatever triggered it: one checkbox dialog per project listing every plugin at `ask` — **Remember** stores checked/unchecked as enabled/disabled, **Just this time** runs the checked ones and stores nothing.
+- One answer per plugin, covering its hooks and automations. An automation never waits for it (`checkNow`): it is skipped meanwhile, the answer held in memory until restart unless remembered, a dismissal counting as no.
 - Legacy `.codehydra/hooks` is not read.

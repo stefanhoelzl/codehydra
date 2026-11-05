@@ -64,6 +64,27 @@ export interface IGitClient {
   addDetachedWorktree(repoPath: Path, worktreePath: Path, commit: string): Promise<void>;
 
   /**
+   * Write one folder of a commit to a directory, leaving the repository as it
+   * was: no worktree is registered, and its index, HEAD and working tree are not
+   * touched. Works on a bare repository. It is how a repository's plugins are
+   * read from its default branch.
+   * @param repoPath Absolute path to the git repository
+   * @param commit The commit to read (a full hash)
+   * @param folder The folder in the commit, relative to its root, with `/` separators
+   * @param destination An existing directory its contents go in
+   * @param indexFile A path git may keep its temporary index at; the caller removes it
+   * @returns False, with nothing written, when the commit has no such folder
+   * @throws GitError if the commit is unknown or the files cannot be written
+   */
+  exportFolder(
+    repoPath: Path,
+    commit: string,
+    folder: string,
+    destination: Path,
+    indexFile: Path
+  ): Promise<boolean>;
+
+  /**
    * Remove a worktree from the repository.
    * @param repoPath Absolute path to the git repository
    * @param worktreePath Absolute path to the worktree to remove

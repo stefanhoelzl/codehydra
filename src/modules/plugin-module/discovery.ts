@@ -8,9 +8,9 @@
  *   project and runs without asking.
  * - **remote** — a git repository `plugins.config` lists, read from its
  *   current checkout (remotes.ts). Like local.
- * - **project** — `.codehydra/plugins/` in a worktree: what a repository
- *   ships. Applies to that worktree only, contributes hooks only, and runs once
- *   trusted.
+ * - **project** — `.codehydra/plugins/` in a repository: what it ships. Runs once
+ *   trusted. Its hooks are read from the worktree they apply to, its automations
+ *   from the project's default branch (project-automations.ts).
  *
  * A plugin is named `<type>:<entry>:<plugin>` — the entry being the
  * `plugins.config` key, or the project's name for a repository's plugin.

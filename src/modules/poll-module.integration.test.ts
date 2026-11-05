@@ -100,6 +100,8 @@ function createSetup(options?: { config?: Record<string, unknown> }) {
 
   /** The jobs the test owner collects each tick. */
   let jobs: PollJob[] = [];
+  /** Jobs it says are only not due this tick. */
+  let waiting: string[] = [];
   /** What reached the owner's result hook, in order. */
   const results: Array<{ id: string; run: PollRun }> = [];
   /** Errors the owner returns for a job, by id. */
@@ -108,7 +110,12 @@ function createSetup(options?: { config?: Record<string, unknown> }) {
     name: "test-owner",
     hooks: defineHooks({
       [POLL_TICK_OPERATION_ID]: {
-        collect: { handler: async () => ({ result: { jobs } }) },
+        collect: {
+          handler: async () => {
+            for (const id of waiting) poll.markWaiting({ owner: "test", id });
+            return { result: { jobs } };
+          },
+        },
         result: {
           handler: async (ctx) => {
             if (ctx.job.owner !== "test") return;
@@ -147,6 +154,9 @@ function createSetup(options?: { config?: Record<string, unknown> }) {
     logs,
     results,
     ownerErrors,
+    setWaiting: (next: string[]): void => {
+      waiting = next;
+    },
     setJobs: (next: PollJob[]): void => {
       jobs = next;
     },
@@ -342,6 +352,22 @@ describe("poll module: failures", () => {
     await vi.advanceTimersByTimeAsync(MINUTE);
     await setup.settle();
     expect(setup.notifications[0]!.closed).toBe(true);
+  });
+
+  it("keeps the failure and card of a job only waiting for its time", async () => {
+    const setup = createSetup();
+    setup.setJobs([job("a")]);
+    setup.outcomes["a"] = { exitCode: 1 };
+    await setup.start();
+    await setup.settle();
+
+    setup.setJobs([]);
+    setup.setWaiting(["a"]);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await setup.settle();
+
+    expect(setup.notifications[0]!.closed).toBe(false);
+    expect(setup.poll.errors("test")).toHaveLength(1);
   });
 
   it("opens the newest failed run's log from the card, which stays up", async () => {

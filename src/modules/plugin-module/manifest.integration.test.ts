@@ -21,6 +21,30 @@ describe("parseManifest", () => {
     });
   });
 
+  it("reads an automation with a schedule", () => {
+    const [doc] = parseManifest(
+      ["automations:", "  prs:", '    schedule: "0 3 * * *"', "    script: ./prs.sh"].join("\n")
+    );
+
+    expect(doc?.automations).toEqual([{ name: "prs", script: "./prs.sh", schedule: "0 3 * * *" }]);
+  });
+
+  it("refuses a schedule cron cannot read, naming the automation", () => {
+    expect(() =>
+      parseManifest(
+        ["automations:", "  prs:", '    schedule: "0 3 * *"', "    script: ./prs.sh"].join("\n")
+      )
+    ).toThrow(/automations\.prs\.schedule/);
+  });
+
+  it("refuses an unknown key beside a schedule", () => {
+    expect(() =>
+      parseManifest(
+        ["automations:", "  prs:", "    interval: 60", "    script: ./prs.sh"].join("\n")
+      )
+    ).toThrow(/document 1/);
+  });
+
   it("reads a stream of documents, skipping empty ones", () => {
     const docs = parseManifest("shell: cmd\nplatform: windows\n---\nplatform: [linux]\n---\n");
 

@@ -121,6 +121,41 @@ export interface PluginSourceListing {
   readonly status: string;
 }
 
+/** One automation, as `ch automation list` shows it. */
+export interface AutomationListing {
+  /** `<plugin>/<name>`, e.g. `local:default:github/reviews`. */
+  readonly automation: string;
+  readonly plugin: string;
+  readonly state: PluginState;
+  /** Its cron expression; absent: every poll. */
+  readonly schedule?: string;
+  /** ISO time of the next time its schedule names. */
+  readonly nextRun?: string;
+  /** The project a repository's automation belongs to. */
+  readonly project?: string;
+  /** The plugin's directory, or its manifest file. */
+  readonly path: string;
+}
+
+/** What `ch automation add` was given. */
+export interface NewAutomationRequest {
+  readonly name: string;
+  readonly script: string;
+  readonly schedule?: string;
+  readonly shell?: "bash" | "powershell" | "cmd";
+  /** Into the workspace's `.codehydra/plugins`, instead of `~/.codehydra/plugins`. */
+  readonly repo: boolean;
+}
+
+/** The file `ch automation add|remove` wrote or deleted. */
+export interface AutomationFile {
+  readonly automation: string;
+  readonly plugin: string;
+  readonly path: string;
+  /** When the change applies, in words that follow "takes effect". */
+  readonly takesEffect: string;
+}
+
 /** What `ch plugin add` was given. */
 export interface PluginAddRequest {
   /** A git URL (a remote) or a folder (a local entry). */
@@ -159,6 +194,12 @@ export interface PluginScope {
 /** The plugins, owned by the plugin module. */
 export interface Plugins {
   list(scope: PluginScope): Promise<readonly PluginListing[]>;
+  /** Every automation: the user's, and each open project's on its default branch. */
+  automations(): Promise<readonly AutomationListing[]>;
+  /** Write a new automation's manifest (`ch automation add`). */
+  addAutomation(scope: PluginScope, request: NewAutomationRequest): Promise<AutomationFile>;
+  /** Delete a manifest holding just that automation (`ch automation remove`). */
+  removeAutomation(scope: PluginScope, name: string, repo: boolean): Promise<AutomationFile>;
   /** Set a plugin's state. Throws `not-found` when no such plugin exists. */
   setState(scope: PluginScope, id: string, state: PluginState): Promise<PluginListing>;
   /** Add a source to `plugins.config`: a repository is cloned first, and refused if it cannot be. */
