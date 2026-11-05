@@ -449,7 +449,7 @@ holding <kbd>Alt</kbd> while you press:
 | Key                                      | Action                                                                           |
 | ---------------------------------------- | -------------------------------------------------------------------------------- |
 | <kbd>↑</kbd> / <kbd>↓</kbd>              | Previous / next workspace                                                        |
-| <kbd>←</kbd> / <kbd>→</kbd>              | Previous / next idle workspace (a busy one if none is idle)                      |
+| <kbd>←</kbd> / <kbd>→</kbd>              | Previous / next idle workspace                                                   |
 | <kbd>1</kbd>-<kbd>9</kbd>, <kbd>0</kbd>  | Jump to the numbered workspace (numbers are shown in shortcut mode)              |
 | <kbd>Enter</kbd>                         | Open the New workspace form                                                      |
 | <kbd>F</kbd>                             | Find a workspace (the sidebar's Find field)                                      |
