@@ -4,7 +4,7 @@
   One workspace in a project card: status glyph, title (or name), branch and
   tags on the second line, with the process summary on the workspace's CPU and
   memory at that line's end, a short meta text at the row's end (the hibernation
-  age or "working"), its questions as cards, and hover actions. Clicks are
+  age or how long the agent has been working), its questions as cards, and hover actions. Clicks are
   reported to the sidebar, which owns what they do.
 -->
 <script lang="ts">
@@ -16,7 +16,8 @@
     type RowAction,
   } from "$lib/utils/sidebar-model.js";
   import { describeHibernation } from "$lib/utils/hibernation-age.js";
-  import { minuteNow } from "$lib/utils/minute-clock.svelte.js";
+  import { describeBusyTime } from "$lib/utils/busy-time.js";
+  import { minuteNow, secondNow } from "$lib/utils/clock.svelte.js";
   import { describeProcessSummary, formatProcessBadge } from "$lib/utils/process-summary.js";
   import SidebarIcon from "./SidebarIcon.svelte";
   import Highlighted from "./Highlighted.svelte";
@@ -58,7 +59,17 @@
   const processBadge = $derived(
     row.processes === undefined || row.hibernated ? null : formatProcessBadge(row.processes)
   );
-  const meta = $derived(row.hibernated ? (age?.short ?? "") : glyph === "busy" ? "working" : "");
+  // A working row counts up from when its agent started working. Only a row
+  // that can show the time reads the second clock: one without `changedAt`
+  // keeps "working" and needs no tick.
+  const busy = $derived(
+    glyph === "busy" && row.agent.changedAt !== undefined
+      ? describeBusyTime(row.agent.changedAt, secondNow())
+      : null
+  );
+  const meta = $derived(
+    row.hibernated ? (age?.short ?? "") : glyph === "busy" ? (busy?.short ?? "working") : ""
+  );
   // The status cell is the row's button for assistive tech (a click anywhere in
   // the row switches, see ProjectCard): "alpha in web - 1 agent idle".
   const accessibleName = $derived(
@@ -67,7 +78,7 @@
       age === null
         ? "Hibernated - click to wake"
         : `Hibernated ${age.relative} (${age.date}) - click to wake`
-    )}`
+    )}${busy === null ? "" : ` for ${busy.spoken}`}`
   );
   const pendingText = $derived(
     row.status === "creating"
@@ -119,7 +130,10 @@
     aria-current={row.active ? "true" : undefined}
   >
     {#if glyph === "busy"}
-      <span class="ring busy" title="Agent working"></span>
+      <span
+        class="ring busy"
+        title={busy === null ? "Agent working" : `Agent working since ${busy.since}`}
+      ></span>
     {:else if glyph === "idle"}
       <span class="dot idle" title="Agent waiting for you"></span>
     {:else if glyph === "none"}

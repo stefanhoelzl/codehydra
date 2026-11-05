@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent } from "@testing-library/svelte";
+import { act, cleanup, render, fireEvent } from "@testing-library/svelte";
 import { flushSync, tick } from "svelte";
 import type { Api } from "@shared/electron-api";
 import type { UiNotification, UiProcessTotals, UiProjectRow } from "@shared/ui-state";
@@ -74,7 +74,12 @@ describe("Sidebar", () => {
     vi.mocked(emitEvent).mockClear();
     vi.mocked(sendNotificationEvent).mockClear();
   });
-  afterEach(() => {
+  afterEach(async () => {
+    // Unmount while the fake timers are still installed: a busy row's clock
+    // stops (a microtask after the unmount, which act() awaits) on the timers
+    // it started on, before they are swapped back.
+    await act();
+    cleanup();
     vi.useRealTimers();
   });
 
@@ -133,6 +138,38 @@ describe("Sidebar", () => {
       expect(row(container, "codehydra/redesign-sidebar").querySelector(".meta")?.textContent).toBe(
         "working"
       );
+    });
+
+    it("counts a busy row up from when its agent started working", async () => {
+      const key = "codehydra/redesign-sidebar";
+      const projects = sampleProjects().map((project) => ({
+        ...project,
+        workspaces: project.workspaces.map((ws) =>
+          ws.key === key && ws.agent.type !== "none"
+            ? { ...ws, agent: { ...ws.agent, changedAt: new Date(NOW - 42_000).toISOString() } }
+            : ws
+        ),
+      }));
+      const { container } = setup({ projects });
+      const busyRow = row(container, key);
+      const label = (): string | null =>
+        busyRow.querySelector("button.st")!.getAttribute("aria-label");
+      expect(busyRow.querySelector(".meta")?.textContent).toBe("42s");
+      expect(label()).toMatch(/ busy for less than a minute$/);
+      const since = new Date(NOW - 42_000).toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      expect(busyRow.querySelector(".ring.busy")?.getAttribute("title")).toBe(
+        `Agent working since ${since}`
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(busyRow.querySelector(".meta")?.textContent).toBe("43s");
+
+      await vi.advanceTimersByTimeAsync(65 * 60_000);
+      expect(busyRow.querySelector(".meta")?.textContent).toBe("1h 5m");
+      expect(label()).toMatch(/ busy for 1 hour 5 minutes$/);
     });
 
     it("explains an automated row on hover (no icon)", () => {

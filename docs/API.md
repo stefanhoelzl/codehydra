@@ -306,10 +306,10 @@ interface AgentStatusCounts {
 }
 
 type AgentStatus =
-  | { readonly type: "none" }
-  | { readonly type: "idle"; readonly counts: AgentStatusCounts }
-  | { readonly type: "busy"; readonly counts: AgentStatusCounts }
-  | { readonly type: "mixed"; readonly counts: AgentStatusCounts };
+  | { readonly type: "none"; readonly changedAt?: string }
+  | { readonly type: "idle"; readonly counts: AgentStatusCounts; readonly changedAt?: string }
+  | { readonly type: "busy"; readonly counts: AgentStatusCounts; readonly changedAt?: string }
+  | { readonly type: "mixed"; readonly counts: AgentStatusCounts; readonly changedAt?: string };
 
 interface WorkspaceStatus {
   readonly isDirty: boolean;
@@ -1453,10 +1453,10 @@ interface WorkspaceStatus {
 
 ```typescript
 type AgentStatus =
-  | { readonly type: "none" }
-  | { readonly type: "idle"; readonly counts: AgentStatusCounts }
-  | { readonly type: "busy"; readonly counts: AgentStatusCounts }
-  | { readonly type: "mixed"; readonly counts: AgentStatusCounts };
+  | { readonly type: "none"; readonly changedAt?: string }
+  | { readonly type: "idle"; readonly counts: AgentStatusCounts; readonly changedAt?: string }
+  | { readonly type: "busy"; readonly counts: AgentStatusCounts; readonly changedAt?: string }
+  | { readonly type: "mixed"; readonly counts: AgentStatusCounts; readonly changedAt?: string };
 
 interface AgentStatusCounts {
   readonly idle: number;
@@ -1464,6 +1464,12 @@ interface AgentStatusCounts {
   readonly total: number;
 }
 ```
+
+`changedAt` (ISO-8601) is when the workspace last moved between running no agent
+(`none`), waiting (`idle`) and working (`busy` or `mixed`). A move between busy
+and mixed, or a change of the counts alone, keeps it. It is held in memory: after
+a restart it is when CodeHydra first saw the status. Absent while the workspace
+has reported no status yet.
 
 #### `BaseInfo`
 

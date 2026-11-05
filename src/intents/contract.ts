@@ -292,12 +292,31 @@ export const agentStatusCountsSchema = z
   .readonly();
 export type AgentStatusCounts = z.infer<typeof agentStatusCountsSchema>;
 
+/**
+ * When the workspace last moved between `none`, `idle` and working (`busy` or
+ * `mixed`), ISO-8601. Busy ↔ mixed and count-only changes keep it. Absent while
+ * the workspace has reported no status yet.
+ */
+export const agentStatusChangedAtSchema = z.string().optional();
+
 /** Agent status for a workspace (discriminated union by `type`). */
 export const agentStatusSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("none") }),
-  z.object({ type: z.literal("idle"), counts: agentStatusCountsSchema }),
-  z.object({ type: z.literal("busy"), counts: agentStatusCountsSchema }),
-  z.object({ type: z.literal("mixed"), counts: agentStatusCountsSchema }),
+  z.object({ type: z.literal("none"), changedAt: agentStatusChangedAtSchema }),
+  z.object({
+    type: z.literal("idle"),
+    counts: agentStatusCountsSchema,
+    changedAt: agentStatusChangedAtSchema,
+  }),
+  z.object({
+    type: z.literal("busy"),
+    counts: agentStatusCountsSchema,
+    changedAt: agentStatusChangedAtSchema,
+  }),
+  z.object({
+    type: z.literal("mixed"),
+    counts: agentStatusCountsSchema,
+    changedAt: agentStatusChangedAtSchema,
+  }),
 ]);
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
 

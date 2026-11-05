@@ -94,7 +94,9 @@ Each workspace reports its agent's status:
 | **Mixed** | Several agent sessions, some idle and some busy                                                |
 
 The sidebar shows it on every workspace row; see
-[Status indicators](#status-indicators).
+[Status indicators](#status-indicators). The status also records when it last
+changed between none, idle and working (busy or mixed), as `changedAt` in
+`ch ws status` — the time a busy row counts from.
 
 You'll hear a sound when an agent goes idle, so you can stay productive
 without constantly checking the screen. On macOS and Windows the app icon
@@ -193,8 +195,10 @@ second line shows the branch. Tags follow, each in its color and with its label,
 and its description on hover. With the process summary on, every awake row has
 a second line, ending in the workspace's CPU and memory; the branch and tags
 clip to leave them room. A title that does not fit ends in "…". The end of the
-row says **working** while the agent works, and for a hibernated workspace how
-long it has slept. Hovering a row shows its actions: hibernate
+row shows how long the agent has been working while it works — `42s`, then
+`5m`, `1h 5m`, counted from when it last started (hover the spinner for the
+start time) — and for a hibernated workspace how long it has slept. The count
+restarts whenever the agent stops to wait for you, a permission prompt included. Hovering a row shows its actions: hibernate
 (moon) and remove (trash), or retry and remove for one that could not be
 opened, or remove for a hibernated one.
 

@@ -493,9 +493,11 @@ function projectForLog(state: UiState): string {
 
 /** The row view of a tracked agent status (absent = no agent). */
 function toAgentStatus(status: AggregatedAgentStatus | undefined): AgentStatus {
-  if (status === undefined || status.status === "none") return AGENT_NONE;
+  if (status === undefined) return AGENT_NONE;
+  const changedAt = status.changedAt !== undefined ? { changedAt: status.changedAt } : {};
+  if (status.status === "none") return { ...AGENT_NONE, ...changedAt };
   const { idle, busy } = status.counts;
-  return { type: status.status, counts: { idle, busy, total: idle + busy } };
+  return { type: status.status, counts: { idle, busy, total: idle + busy }, ...changedAt };
 }
 
 export function createPresentationModule(deps: PresentationModuleDeps): UiPresenter {

@@ -10,7 +10,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import { describeHibernation } from "$lib/utils/hibernation-age.js";
-  import { minuteNow } from "$lib/utils/minute-clock.svelte.js";
+  import { minuteNow } from "$lib/utils/clock.svelte.js";
 
   interface Props {
     /** Inline screenshot data URL from the snapshot (null = none/loading). */
