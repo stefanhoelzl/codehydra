@@ -1773,14 +1773,14 @@ describe("IdeServerModule", () => {
         "already in use"
       );
 
-      const warnings = logger.getMessagesByLevel("warn");
-      expect(warnings.find((m) => m.message === "Port holder")?.context).toEqual({
+      const notices = logger.getMessagesByLevel("notice");
+      expect(notices.find((m) => m.message === "Port holder")?.context).toEqual({
         port: PORT,
         pid: HOLDER.pid,
         name: HOLDER.name,
         ...origin,
       });
-      expect(warnings.find((m) => m.message === "Port conflict answered")?.context).toMatchObject({
+      expect(notices.find((m) => m.message === "Port conflict answered")?.context).toMatchObject({
         action: "quit",
         portFree: false,
       });

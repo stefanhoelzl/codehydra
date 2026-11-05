@@ -40,12 +40,12 @@ export interface LoggingModuleDeps {
 export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
   // Register config keys
   const logLevelConfig = deps.configService.register("log.level", {
-    default: "warn",
+    default: "notice",
     description: "Level spec: <level> or <level>:<filter>",
     ...storeCustom({
       parse: parseLogLevelSpec,
       validate: (v: unknown) => (typeof v === "string" ? parseLogLevelSpec(v) : undefined),
-      validValues: "silly|debug|info|warn|error[:filter]",
+      validValues: "silly|debug|info|notice|warn|error[:filter]",
       settingsControl: { kind: "string" },
     }),
     computedDefault: (ctx) => (ctx.isDevelopment ? "debug" : undefined),

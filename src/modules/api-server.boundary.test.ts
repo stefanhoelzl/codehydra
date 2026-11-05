@@ -973,6 +973,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         silly: record,
         debug: record,
         info: record,
+        notice: record,
         warn: record,
         error: record,
         scoped: (hint) => new ScopedLogger(logger, store, hint),

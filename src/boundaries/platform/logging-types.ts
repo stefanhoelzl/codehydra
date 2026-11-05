@@ -14,6 +14,7 @@ export const LogLevel = {
   silly: "silly",
   debug: "debug",
   info: "info",
+  notice: "notice",
   warn: "warn",
   error: "error",
 } as const;
@@ -239,6 +240,13 @@ export interface Logger {
    * Use for significant operations (start/stop, connections, completions).
    */
   info(message: string, context?: LogContext): void;
+
+  /**
+   * Log a notice: nothing is wrong, but the line must be in a production log.
+   * This is the default level, so the quietest one a default log file holds.
+   * Use for diagnostics a later report needs (how a session ended, who held a port).
+   */
+  notice(message: string, context?: LogContext): void;
 
   /**
    * Log a warning message.

@@ -173,6 +173,28 @@ describe("LoggingModule Integration", () => {
     });
   });
 
+  it("logs at notice level unless told otherwise", async () => {
+    const deps = {
+      ...createDeps(),
+      configService: createMockConfig({
+        defaults: { "log.output": "file", "log.format": "text" },
+      }),
+    };
+    const dispatcher = createMockDispatcher();
+
+    dispatcher.registerOperation(new MinimalAppStartOperation());
+    dispatcher.registerModule(createLoggingModule(deps));
+
+    await dispatcher.dispatch<AppStartIntent>({
+      type: INTENT_APP_START,
+      payload: {},
+    });
+
+    expect(deps.loggingService.configure).toHaveBeenCalledWith(
+      expect.objectContaining({ logLevel: "notice" })
+    );
+  });
+
   it("configures with file-only output by default", async () => {
     const deps = createDeps({
       "log.level": "warn",

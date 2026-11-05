@@ -1928,7 +1928,7 @@ surroundings.
 The full record, for every workspace and for CodeHydra itself, is in the
 `logs/` folder of the data directory (see
 [Where settings come from](#where-settings-come-from)); how much of it is
-written is the `log.level` setting (`warn` by default; `debug` for detail).
+written is the `log.level` setting (`notice` by default; `debug` for detail).
 A workspace's lines carry `<project>/<workspace>` there, so
 `grep 'myproject/feature-x' <logfile>` finds them. Bug reports attach this
 file.

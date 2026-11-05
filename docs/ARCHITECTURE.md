@@ -995,7 +995,9 @@ rules.
 | `log.output` | `CH_LOG__OUTPUT` | `file`, `console`, `file,console` | Output destinations      |
 | `log.format` | `CH_LOG__FORMAT` | `text`\|`json`                    | Text lines or JSONL      |
 
-Levels, most verbose first: `silly`, `debug`, `info`, `warn`, `error`. The
+Levels, most verbose first: `silly`, `debug`, `info`, `notice`, `warn`, `error`.
+`notice` is for a line where nothing is wrong but that must be in a production
+log (how a session ended, who held a port); `warn` means something is off. The
 optional filter is a comma-separated **whitelist** of logger names (or `*` for
 all) — naming loggers restricts output to them; it cannot exclude one from an
 otherwise unfiltered level. A line that should stay out of a default `debug`
@@ -1010,7 +1012,7 @@ CH_LOG__LEVEL=silly:presenter pnpm dev                # one scope, maximum detai
 **Default Levels**:
 
 - Development (isDevelopment=true): `debug` (computed default)
-- Production (isDevelopment=false): `warn`
+- Production (isDevelopment=false): `notice`
 
 ### Ambient Scope
 

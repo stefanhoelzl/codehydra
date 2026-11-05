@@ -35,6 +35,7 @@ function scopedTestLogger(target: Logger, hint: LogScopeHint): Logger {
     silly: (message, context) => target.silly(message, fold(context)),
     debug: (message, context) => target.debug(message, fold(context)),
     info: (message, context) => target.info(message, fold(context)),
+    notice: (message, context) => target.notice(message, fold(context)),
     warn: (message, context) => target.warn(message, fold(context)),
     error: (message, context, error) => target.error(message, fold(context), error),
     scoped: (more) => scopedTestLogger(target, { ...hint, ...more }),
@@ -49,6 +50,7 @@ export interface MockLogger extends Logger {
   silly: Mock<(message: string, context?: LogContext) => void>;
   debug: Mock<(message: string, context?: LogContext) => void>;
   info: Mock<(message: string, context?: LogContext) => void>;
+  notice: Mock<(message: string, context?: LogContext) => void>;
   warn: Mock<(message: string, context?: LogContext) => void>;
   error: Mock<(message: string, context?: LogContext, error?: Error) => void>;
 }
@@ -94,6 +96,7 @@ export function createMockLogger(): MockLogger {
     silly: vi.fn(),
     debug: vi.fn(),
     info: vi.fn(),
+    notice: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
     scoped: (hint) => scopedTestLogger(logger, hint),
@@ -157,6 +160,7 @@ export const SILENT_LOGGER: Logger = {
   silly: () => {},
   debug: () => {},
   info: () => {},
+  notice: () => {},
   warn: () => {},
   error: () => {},
   scoped: () => SILENT_LOGGER,
@@ -170,7 +174,7 @@ export const SILENT_LOGGER: Logger = {
  * Logged message type for behavioral testing.
  */
 export interface LoggedMessage {
-  readonly level: "silly" | "debug" | "info" | "warn" | "error";
+  readonly level: "silly" | "debug" | "info" | "notice" | "warn" | "error";
   readonly message: string;
   readonly context?: LogContext | undefined;
 }
@@ -232,6 +236,9 @@ export function createBehavioralLogger(): BehavioralLogger {
     },
     info: (message: string, context?: LogContext) => {
       messages.push({ level: "info", message, context });
+    },
+    notice: (message: string, context?: LogContext) => {
+      messages.push({ level: "notice", message, context });
     },
     warn: (message: string, context?: LogContext) => {
       messages.push({ level: "warn", message, context });

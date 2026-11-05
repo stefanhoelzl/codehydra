@@ -395,6 +395,7 @@ describe("DialogManager", () => {
       const logger = {
         debug: vi.fn(),
         info: vi.fn(),
+        notice: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
         silly: vi.fn(),
@@ -414,6 +415,7 @@ describe("DialogManager", () => {
       const logger = {
         debug: vi.fn(),
         info: vi.fn(),
+        notice: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
         silly: vi.fn(),

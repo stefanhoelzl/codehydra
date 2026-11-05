@@ -76,7 +76,7 @@ export interface ConsoleEntry {
 
 const MAX_CONSOLE = 500;
 
-const LOG_LEVELS = ["silly", "debug", "info", "warn", "error"] as const;
+const LOG_LEVELS = ["silly", "debug", "info", "notice", "warn", "error"] as const;
 
 export interface LogEntry {
   timestamp: string;
@@ -1463,7 +1463,7 @@ const COMMANDS: Record<string, CliCommand> = {
     summary:
       "Print the most recent app log (./app-data/logs), newest first. --scope matches a\n" +
       "logger exactly (git, fs, dispatcher, app, …); --level is a minimum (silly < debug <\n" +
-      "info < warn < error, default debug); --limit defaults to 50. Needs no running app.",
+      "info < notice < warn < error, default debug); --limit defaults to 50. Needs no running app.",
     options: {
       scope: { type: "string" },
       level: { type: "string" },

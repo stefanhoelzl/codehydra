@@ -108,6 +108,19 @@ describe("workspace log", () => {
     });
   });
 
+  it("shows a notice as info, the channel having no level of that name", async () => {
+    const t = setup();
+    await t.open();
+    t.connect();
+
+    t.log({ scope: TARGET, message: "noted", level: "notice" });
+    await t.tick();
+
+    expect(t.shown[0]!.request.lines).toEqual([
+      { source: "git", level: "info", text: "(git) noted" },
+    ]);
+  });
+
   it("sends nothing for lines about no workspace, and nothing at silly", async () => {
     const t = setup();
     await t.open();

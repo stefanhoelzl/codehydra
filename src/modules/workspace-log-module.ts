@@ -46,6 +46,7 @@ const MAX_BUFFERED_LINES = 1000;
 const OUTPUT_LEVELS: Readonly<Record<Exclude<LogLine["level"], "silly">, OutputLineLevel>> = {
   debug: "debug",
   info: "info",
+  notice: "info",
   warn: "warn",
   error: "error",
 };
