@@ -18,6 +18,7 @@ import { lockEntries } from "./lock";
 import { configEntries } from "./config";
 import { guideEntries } from "./guide";
 import { pluginEntries } from "./plugin";
+import { automationEntries } from "./automation";
 import { wakeupEntries } from "./wakeup";
 import { processEntries } from "./processes";
 
@@ -51,6 +52,7 @@ export function createRegistry(deps: RegistryDeps, logger: Logger): OperationReg
     ...configEntries(full),
     ...guideEntries(full),
     ...pluginEntries(full),
+    ...automationEntries(full),
   ]);
   return box.current;
 }

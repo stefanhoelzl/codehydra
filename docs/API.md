@@ -1045,15 +1045,19 @@ What a plugin is, and how its scripts run, is in the user guide (`ch guide plugi
 ```console
 $ ch plugin list                         # name, state, platforms, status, path (rows)
 $ ch plugin disable local:default:github # <type>:<entry>:<name>
-$ ch plugin enable project:my-app:setup  # = trusting it; needs a workspace (cwd or --workspace)
+$ ch plugin enable project:my-app:setup  # = trusting it; --workspace if two open projects share the name
 $ ch plugin add git@github.com:acme/ch-plugins.git --name acme --ref main --path plugins
 $ ch plugin add ~/work/ch-plugins        # a folder: a local entry, named after it
-$ ch plugin update [acme]                # fetch one remote entry now, or every one
+$ ch plugin update [acme]                # fetch one remote entry now, or every one and the open projects
 $ ch plugin remove acme                  # the entry, its values and its clone
 $ ch plugin errors [--all]               # plugin, entry, message, log, at (rows); --all adds past ones (current: false)
 $ ch plugin schema                       # the manifest's JSON Schema
 $ ch plugin schema --items               # what an automation's script prints (oneOf per action)
 $ gh pr list --json number | ch plugin render reviews.yaml   # items through a Liquid template
+$ ch automation list                     # automation, state, schedule, next, path (rows); MCP automation_list
+$ ch automation add reviews --script 'gh pr list …' --schedule '0 3 * * *'   # ~/.codehydra/plugins/reviews.yaml; MCP automation_add
+$ ch automation add reviews --script '…' --repo   # the worktree's .codehydra/plugins, uncommitted
+$ ch automation remove reviews [--repo]  # only a file holding just that automation; MCP automation_remove
 ```
 
 |             |                                                                                                                                                                                                                                                             |

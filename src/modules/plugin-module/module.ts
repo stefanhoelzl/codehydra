@@ -4,9 +4,10 @@
  * A plugin is a YAML manifest (manifest.ts) found in a source (discovery.ts):
  * the user's own — `~/.codehydra/plugins`, and the folders and git
  * repositories `plugins.config` lists (sources.ts, remotes.ts) — which apply
- * to every project and run without asking, and a repository's in the
- * worktree's `.codehydra/plugins`, which apply to that worktree and run once
- * trusted (trust.ts). Every script a plugin contributes runs through one
+ * to every project and run without asking, and a repository's own
+ * `.codehydra/plugins`, whose hooks apply to the worktree they are
+ * read from, whose automations to the project, and which run once trusted
+ * (trust.ts). Every script a plugin contributes runs through one
  * runner (script-runner.ts) in the shell its document names, with the values
  * `plugins.config` gives its settings (plugin-config.ts) in its environment.
  *
@@ -27,11 +28,13 @@
  *   - `before-worktree-deleted` at `delete-workspace : pre-delete`, which can
  *     refuse. It fails closed: a script that breaks stops the deletion too.
  *   - `on-workspace-opened` observes `workspace:created` (every open).
- * - **automations** (automations.ts): a script run every poll tick whose items
- *   each run a registry operation. Local and remote plugins only — a
- *   repository's automations would run from whichever worktree happened to be
- *   read. The poll module (poll-module.ts) runs them and announces their
- *   failures; this module says which there are and acts on what they print.
+ * - **automations** (automations.ts): a script run on a timer whose items each
+ *   run a registry operation — every poll tick, or the first one after a time
+ *   its `schedule` names (schedule.ts). A repository's run from its default
+ *   branch (project-automations.ts), not a worktree: they are project-wide, and
+ *   whichever worktree happened to be read would otherwise decide what runs. The
+ *   poll module (poll-module.ts) runs them and announces their failures; this
+ *   module says which there are and acts on what they print.
  *
  * Several plugins may define the same hook entry. They run one after another —
  * the user's sources in `plugins.config` order (the default folder first),
@@ -90,6 +93,10 @@ import {
 } from "../../intents/resolve-workspace";
 import { projectRefSchema, type ProjectRef, type WorkspaceRef } from "../../intents/contract";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
+import {
+  INTENT_GET_PROJECT_BASES,
+  type GetProjectBasesIntent,
+} from "../../intents/get-project-bases";
 import { resolveProjectReference, type ProjectLocation } from "../../api/workspace-lookup";
 import { projectNameOf } from "../../utils/ref";
 import { expandGitUrl, extractRepoName } from "../../utils/url-utils";
@@ -99,8 +106,12 @@ import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { OperationRegistry } from "../../api/registry";
 import type {
+  AutomationFile,
+  AutomationListing,
+  NewAutomationRequest,
   PluginError,
   PluginListing,
+  PluginScope,
   PluginSourceListing,
   Plugins,
 } from "../../api/entries/deps";
@@ -120,6 +131,7 @@ import {
 } from "./hook-map";
 import { HookFailedError, parseHookOutput } from "./hook-output";
 import {
+  discoverPlugins,
   loadPlugins,
   sourceId,
   pluginId,
@@ -147,6 +159,9 @@ import {
   type RemoteSpec,
   type RemoteStatus,
 } from "./remotes";
+import { createProjectCopies, type ProjectCopies } from "./project-automations";
+import { automationManifest, holdsOnlyAutomation } from "./automation-files";
+import { isDue, nextScheduled } from "./schedule";
 import { settingsEnv } from "./plugin-config";
 import { manifestJsonSchema, type PluginDocument } from "./manifest";
 import { createPluginErrorBook, ERRORS_POINTER, type PluginErrorBook } from "./errors";
@@ -184,7 +199,7 @@ export interface PluginModuleDeps {
   /** Runs every hook script (scripts/scripts.ts, shared with the poll module). */
   readonly runner: ScriptRunner;
   /** The automations' failures, as the poll module, which runs them, recorded them. */
-  readonly poll: Pick<PollModule, "errors" | "pastErrors">;
+  readonly poll: Pick<PollModule, "errors" | "pastErrors" | "markWaiting">;
   /** Opens a failed run's log from its card. */
   readonly appLayer: Pick<AppBoundary, "openPath">;
   readonly logger: Logger;
@@ -202,6 +217,7 @@ export interface PluginModuleDeps {
     | "addDetachedWorktree"
     | "removeWorktree"
     | "pruneWorktrees"
+    | "exportFolder"
   >;
   readonly sink: HookOutputSink;
   /**
@@ -216,6 +232,8 @@ export interface PluginModuleDeps {
   readonly registry: () => OperationRegistry;
   /** Which documents apply. Default: this process's platform. */
   readonly platform?: NodeJS.Platform;
+  /** What a `schedule` is compared with. Default: `Date.now`. */
+  readonly now?: () => number;
 }
 
 // =============================================================================
@@ -328,6 +346,8 @@ interface ConfiguredPlugin extends LoadedPlugin {
   readonly env: Readonly<Record<string, string>>;
   /** The remote checkout it was read from, held while one of its scripts runs. */
   readonly tree?: Path;
+  /** The default-branch copy it was read from, held likewise (project-automations.ts). */
+  readonly copy?: { readonly dir: Path; readonly commit: string };
 }
 
 /** A hook script one plugin contributes to one entry. */
@@ -342,6 +362,16 @@ interface PluginAutomation extends AutomationSource {
   readonly owner: ConfiguredPlugin;
   readonly shell: ShellName;
   readonly script: string;
+  readonly schedule?: string;
+  /** The project a repository's automation belongs to. */
+  readonly repository?: OpenProject;
+}
+
+/** An open project, as a repository's automations need it. */
+interface OpenProject {
+  readonly ref: ProjectRef;
+  readonly path: string;
+  readonly defaultBaseBranch?: string | undefined;
 }
 
 /** What a script printed and how it ended. */
@@ -374,9 +404,14 @@ type ScriptOutcome<T> =
 /** The poll jobs this module collects: one per automation. */
 export const AUTOMATIONS_OWNER = "automations";
 
-/** An automation's identity: its tracking-key prefix and the `source` metadata it writes. */
+/** An automation's name for people, and for a user's plugin its identity too. */
 function automationId(pluginId: string, name: string): string {
   return `${pluginId}/${name}`;
+}
+
+/** What the tracking keys of a project's automations start with. */
+function projectTrackingPrefix(project: ProjectRef): string {
+  return `project:${project}:`;
 }
 
 /** The default folder's plugins, as older versions named them in tracking keys (`<plugin>/…`). */
@@ -427,6 +462,7 @@ interface HookTarget {
 
 export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   const platform = deps.platform ?? process.platform;
+  const now = deps.now ?? Date.now;
 
   const pluginsEnabled = deps.config.register("plugins.enabled", {
     default: true,
@@ -495,6 +531,13 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     },
   });
 
+  const copies: ProjectCopies = createProjectCopies({
+    git: deps.git,
+    fileSystem: deps.fileSystem,
+    logger: deps.logger,
+    root: deps.pathProvider.dataPath("plugins/project-automations"),
+  });
+
   /** The entries of `plugins.config`; just the default folder when it cannot be read. */
   function sourceEntries(): SourceEntry[] {
     try {
@@ -555,7 +598,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     source: PluginSource,
     plugins: readonly LoadedPlugin[],
     problems: readonly DiscoveryProblem[],
-    values: PluginValues
+    values: PluginValues,
+    alsoKnown: readonly string[] = []
   ): { plugins: ConfiguredPlugin[]; problems: { plugin: string; message: string }[] } {
     const configured = plugins.map((plugin): ConfiguredPlugin => {
       if (plugin.error !== undefined) return { ...plugin, env: {} };
@@ -568,6 +612,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     const known = new Set([
       ...plugins.map((plugin) => plugin.name),
       ...problems.map((problem) => problem.name),
+      ...alsoKnown,
     ]);
     const unknown = Object.keys(values)
       .filter((name) => !known.has(name))
@@ -663,8 +708,82 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     return matching.length === 1 ? matching[0]!.values : {};
   }
 
-  /** Repository plugins already warned about for shipping automations. */
-  const warnedWorkspaceAutomations = new Set<string>();
+  /** The open projects; undefined when they could not be listed. */
+  async function openProjects(): Promise<readonly OpenProject[] | undefined> {
+    try {
+      return (
+        (await deps.dispatcher.dispatch<ListProjectsIntent>({
+          type: INTENT_LIST_PROJECTS,
+          payload: {} as Record<string, never>,
+        })) ?? []
+      );
+    } catch (error) {
+      deps.logger.warn("Could not list projects for their automations", {
+        error: getErrorMessage(error),
+      });
+      return undefined;
+    }
+  }
+
+  function projectSource(project: OpenProject): PluginSource {
+    return { type: "project", entry: projectNameOf(project.ref) };
+  }
+
+  /** What a project's default branch has in `.codehydra/plugins`; undefined when it cannot say. */
+  async function readProjectCopy(project: OpenProject) {
+    if (project.defaultBaseBranch === undefined) return undefined;
+    const read = await copies.read(new Path(project.path), project.defaultBaseBranch);
+    const scope = {
+      source: `${sourceId(projectSource(project))} default branch`,
+      project: project.path,
+    };
+    if (read.state === "failed") {
+      errors.setProblems(scope, [
+        {
+          plugin: sourceId(projectSource(project)),
+          message: `could not read its default branch: ${read.message}`,
+        },
+      ]);
+      return undefined;
+    }
+    errors.setProblems(scope, []);
+    return read.state === "ready" ? read.copy : undefined;
+  }
+
+  /**
+   * A repository's plugins as its default branch has them, configured: where its
+   * automations come from. Undefined when the branch cannot be read, which says
+   * nothing about whether they are still there.
+   */
+  async function loadProjectCopy(project: OpenProject): Promise<ConfiguredPlugin[] | undefined> {
+    const copy = await readProjectCopy(project);
+    if (copy === undefined) return undefined;
+    const source = projectSource(project);
+    const loaded = await loadPlugins(deps.fileSystem, copy.dir, source, platform);
+    const values = loaded.plugins.length === 0 ? {} : await projectValues(project.ref);
+    // Values for a plugin only a worktree has are that read's to judge.
+    const { plugins, problems } = configure(
+      source,
+      loaded.plugins,
+      loaded.problems,
+      values,
+      Object.keys(values)
+    );
+    errors.setProblems(
+      { source: `${sourceId(source)} default branch manifests`, project: project.path },
+      problems
+    );
+    return plugins.map((plugin) => ({ ...plugin, copy }));
+  }
+
+  /** The plugin names a project's default branch has, for judging `plugins.config` values. */
+  async function defaultBranchNames(ref: ProjectRef): Promise<readonly string[]> {
+    const project = (await openProjects())?.find((candidate) => candidate.ref === ref);
+    const copy = project === undefined ? undefined : await readProjectCopy(project);
+    if (project === undefined || copy === undefined) return [];
+    const found = await discoverPlugins(deps.fileSystem, copy.dir, projectSource(project));
+    return [...found.plugins, ...found.problems].map((plugin) => plugin.name);
+  }
 
   /** A repository's plugins, as its worktree has them now, configured. */
   async function loadWorkspace(
@@ -679,21 +798,18 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       platform
     );
     const values = loaded.plugins.length === 0 ? {} : await projectValues(project.ref);
-    const { plugins, problems } = configure(source, loaded.plugins, loaded.problems, values);
+    const here = new Set(loaded.plugins.map((plugin) => plugin.name));
+    const alsoKnown = Object.keys(values).every((name) => here.has(name))
+      ? []
+      : await defaultBranchNames(project.ref);
+    const { plugins, problems } = configure(
+      source,
+      loaded.plugins,
+      loaded.problems,
+      values,
+      alsoKnown
+    );
     errors.setProblems({ source: sourceId(source), project: project.path }, problems);
-    for (const plugin of plugins) {
-      const key = plugin.manifestPath.toString();
-      if (plugin.applied.some((doc) => doc.automations.length > 0)) {
-        if (!warnedWorkspaceAutomations.has(key)) {
-          warnedWorkspaceAutomations.add(key);
-          deps.logger
-            .scoped({ path: key })
-            .warn("A repository's plugin may not run automations; ignoring them", {
-              plugin: plugin.id,
-            });
-        }
-      }
-    }
     return plugins;
   }
 
@@ -1299,36 +1415,83 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // Automations
   // ---------------------------------------------------------------------------
 
-  /** The automations to run this cycle: every enabled local and remote plugin's, for this platform. */
+  /** A plugin's automations for this platform. */
+  function automationsOf(plugin: ConfiguredPlugin, repository?: OpenProject): PluginAutomation[] {
+    const found = new Map<string, PluginAutomation>();
+    for (const doc of plugin.applied) {
+      for (const spec of doc.automations) {
+        if (found.has(spec.name)) {
+          deps.logger.warn("Automation defined twice for this platform; running the first", {
+            plugin: plugin.id,
+            automation: spec.name,
+          });
+          continue;
+        }
+        const label = automationId(plugin.id, spec.name);
+        found.set(spec.name, {
+          // A project's name may be another open project's too; its ref is its own.
+          id:
+            repository === undefined
+              ? label
+              : `${projectTrackingPrefix(repository.ref)}${plugin.name}/${spec.name}`,
+          plugin: plugin.id,
+          name: spec.name,
+          owner: plugin,
+          shell: doc.shell,
+          script: spec.script,
+          ...(spec.schedule !== undefined && { schedule: spec.schedule }),
+          ...(repository !== undefined && { label, project: repository.path, repository }),
+        });
+      }
+    }
+    return [...found.values()];
+  }
+
+  /** Tracking entries that stand although their automation is not running; see `automationSources`. */
+  let keepsTracking: (key: string) => boolean = () => false;
+
+  /**
+   * The automations to run this cycle: every enabled plugin's, for this platform —
+   * the user's, then each open project's from its default branch.
+   *
+   * A repository's automation not collected may only be away: its project closed
+   * or unreadable, its plugin's question unanswered. What it tracks stands
+   * meanwhile, or a workspace deleted by hand would come back with it.
+   */
   async function automationSources(): Promise<readonly PluginAutomation[]> {
     const sources: PluginAutomation[] = [];
-    const seen = new Set<string>();
     for (const plugin of await loadSources()) {
       if (plugin.error !== undefined || trust.state(plugin.source, plugin.name) === "disabled") {
         continue;
       }
-      for (const doc of plugin.applied) {
-        for (const spec of doc.automations) {
-          const id = automationId(plugin.id, spec.name);
-          if (seen.has(id)) {
-            deps.logger.warn("Automation defined twice for this platform; running the first", {
-              plugin: plugin.id,
-              automation: spec.name,
-            });
-            continue;
-          }
-          seen.add(id);
-          sources.push({
-            id,
-            plugin: plugin.id,
-            name: spec.name,
-            owner: plugin,
-            shell: doc.shell,
-            script: spec.script,
-          });
-        }
+      sources.push(...automationsOf(plugin));
+    }
+
+    const readable: string[] = [];
+    const waiting: string[] = [];
+    for (const project of (await openProjects()) ?? []) {
+      const plugins = await loadProjectCopy(project);
+      if (plugins === undefined) continue;
+      const prefix = projectTrackingPrefix(project.ref);
+      readable.push(prefix);
+      const candidates = plugins.filter(
+        (plugin) =>
+          plugin.error === undefined && plugin.applied.some((doc) => doc.automations.length > 0)
+      );
+      if (candidates.length === 0) continue;
+      const answer = trust.checkNow(
+        { ref: project.ref, path: project.path },
+        candidates.map((plugin) => plugin.name)
+      );
+      for (const name of answer.waiting) waiting.push(`${prefix}${name}/`);
+      for (const plugin of candidates) {
+        if (answer.allowed.has(plugin.name)) sources.push(...automationsOf(plugin, project));
       }
     }
+    keepsTracking = (key) =>
+      key.startsWith("project:") &&
+      (!readable.some((prefix) => key.startsWith(prefix)) ||
+        waiting.some((prefix) => key.startsWith(prefix)));
     return sources;
   }
 
@@ -1345,6 +1508,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     stateService: deps.stateService,
     enabled: allowed,
     sources: automationSources,
+    keepsTracking: (key) => keepsTracking(key),
     parseItem: (raw) => items().parse(raw),
     invokeAction: async (action, input) => {
       await invokePluginAction({ registry: deps.registry() }, action, input);
@@ -1376,7 +1540,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
 
   /** The poll job that runs an automation's script. */
   function automationJob(source: PluginAutomation): PollJob {
-    const { owner } = source;
+    const { owner, repository } = source;
     return {
       owner: AUTOMATIONS_OWNER,
       id: source.id,
@@ -1384,10 +1548,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       entry: automationEntry(source),
       shell: source.shell,
       script: source.script,
-      // A one-file plugin runs in the folder that holds it.
-      cwd: (owner.pluginDir ?? owner.manifestPath.dirname).toString(),
-      input: {},
-      logDir: logDir(owner, "", "automations", source.name).toString(),
+      // A repository's runs in its project, where `gh` and `git` find the repository;
+      // a user's in its plugin's folder, or the folder that holds a one-file plugin.
+      cwd: repository?.path ?? (owner.pluginDir ?? owner.manifestPath.dirname).toString(),
+      input:
+        repository === undefined ? {} : { project: repository.ref, projectPath: repository.path },
+      logDir: logDir(owner, repository?.path ?? "", "automations", source.name).toString(),
       ...(Object.keys(owner.env).length > 0 && { env: { ...owner.env } }),
       ...(owner.pluginDir !== undefined && { pluginDir: owner.pluginDir.toString() }),
       failure: { title: "Plugin failed", pointer: ERRORS_POINTER },
@@ -1396,14 +1562,47 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
 
   async function collectAutomations(): Promise<readonly PollJob[]> {
     await prepare();
-    const sources = await automations.collect();
+    const sources = dueNow(await automations.collect());
     collected = new Map(sources.map((source) => [source.id, source]));
     // A tick that never reached a job's result holds nothing past the next.
     for (const id of [...leases.keys()]) releaseLease(id);
     for (const { id, owner } of sources) {
       if (owner.tree !== undefined) leases.set(id, checkouts.acquire(owner.tree));
+      else if (owner.copy !== undefined) leases.set(id, copies.acquire(owner.copy.dir));
     }
     return sources.map(automationJob);
+  }
+
+  /** When each automation with a schedule last ran, or was first seen, by id. */
+  const scheduledSince = new Map<string, number>();
+
+  /**
+   * The automations whose time has come. Kept in memory, so a schedule neither
+   * runs at startup nor makes up for time the app was closed — and one coming
+   * back from being disabled or removed starts afresh, the same way.
+   */
+  function dueNow(sources: readonly PluginAutomation[]): readonly PluginAutomation[] {
+    const time = now();
+    const due: PluginAutomation[] = [];
+    for (const source of sources) {
+      if (source.schedule === undefined) {
+        due.push(source);
+        continue;
+      }
+      const since = scheduledSince.get(source.id);
+      if (since !== undefined && isDue(source.schedule, since, time)) {
+        scheduledSince.set(source.id, time);
+        due.push(source);
+        continue;
+      }
+      if (since === undefined) scheduledSince.set(source.id, time);
+      deps.poll.markWaiting({ owner: AUTOMATIONS_OWNER, id: source.id });
+    }
+    const present = new Set(sources.map((source) => source.id));
+    for (const id of [...scheduledSince.keys()]) {
+      if (!present.has(id)) scheduledSince.delete(id);
+    }
+    return due;
   }
 
   /** Act on what an automation printed; what went wrong is the poll module's to announce. */
@@ -1492,6 +1691,146 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       ...(remote !== undefined && {
         status: describeRemote(checkouts.status(remoteSpec(remote))),
       }),
+      ...(plugin.copy !== undefined && {
+        status: `default branch ${plugin.copy.commit.slice(0, 7)}`,
+      }),
+    };
+  }
+
+  /** Fetch the open projects, so their default branches, and the automations on them, are current. */
+  async function fetchProjects(wait: boolean): Promise<void> {
+    await Promise.all(
+      ((await openProjects()) ?? []).map(async (project) => {
+        try {
+          await deps.dispatcher.dispatch<GetProjectBasesIntent>({
+            type: INTENT_GET_PROJECT_BASES,
+            payload: { projectRef: project.ref, refresh: true, ...(wait && { wait: true }) },
+          });
+        } catch (error) {
+          deps.logger.warn("Could not fetch a project for its automations", {
+            project: project.path,
+            error: getErrorMessage(error),
+          });
+        }
+      })
+    );
+  }
+
+  /** Every enabled-or-not automation there is, as `ch automation list` shows it. */
+  async function listAutomations(): Promise<AutomationListing[]> {
+    const rows: AutomationListing[] = [];
+    const add = (plugin: ConfiguredPlugin, project?: OpenProject): void => {
+      if (plugin.error !== undefined) return;
+      for (const source of automationsOf(plugin, project)) {
+        rows.push({
+          automation: source.label ?? source.id,
+          plugin: plugin.id,
+          state: trust.state(plugin.source, plugin.name, project),
+          path: (plugin.pluginDir ?? plugin.manifestPath).toNative(),
+          ...(project !== undefined && { project: project.ref }),
+          ...(source.schedule !== undefined && {
+            schedule: source.schedule,
+            nextRun: new Date(nextScheduled(source.schedule, now())).toISOString(),
+          }),
+        });
+      }
+    };
+    for (const plugin of await loadSources()) add(plugin);
+    for (const project of (await openProjects()) ?? []) {
+      for (const plugin of (await loadProjectCopy(project)) ?? []) add(plugin, project);
+    }
+    return rows;
+  }
+
+  /** The folder `ch automation add|remove` work in, and what becomes of a change there. */
+  function automationFolder(
+    scope: PluginScope,
+    repo: boolean
+  ): { readonly dir: Path; readonly source: PluginSource; readonly takesEffect: string } {
+    if (!repo) {
+      return {
+        dir: localDir,
+        source: { type: "local", entry: DEFAULT_SOURCE },
+        takesEffect: "at the next poll",
+      };
+    }
+    if (scope.workspace === null) {
+      throw new ApiError(
+        "no-workspace",
+        "--repo writes to a workspace's .codehydra/plugins: run it from inside one, or name one with --workspace"
+      );
+    }
+    return {
+      dir: workspacePluginsDir(new Path(scope.workspace.workspacePath)),
+      source: { type: "project", entry: projectNameOf(scope.workspace.projectRef) },
+      takesEffect: "once it is committed, merged to the default branch and trusted",
+    };
+  }
+
+  async function addAutomation(
+    scope: PluginScope,
+    request: NewAutomationRequest
+  ): Promise<AutomationFile> {
+    const { dir, source, takesEffect } = automationFolder(scope, request.repo);
+    const { name } = request;
+    const existing = await discoverPlugins(deps.fileSystem, dir, source);
+    if ([...existing.plugins, ...existing.problems].some((plugin) => plugin.name === name)) {
+      throw new ApiError("conflict", `${dir.toNative()} already has a plugin named ${name}`);
+    }
+    let text: string;
+    try {
+      text = automationManifest({
+        name,
+        script: request.script,
+        ...(request.schedule !== undefined && { schedule: request.schedule }),
+        ...(request.shell !== undefined && { shell: request.shell }),
+      });
+    } catch (error) {
+      throw new ApiError("usage", getErrorMessage(error));
+    }
+    const path = new Path(dir, `${name}.yaml`);
+    await deps.fileSystem.mkdir(dir);
+    await deps.fileSystem.writeFile(path, text);
+    return { automation: name, plugin: pluginId(source, name), path: path.toNative(), takesEffect };
+  }
+
+  async function removeAutomation(
+    scope: PluginScope,
+    name: string,
+    repo: boolean
+  ): Promise<AutomationFile> {
+    const { dir, source } = automationFolder(scope, repo);
+    const found = await discoverPlugins(deps.fileSystem, dir, source);
+    const ref = found.plugins.find((plugin) => plugin.name === name);
+    if (ref === undefined) {
+      const elsewhere = repo
+        ? undefined
+        : (await listAutomations()).find((row) => row.automation.endsWith(`/${name}`));
+      throw elsewhere === undefined
+        ? new ApiError("not-found", `No plugin ${name} in ${dir.toNative()}`)
+        : new ApiError(
+            "usage",
+            `${elsewhere.automation} is not in ${dir.toNative()}; edit ${elsewhere.path} instead`
+          );
+    }
+    const path = ref.pluginDir ?? ref.manifestPath;
+    const simple =
+      ref.pluginDir === undefined &&
+      holdsOnlyAutomation(await deps.fileSystem.readFile(ref.manifestPath), name);
+    if (!simple) {
+      throw new ApiError(
+        "usage",
+        `${path.toNative()} holds more than the automation ${name}; edit it by hand`
+      );
+    }
+    await deps.fileSystem.rm(ref.manifestPath);
+    return {
+      automation: name,
+      plugin: pluginId(source, name),
+      path: path.toNative(),
+      takesEffect: repo
+        ? "once that is committed and merged to the default branch"
+        : "at the next poll",
     };
   }
 
@@ -1644,7 +1983,11 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         );
       }
     }
-    await Promise.all(targets.map((entry) => checkouts.update(remoteSpec(entry))));
+    await Promise.all([
+      ...targets.map((entry) => checkouts.update(remoteSpec(entry))),
+      // Everything, so an open project's default branch too: its automations follow it.
+      ...(name === undefined ? [fetchProjects(true)] : []),
+    ]);
     return targets.map(sourceListing);
   }
 
@@ -1679,12 +2022,33 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
           ...repository.map((plugin) => listing(plugin, { ref: projectRef, path: projectPath }))
         );
       }
+      // What each open project's default branch adds: one row per plugin, the
+      // worktree's when the caller stands in one.
+      for (const project of (await openProjects()) ?? []) {
+        for (const plugin of (await loadProjectCopy(project)) ?? []) {
+          const row = listing(plugin, { ref: project.ref, path: project.path });
+          if (!listings.some((other) => other.id === row.id && other.project === row.project)) {
+            listings.push(row);
+          }
+        }
+      }
       return listings;
     },
     async setState(scope, id, state) {
-      const found = (await api.list(scope)).find(
+      const matching = (await api.list(scope)).filter(
         (plugin) => plugin.id === id && plugin.name !== "*"
       );
+      const found =
+        matching.find((plugin) => plugin.project === scope.workspace?.projectRef) ?? matching[0];
+      if (
+        matching.length > 1 &&
+        (scope.workspace === null || found?.project !== scope.workspace.projectRef)
+      ) {
+        throw new ApiError(
+          "usage",
+          `Several open projects have a plugin ${id}: name one with --workspace`
+        );
+      }
       if (found === undefined) {
         if (id.startsWith("project:") && scope.workspace === null) {
           throw new ApiError(
@@ -1702,6 +2066,9 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       );
       return { ...found, state };
     },
+    automations: listAutomations,
+    addAutomation,
+    removeAutomation,
     add: addSource,
     remove: removeSource,
     update: updateSources,
@@ -1819,9 +2186,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
 
   const events = defineEvents({
     [EVENT_APP_STARTED]: {
-      // The once-a-start fetch of every remote source, in the background.
+      // The once-a-start fetch of every remote source and project, in the background.
       handler: async (): Promise<void> => {
-        if (allowed()) checkouts.refresh(remoteSpecs(sourceEntries()));
+        if (!allowed()) return;
+        checkouts.refresh(remoteSpecs(sourceEntries()));
+        // And the open projects': their automations follow their default branches.
+        void fetchProjects(false);
       },
     },
     [EVENT_WORKSPACE_CREATED]: {

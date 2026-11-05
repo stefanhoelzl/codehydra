@@ -67,6 +67,7 @@
     "@simple-git/argv-parser": "2.0.1",
     "@vscode-elements/elements": "^2.5.1",
     "@vscode/codicons": "0.0.45",
+    "cron-parser": "^5.10.3",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "execa": "^10.0.1",
