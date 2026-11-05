@@ -225,7 +225,7 @@ export interface StartupSurfaceDeps {
   readonly scheduleUpdate: () => void;
   /** Every row in sidebar order (the startup screen ends on the topmost awake one). */
   readonly rows: () => readonly RowEntry[];
-  /** Whether a project's card is collapsed (the landing prefers an expanded project). */
+  /** Whether a project's card is collapsed (the landing skips those). */
   readonly collapsed: (project: RowEntry["project"]) => boolean;
   /** Run a failed open again (the failed-open panel's Retry). */
   readonly retryOpen: (workspaceRef: WorkspaceRef) => void;
@@ -455,22 +455,25 @@ export function createStartupSurface(deps: StartupSurfaceDeps): StartupSurface {
   }
 
   /**
-   * Land on the topmost awake row of an expanded project (of a collapsed one
-   * only when no expanded project has one), then hand the main view to the
-   * normal logic. Projects announce themselves in whatever order their
-   * discovery finishes, and each lands on its first workspace when nothing is
-   * active — so the one active now is whichever project was quickest. Every
-   * row is known here, which makes the choice the same on every start.
+   * Land on the topmost awake row of an expanded project, or on nothing (the
+   * creation panel) when none has one, then hand the main view to the normal
+   * logic. Projects announce themselves in whatever order their discovery
+   * finishes; every row is known here, which makes the choice the same on
+   * every start.
    */
   async function endStartup(): Promise<void> {
     if (phase !== "running") return;
-    const awake = deps.rows().filter((entry) => !entry.workspace.hibernated);
-    const top = awake.find((entry) => !deps.collapsed(entry.project)) ?? awake[0];
-    if (top !== undefined && top.workspace.phase !== "creating" && !top.row.active) {
+    const rows = deps.rows();
+    const top = rows.find((entry) => !entry.workspace.hibernated && !deps.collapsed(entry.project));
+    const moving =
+      top === undefined
+        ? rows.some((entry) => entry.row.active)
+        : top.workspace.phase !== "creating" && !top.row.active;
+    if (moving) {
       try {
         await deps.dispatcher.dispatch<SwitchWorkspaceIntent>({
           type: INTENT_SWITCH_WORKSPACE,
-          payload: { workspaceRef: top.workspace.ref },
+          payload: { workspaceRef: top === undefined ? null : top.workspace.ref },
         });
       } catch (error: unknown) {
         logger.debug("Startup landing switch failed", { error: getErrorMessage(error) });
@@ -569,9 +572,11 @@ export function createStartupSurface(deps: StartupSurfaceDeps): StartupSurface {
       },
       [EVENT_APP_STARTED]: {
         handler: async (): Promise<void> => {
-          // Startup is over: hand the main view back to the normal logic. Theme
-          // is already seeded + tracked from the app:start `init` hook (so the
+          // Startup is over: land if a startup project:open never announced
+          // itself, and hand the main view back to the normal logic. Theme is
+          // already seeded + tracked from the app:start `init` hook (so the
           // startup screens carry the right theme), nothing to do here for it.
+          await endStartup();
           setPhase("done");
         },
       },

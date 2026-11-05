@@ -16,7 +16,7 @@
  * The tag is written from the "setup" hook rather than a workspace:created subscriber
  * so it rides along in the metadata the created event carries (see the setup fold in
  * open-workspace.ts) — that lands it on the row's first paint, and since setup is
- * awaited before the operation's switch dispatch, it also can't race the removal below.
+ * awaited before that event, on which the presenter lands, it also can't race the removal below.
  *
  * `auto-tag.new` gates tagging only. Removal always runs, so turning the feature off
  * can never strand a tag the user has no way to clear.

@@ -39,7 +39,6 @@ import {
   type OpenWorkspaceIntent,
   type ExistingWorkspaceData,
 } from "./open-workspace";
-import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { activeWorkspaceRef } from "./lib/active-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
@@ -479,20 +478,6 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
     const pending = project.workspaces
       .filter((w) => w.metadata[HIBERNATED_METADATA_KEY] !== "true")
       .sort((a, b) => compareDisplayNames(a.name, b.name));
-
-    // Land on the first of them when nothing is active, so the user sees
-    // this project's workspace loading rather than an empty view.
-    const first = pending[0];
-    if (first !== undefined && (await activeWorkspaceRef(ctx.dispatch)) === null) {
-      try {
-        await ctx.dispatch<SwitchWorkspaceIntent>({
-          type: INTENT_SWITCH_WORKSPACE,
-          payload: { workspaceRef: first.ref },
-        });
-      } catch {
-        // Best-effort: switch failure doesn't fail the project open
-      }
-    }
 
     // Open one at a time (best-effort), the active workspace first: asked
     // before each open, so switching to a row still loading moves it to

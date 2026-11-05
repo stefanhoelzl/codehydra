@@ -47,7 +47,11 @@ import {
   EVENT_METADATA_CHANGED,
   type MetadataChangedEvent,
 } from "./set-metadata";
-import { SWITCH_WORKSPACE_OPERATION_ID } from "./switch-workspace";
+import {
+  EVENT_WORKSPACE_SWITCHED,
+  SWITCH_WORKSPACE_OPERATION_ID,
+  type SelectNextHookResult,
+} from "./switch-workspace";
 import { INTENT_GET_METADATA, GET_METADATA_OPERATION_ID } from "./get-metadata";
 import {
   INTENT_OPEN_WORKSPACE,
@@ -329,6 +333,7 @@ function buildHarness(
     EVENT_WORKSPACE_HIBERNATE_FAILED,
     EVENT_WORKSPACE_WOKEN,
     EVENT_METADATA_CHANGED,
+    EVENT_WORKSPACE_SWITCHED,
   ]) {
     dispatcher.subscribe(t, (event) => {
       recorder.events.push(event);
@@ -386,9 +391,45 @@ describe("workspace:hibernate", () => {
     expect(flag?.payload.value).toBe("true");
   });
 
-  it("dispatches switch in foreground when the workspace was active", async () => {
+  it("with nowhere to go from the active workspace, nothing stays active", async () => {
     const { dispatcher, recorder, waitForBackground } = buildHarness(
       (r) => [createHibernateHookModule(r)],
+      { active: true }
+    );
+
+    await dispatcher.dispatch<HibernateWorkspaceIntent>({
+      type: INTENT_HIBERNATE_WORKSPACE,
+      payload: { workspaceRef: WORKSPACE_REF },
+    });
+    await waitForBackground();
+
+    expect(recorder.switchCalled).toBe(false);
+    expect(recorder.events.filter((e) => e.type === EVENT_WORKSPACE_SWITCHED)).toEqual([
+      expect.objectContaining({ payload: null }),
+    ]);
+  });
+
+  it("dispatches switch in foreground when the workspace was active", async () => {
+    const candidate = {
+      projectRef: projectRefFor(PROJECT_PATH),
+      projectName: "project",
+      workspaceRef: WORKSPACE_REF,
+      workspaceName: WORKSPACE_NAME,
+    };
+    const selectModule: IntentModule = {
+      name: "test-select",
+      hooks: {
+        [SWITCH_WORKSPACE_OPERATION_ID]: {
+          "select-next": {
+            handler: async (): Promise<HookOutput<SelectNextHookResult>> => ({
+              result: { selected: candidate },
+            }),
+          },
+        },
+      },
+    };
+    const { dispatcher, recorder, waitForBackground } = buildHarness(
+      (r) => [createHibernateHookModule(r), selectModule],
       { active: true }
     );
 

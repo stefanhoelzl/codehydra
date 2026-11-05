@@ -108,9 +108,8 @@ export function createWorkspaceLifecycleModule(): IntentModule {
 
   /**
    * The actual active surface, fed by the switch pipeline. Intentionally
-   * distinct from `cachedActiveRef`, which is a UI-level cache that sticks to
-   * the hibernating workspace during the fallbackToCurrent overlay window (see
-   * hibernate-workspace.ts). The resolve hook reports this value;
+   * distinct from `cachedActiveRef`, a UI-level cache that only a
+   * workspace:switched moves, so it outlives a teardown. The resolve hook reports this value;
    * delete/hibernate shutdown clears it so a later wake's switch is not
    * short-circuited as "already active".
    */
@@ -228,9 +227,9 @@ export function createWorkspaceLifecycleModule(): IntentModule {
       // -----------------------------------------------------------------
       // hibernate-workspace → shutdown: claim the workspace.
       //
-      // Clearing the active surface here covers the fallbackToCurrent case
-      // (hibernating the only workspace keeps it "active" for the overlay): a
-      // later wake must not be short-circuited as already-active.
+      // Clearing the active surface here covers a hibernating workspace you
+      // are on (it stays active until the switch away): a later wake must not
+      // be short-circuited as already-active.
       // -----------------------------------------------------------------
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {

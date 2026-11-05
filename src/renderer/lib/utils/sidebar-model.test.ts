@@ -91,16 +91,11 @@ describe("sidebar-model", () => {
     expect(rowOn(c, rowOf(c, "atomic-state-writes"), find("", "hidden"))).toBe(false);
   });
 
-  it("a collapsed project still shows the active row, and only it", () => {
+  it("a collapsed project shows no rows", () => {
     const infra = project("infra");
-    expect(projectFolds(infra, REST).bodyOpen).toBe(false);
-    const withActive = {
-      ...infra,
-      workspaces: infra.workspaces.map((row) => ({ ...row, active: row.name === "ci-cache" })),
-    };
-    expect(projectFolds(withActive, REST)).toMatchObject({ expanded: false, bodyOpen: true });
-    for (const row of withActive.workspaces) {
-      expect(rowHidden(withActive, row, REST)).toBe(row.name !== "ci-cache");
+    expect(projectFolds(infra, REST)).toMatchObject({ expanded: false, bodyOpen: false });
+    for (const row of infra.workspaces) {
+      expect(rowHidden(infra, row, REST)).toBe(true);
     }
   });
 

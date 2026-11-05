@@ -731,9 +731,6 @@ describe("OpenProjectOperation", () => {
     // Views created for workspaces
     expect(harness.createdViews).toHaveLength(2);
 
-    // First workspace set as active
-    expect(harness.activeWorkspace.path).toBe(WORKSPACE_A_PATH);
-
     // Second workspace preloaded
     expect(harness.preloadedPaths).toContain(WORKSPACE_B_PATH);
   });
@@ -989,7 +986,7 @@ describe("OpenProjectOperation", () => {
     expect(result.workspaces.map((w) => w.url)).toEqual([WORKSPACE_URL, WORKSPACE_URL]);
   });
 
-  it("opens awake workspaces in sidebar order, landing on the first, skipping hibernated ones", async () => {
+  it("opens awake workspaces in sidebar order without moving you, skipping hibernated ones", async () => {
     const discovered = (name: string, metadata: Record<string, string> = {}) => ({
       name: name as WorkspaceName,
       path: wsPath(new Path(`/test/project/workspaces/${name}`).toString()),
@@ -1010,7 +1007,7 @@ describe("OpenProjectOperation", () => {
     );
 
     expect(harness.openPayloads.map((p) => p.workspaceName)).toEqual(["Alpha", "gamma", "zeta"]);
-    expect(harness.activeWorkspace.path).toBe(discovered("Alpha").path);
+    expect(harness.activeWorkspace.path).toBeNull();
   });
 
   it("opens the active workspace next, so a row switched to while loading jumps the queue", async () => {

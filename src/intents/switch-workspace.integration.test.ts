@@ -491,6 +491,42 @@ describe("SwitchWorkspace Operation", () => {
     });
   });
 
+  describe("auto-select skips excluded projects", () => {
+    it("emits workspace:switched(null) when the only other workspace is excluded", async () => {
+      const setup = createTestSetup({
+        withAutoSelect: true,
+        projects: [createMultiWorkspaceProject()],
+      });
+      const { dispatcher, getActivePath } = setup;
+      dispatcher.registerModule({
+        name: "test-exclude",
+        hooks: {
+          [SWITCH_WORKSPACE_OPERATION_ID]: {
+            "find-candidates": {
+              handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => ({
+                result: {
+                  excludedProjects: [projectRefFor(createMultiWorkspaceProject().path)],
+                },
+              }),
+            },
+          },
+        },
+      });
+      const receivedEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      await dispatcher.dispatch<SwitchWorkspaceIntent>({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { auto: true, currentRef: wsRef(TEST_WORKSPACE_PATH), focus: true },
+      });
+
+      expect(getActivePath()).toBeNull();
+      expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
+    });
+  });
+
   describe("auto-select emits null when no candidates (#13)", () => {
     it("sets active workspace to null and emits workspace:switched(null)", async () => {
       const setup = createTestSetup({

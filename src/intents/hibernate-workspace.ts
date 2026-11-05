@@ -272,9 +272,8 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
 
       // If the hibernated workspace was active, switch to an awake sibling
       // immediately so the user is moved away while the teardown runs in the
-      // background. fallbackToCurrent keeps the hibernated workspace as
-      // active when no awake sibling exists; the renderer then shows the
-      // pending hibernation overlay over it.
+      // background. With no awake sibling in an expanded project, nothing is
+      // active and the creation panel shows.
       if (active) {
         try {
           await ctx.dispatch<SwitchWorkspaceIntent>({
@@ -283,7 +282,6 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
               auto: true,
               currentRef: payload.workspaceRef,
               focus: true,
-              fallbackToCurrent: true,
             },
           });
         } catch {

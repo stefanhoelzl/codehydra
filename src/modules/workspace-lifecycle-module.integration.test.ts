@@ -383,9 +383,9 @@ describe("WorkspaceLifecycleModule", () => {
       } as HibernateWorkspaceIntent);
       await hibernated;
 
-      // fallbackToCurrent can leave a hibernating workspace "active" for the
-      // overlay; if that stuck, switching back on wake would short-circuit as
-      // already-active and the workspace would never reopen.
+      // A hibernating workspace can still be the active one; if that stuck,
+      // switching back on wake would short-circuit as already-active and the
+      // workspace would never reopen.
       expect(await isActive(dispatcher, WORKSPACE_PATH)).toBe(false);
     });
   });

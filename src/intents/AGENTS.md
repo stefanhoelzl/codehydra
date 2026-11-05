@@ -28,7 +28,7 @@ A per-key rule with `wait` holds a duplicate until the key is released instead o
 - `project:open` emits `project:opened` right after discovery, before any workspace is open (so the sidebar lists them loading), then opens the awake ones one at a time, the active one first.
 - Hook modules on `workspace:open` must handle both paths. The operation decides once and puts `fresh` (true = new worktree, false = reopen) and the resolved `workspaceName` on every hook context. Branch on those, never on `payload.existingWorkspace`. `workspace:created` carries `fresh` too.
 - `workspace:delete` takes `removeWorktree`: `true` = full deletion, `false` = runtime-only teardown (skips the `release` and `delete` hook points). `project:close` uses `false` unless the close confirmed `removeAll` (`removeLocalRepo` implies it).
-- `workspace:open`, `workspace:delete`, `workspace:hibernate`, `project:open` and `project:close` dispatch `workspace:switch` when the active workspace changes.
+- `workspace:delete`, `workspace:hibernate` and `project:close` dispatch `workspace:switch` when the active workspace changes.
 - `agent:update-status` has no hooks; it emits `agent:status-updated`, which the presenter (folded into the `UiState` snapshot), badge, OS-notification, power and other modules consume.
 
 ## app:start
