@@ -93,11 +93,9 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
     if (target) navigateSwitch(target.workspace.ref);
   }
 
-  /** Left/right: the next idle workspace (no agent counts as idle), else the next busy one. */
+  /** Left/right: the next idle workspace (no agent counts as idle); none, and the keys stay put. */
   function handleStatusNavigation(direction: -1 | 1): void {
-    const candidates = rotation(direction).filter(isAwake);
-    const target =
-      candidates.find(isIdle) ?? candidates.find((entry) => entry.row.agent.type === "busy");
+    const target = rotation(direction).filter(isAwake).find(isIdle);
     if (target) navigateSwitch(target.workspace.ref);
   }
 

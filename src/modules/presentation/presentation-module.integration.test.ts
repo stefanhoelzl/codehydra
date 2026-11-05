@@ -3418,6 +3418,51 @@ describe("PresentationModule - shortcut navigation", () => {
     ]);
   });
 
+  it("left/right stay on the only idle workspace rather than leave it for a busy one", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "b", "c"], "a");
+    for (const name of ["a", "b", "c"]) {
+      await emit(module, EVENT_AGENT_STATUS_UPDATED, {
+        workspaceRef: refOf(name),
+        projectRef: PROJECT_REF,
+        projectId: PROJECT_ID,
+        workspaceName: name,
+        active: false,
+        status:
+          name === "a"
+            ? { status: "idle", counts: { idle: 1, busy: 0 } }
+            : { status: "busy", counts: { idle: 0, busy: 1 } },
+      });
+    }
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "right");
+    await key(module, "left");
+
+    expect(dispatched).toEqual([]);
+  });
+
+  it("left/right do nothing when no workspace is idle", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "b"], "a");
+    for (const name of ["a", "b"]) {
+      await emit(module, EVENT_AGENT_STATUS_UPDATED, {
+        workspaceRef: refOf(name),
+        projectRef: PROJECT_REF,
+        projectId: PROJECT_ID,
+        workspaceName: name,
+        active: false,
+        status: { status: "busy", counts: { idle: 0, busy: 1 } },
+      });
+    }
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "right");
+    await key(module, "left");
+
+    expect(dispatched).toEqual([]);
+  });
+
   it("collapsing the active workspace's project moves to the next expanded project", async () => {
     const deps = createDeps();
     const module = await withWorkspaces(deps, ["a"], "a");
