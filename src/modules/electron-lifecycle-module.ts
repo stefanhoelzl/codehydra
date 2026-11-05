@@ -267,12 +267,16 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
     );
   }
 
+  // Warn level, though nothing is wrong: it is the default, and without these
+  // lines a log ending here looks the same as a process killed from outside.
   deps.app.on("window-all-closed", () => {
+    deps.logger.warn("Last window closed");
     if (deps.platform !== "darwin") shutdown();
   });
 
   deps.app.on("before-quit", (event) => {
     if (quitReleased) return;
+    deps.logger.warn("Quit requested");
     event.preventDefault();
     shutdown();
   });

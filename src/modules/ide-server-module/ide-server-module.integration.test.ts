@@ -86,7 +86,9 @@ import {
   type SpawnConfig,
 } from "../../boundaries/platform/process.state-mock";
 import { createArchiveExtractorMock } from "../../boundaries/platform/archive-extractor.state-mock";
+import type { ListeningProcess } from "../../boundaries/platform/process";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
+import { createBehavioralLogger } from "../../boundaries/platform/logging.test-utils";
 import type { DialogConfig } from "../../shared/dialog-types";
 import type { UiPresenter } from "../presentation/presentation-module";
 import { Path } from "../../utils/path/path";
@@ -290,6 +292,7 @@ function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModu
     logger: SILENT_LOGGER,
     archiveExtractor: createArchiveExtractorMock(),
     configService: createMockConfig({ defaults: { "version.opencode": "1.0.223" } }),
+    captureEvent: vi.fn(),
     // Only the port-conflict tests expect a dialog; they supply their own.
     ui: {
       dialog: () => {
@@ -1658,7 +1661,7 @@ describe("IdeServerModule", () => {
     function createConflictDeps(options: {
       answers: readonly string[];
       onKill?: (pid: number) => { success: boolean } | void;
-      listeners?: Record<number, readonly (typeof HOLDER)[]>;
+      listeners?: Record<number, readonly ListeningProcess[]>;
     }) {
       let portFree = false;
       const dialogUi = createDialogUi(options.answers);
@@ -1746,6 +1749,87 @@ describe("IdeServerModule", () => {
             section.type === "text" && section.style === "warning"
         );
       expect(JSON.stringify(warning)).toContain("Could not terminate");
+    });
+
+    it("logs where the holder came from and what the user answered, at the level reports carry", async () => {
+      const logger = createBehavioralLogger();
+      const origin = {
+        sessionId: 2,
+        sameSession: false,
+        detailsReadable: false,
+        cwd: null,
+        startedAt: "2026-11-03T08:24:30.000Z",
+        parentPid: 1000,
+        parentName: null,
+      };
+      const { deps } = createConflictDeps({
+        answers: ["quit"],
+        listeners: { [PORT]: [{ ...HOLDER, origin }] },
+      });
+      const { dispatcher } = createTestSetup({ ...deps, logger });
+      dispatcher.registerOperation(minimalStart());
+
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
+        "already in use"
+      );
+
+      const warnings = logger.getMessagesByLevel("warn");
+      expect(warnings.find((m) => m.message === "Port holder")?.context).toEqual({
+        port: PORT,
+        pid: HOLDER.pid,
+        name: HOLDER.name,
+        ...origin,
+      });
+      expect(warnings.find((m) => m.message === "Port conflict answered")?.context).toMatchObject({
+        action: "quit",
+        portFree: false,
+      });
+    });
+
+    it("reports a terminate that worked, recognizing its own server, without paths", async () => {
+      const captureEvent = vi.fn();
+      const origin = {
+        sessionId: 1,
+        sameSession: true,
+        detailsReadable: true,
+        cwd: testPath("/test/app-data/runtime").toNative(),
+        startedAt: "2026-11-03T08:24:30.000Z",
+        parentPid: null,
+        parentName: null,
+      };
+      const { deps } = createConflictDeps({
+        answers: ["terminate"],
+        listeners: { [PORT]: [{ ...HOLDER, origin }] },
+      });
+      const { dispatcher } = createTestSetup({ ...deps, captureEvent });
+      dispatcher.registerOperation(minimalStart());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(captureEvent).toHaveBeenCalledExactlyOnceWith("ide_port_holder_terminated", {
+        port: PORT,
+        holders: [
+          {
+            name: HOLDER.name,
+            own_ide_server: true,
+            same_session: true,
+            details_readable: true,
+            started_at: origin.startedAt,
+            parent_name: null,
+          },
+        ],
+      });
+    });
+
+    it("reports nothing when the user quits", async () => {
+      const captureEvent = vi.fn();
+      const { deps } = createConflictDeps({ answers: ["quit"] });
+      const { dispatcher } = createTestSetup({ ...deps, captureEvent });
+      dispatcher.registerOperation(minimalStart());
+
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow();
+
+      expect(captureEvent).not.toHaveBeenCalled();
     });
 
     it("keeps the plain error when the scan cannot say who holds the port", async () => {

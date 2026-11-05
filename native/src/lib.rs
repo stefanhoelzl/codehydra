@@ -41,6 +41,9 @@ pub struct NativeProcess {
     /// Epoch ms. sysinfo reports whole seconds.
     pub started_at: Option<f64>,
     pub env_value: Option<String>,
+    /// The session id: on Windows the logon session, which another logged-in
+    /// account does not share.
+    pub session_id: Option<u32>,
 }
 
 /// One `System`, kept between scans: sysinfo reads a process's command line and
@@ -148,6 +151,7 @@ fn list_processes(env_var: Option<&str>) -> Result<Vec<NativeProcess>> {
                 cpu_time_ms: Some(p.accumulated_cpu_time() as f64),
                 started_at: (start > 0).then_some(start as f64 * 1000.0),
                 env_value: env_var.and_then(|name| env_lookup(p.environ(), name)),
+                session_id: p.session_id().map(|id| id.as_u32()),
             }
         })
         .collect())

@@ -12,9 +12,11 @@
  *   resolved yet → anonymous fallback at send time, which is correct for first-run
  *   (no id exists yet anyway).
  * - app:start → "start": resolve distinct id (generate+persist if needed),
- *   re-configure the boundary (commonProps + distinct id), capture "app_launched",
- *   and sync config overrides as person properties.
- * - app:shutdown → "stop": flush + close the boundary (best-effort).
+ *   re-configure the boundary (commonProps + distinct id), capture "app_launched"
+ *   with how the previous session ended, and sync config overrides as person
+ *   properties.
+ * - app:shutdown → "stop": record the session's end, flush + close the boundary
+ *   (best-effort).
  *
  * Events:
  * - workspace:created → "workspace_created" (new workspaces only)
@@ -32,7 +34,7 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
 import { EVENT_APP_RESUMED } from "../intents/app-resume";
-import { storeString } from "../boundaries/platform/store-definition";
+import { storeCustom, storeString } from "../boundaries/platform/store-definition";
 import type { Config, ConfigAgentType } from "../boundaries/platform/config";
 import type { PlatformInfo } from "../boundaries/platform/platform-info";
 import type { BuildInfo } from "../boundaries/platform/build-info";
@@ -60,6 +62,32 @@ export interface TelemetryModuleDeps {
 }
 
 // =============================================================================
+// Session record
+// =============================================================================
+
+/** ISO timestamps of a session; `endedAt` is null until its shutdown hook has run. */
+interface LastSession {
+  readonly startedAt: string;
+  readonly endedAt: string | null;
+}
+
+function isLastSession(value: unknown): value is LastSession {
+  if (typeof value !== "object" || value === null) return false;
+  const { startedAt, endedAt } = value as Record<string, unknown>;
+  return typeof startedAt === "string" && (endedAt === null || typeof endedAt === "string");
+}
+
+/** How the previous session ended, for `app_launched`; nothing on a first launch. */
+function previousSessionProps(previous: LastSession | null): Record<string, unknown> {
+  if (previous === null) return {};
+  return {
+    previous_session_clean_exit: previous.endedAt !== null,
+    previous_session_started_at: previous.startedAt,
+    previous_session_ended_at: previous.endedAt,
+  };
+}
+
+// =============================================================================
 // Module
 // =============================================================================
 
@@ -73,6 +101,18 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
     ...storeString({ nullable: true }),
   });
 
+  // Quits send nothing, so how a session ended is only known at the next launch:
+  // `endedAt` stays null for a session that never reached its shutdown hook.
+  const lastSessionState = deps.stateService.register("telemetry.last-session", {
+    default: null,
+    description: "When the latest session started and ended",
+    ...storeCustom<LastSession | null>({
+      parse: () => undefined,
+      validate: (value) => (value === null || isLastSession(value) ? value : undefined),
+    }),
+  });
+
+  let session: LastSession | null = null;
   let distinctId: string | null = null;
   let enabled = false;
 
@@ -125,8 +165,11 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
 
             const configuredAgent = deps.agentConfig.get();
             if (enabled && configuredAgent !== undefined) {
-              deps.boundary.capture("app_launched");
+              deps.boundary.capture("app_launched", previousSessionProps(lastSessionState.get()));
             }
+
+            session = { startedAt: new Date().toISOString(), endedAt: null };
+            await lastSessionState.set(session);
 
             // Sync current config overrides as person properties. Only `agent`
             // mutates post-launch today, and it lands on the next launch.
@@ -140,7 +183,13 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
         stop: {
           handler: async (): Promise<void> => {
             deps.logger.debug("Telemetry shutting down");
-            await deps.boundary.shutdown();
+            try {
+              if (session !== null) {
+                await lastSessionState.set({ ...session, endedAt: new Date().toISOString() });
+              }
+            } finally {
+              await deps.boundary.shutdown();
+            }
           },
         },
       },

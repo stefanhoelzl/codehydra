@@ -614,6 +614,9 @@ const ideServerModule = createIdeServerModule({
   archiveExtractor,
   configService,
   ui: presentationModule,
+  captureEvent: (event, properties) => {
+    if (telemetryEnabledConfig.get()) postHogBoundary.capture(event, properties);
+  },
 });
 
 // The CLI's scripts, token and published connection details. Constructed before

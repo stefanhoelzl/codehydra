@@ -172,6 +172,10 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 
 `telemetry-module.ts`. Auto-generated telemetry user id. `redact: true`.
 
+#### `telemetry.last-session`
+
+`telemetry-module.ts`. `{ startedAt, endedAt }` of the latest session, ISO timestamps. `endedAt` is written by the `app:shutdown` `stop` hook, so it stays `null` for a session killed from outside. The next launch reports it on `app_launched`.
+
 #### `update.dismissed-version`
 
 `auto-updater-module.ts`. The update version the user last dismissed (silences re-notification; a newer version still surfaces).

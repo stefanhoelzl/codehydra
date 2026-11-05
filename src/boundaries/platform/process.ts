@@ -172,6 +172,24 @@ export interface ListeningProcess {
   readonly name: string;
   /** Full command line, or the bare name when the OS did not report one. */
   readonly commandLine: string;
+  /** Who the holder is and where it came from; for logs, not for decisions. */
+  readonly origin?: ListeningProcessOrigin;
+}
+
+/** Where a port holder came from. A field is null when the OS would not say. */
+export interface ListeningProcessOrigin {
+  /** Its session. On Windows that is the logon: another logged-in account has another one. */
+  readonly sessionId: number | null;
+  /** Whether that is this app's session. */
+  readonly sameSession: boolean | null;
+  /** False when the OS gave neither command line nor cwd: another user's, or protected. */
+  readonly detailsReadable: boolean;
+  readonly cwd: string | null;
+  /** ISO timestamp; tells a server left from an earlier session from a new one. */
+  readonly startedAt: string | null;
+  readonly parentPid: number | null;
+  /** Null also when the parent is gone, which is what an orphan looks like. */
+  readonly parentName: string | null;
 }
 
 /**
@@ -207,6 +225,8 @@ export interface ProcessSnapshotEntry {
    * environment the process started with, Windows its current one.
    */
   readonly envValue: string | null;
+  /** Its session id; null or absent when unreadable. See {@link ListeningProcessOrigin.sessionId}. */
+  readonly sessionId?: number | null;
 }
 
 /** What `listProcesses` reads besides the fixed fields. */
@@ -456,6 +476,7 @@ export function descendantsIn(processes: readonly ProcessSnapshotEntry[], pid: n
 async function killProcessTree(
   pid: number,
   force: boolean,
+  logger: Logger,
   tree: Set<number> = new Set(),
   descendants?: DescendantLookup
 ): Promise<void> {
@@ -463,18 +484,40 @@ async function killProcessTree(
   // Descendants first: once the parent is gone, they are re-parented and
   // can no longer be found from it.
   for (const descendant of (await descendants?.(pid)) ?? []) tree.add(descendant);
-  for (const descendant of tree) {
-    try {
-      process.kill(descendant, signal);
-    } catch {
-      // Already exited (ESRCH)
-    }
-  }
+  for (const descendant of tree) signalProcess(descendant, signal, logger);
+  signalProcess(pid, signal, logger);
+}
+
+/**
+ * Signal a process that may have exited already (ESRCH). Any other refusal is
+ * logged: EPERM is what another user's process answers, and the caller only
+ * sees that the process is still alive afterwards.
+ */
+function signalProcess(pid: number, signal: NodeJS.Signals, logger: Logger): void {
   try {
     process.kill(pid, signal);
-  } catch {
-    // Process may have already exited (ESRCH)
+  } catch (error) {
+    const code = errorCode(error);
+    if (code !== "ESRCH") logger.warn("Kill refused", { pid, signal, code: code ?? "unknown" });
   }
+}
+
+/** Where a listener came from, read from the snapshot it was found in. */
+function listeningProcessOrigin(
+  entry: ProcessSnapshotEntry,
+  processes: readonly ProcessSnapshotEntry[]
+): ListeningProcessOrigin {
+  const sessionId = entry.sessionId ?? null;
+  const ownSessionId = processes.find((p) => p.pid === process.pid)?.sessionId ?? null;
+  return {
+    sessionId,
+    sameSession: sessionId === null || ownSessionId === null ? null : sessionId === ownSessionId,
+    detailsReadable: entry.cwd !== null || entry.commandLine !== entry.name,
+    cwd: entry.cwd,
+    startedAt: entry.startedAt === null ? null : new Date(entry.startedAt).toISOString(),
+    parentPid: entry.ppid === 0 ? null : entry.ppid,
+    parentName: processes.find((p) => p.pid === entry.ppid)?.name ?? null,
+  };
 }
 
 /** Interval between liveness probes while waiting for PIDs to exit. */
@@ -607,7 +650,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
   }
 
   private async killProcess(pid: number, force: boolean): Promise<void> {
-    return killProcessTree(pid, force, this.killTree, this.descendants);
+    return killProcessTree(pid, force, this.logger, this.killTree, this.descendants);
   }
 
   /**
@@ -950,7 +993,7 @@ export class ExecaProcessRunner implements ProcessRunner {
     if (isWindows) {
       // Windows has no graceful phase for console processes — see killProcessTree.
       const tree = new Set<number>();
-      await killProcessTree(pid, true, tree, this.descendantsOf);
+      await killProcessTree(pid, true, this.logger, tree, this.descendantsOf);
       this.logger.warn("Killed foreign process", { pid, signal: "TERMINATE" });
 
       const timeout = (termTimeout ?? 0) + (killTimeout ?? 0);
@@ -964,14 +1007,14 @@ export class ExecaProcessRunner implements ProcessRunner {
     }
 
     const tree = new Set<number>();
-    await killProcessTree(pid, false, tree, this.descendantsOf);
+    await killProcessTree(pid, false, this.logger, tree, this.descendantsOf);
     this.logger.info("Killed foreign process", { pid, signal: "SIGTERM" });
     // The whole tree, not just `pid` — see ExecaSpawnedProcess.waitForTreeExit.
     if (termTimeout !== undefined && (await waitForPidsExit([pid, ...tree], termTimeout))) {
       return { success: true, reason: "SIGTERM" };
     }
 
-    await killProcessTree(pid, true, tree, this.descendantsOf);
+    await killProcessTree(pid, true, this.logger, tree, this.descendantsOf);
     this.logger.warn("Killed foreign process", { pid, signal: "SIGKILL" });
     if (killTimeout !== undefined && (await waitForPidsExit([pid, ...tree], killTimeout))) {
       return { success: true, reason: "SIGKILL" };
@@ -994,11 +1037,17 @@ export class ExecaProcessRunner implements ProcessRunner {
     // The socket table knows the pid; the process list knows what it is. A
     // failed process scan still names the holder by pid rather than hiding it.
     const snapshot = await this.listProcesses();
+    const processes = snapshot?.processes ?? [];
     return pids.map((pid) => {
-      const entry = snapshot?.processes.find((candidate) => candidate.pid === pid);
+      const entry = processes.find((candidate) => candidate.pid === pid);
       return entry === undefined
         ? { pid, name: "unknown", commandLine: "unknown" }
-        : { pid, name: entry.name, commandLine: entry.commandLine };
+        : {
+            pid,
+            name: entry.name,
+            commandLine: entry.commandLine,
+            origin: listeningProcessOrigin(entry, processes),
+          };
     });
   }
 

@@ -89,6 +89,7 @@ interface TestSetup {
 function createTestSetup(overrides?: {
   telemetryEnabled?: boolean;
   distinctId?: string | null;
+  lastSession?: { startedAt: string; endedAt: string | null };
   agent?: ConfigAgentType;
   configOverrides?: Record<string, unknown>;
   workspacePayload?: WorkspaceCreatedPayload;
@@ -109,7 +110,12 @@ function createTestSetup(overrides?: {
     ...(overrides?.configOverrides !== undefined && { overrides: overrides.configOverrides }),
   });
   const state = createMockState({
-    values: { "telemetry.distinct-id": overrides?.distinctId ?? null },
+    values: {
+      "telemetry.distinct-id": overrides?.distinctId ?? null,
+      ...(overrides?.lastSession !== undefined && {
+        "telemetry.last-session": overrides.lastSession,
+      }),
+    },
   });
 
   const dispatcher = createMockDispatcher();
@@ -377,6 +383,65 @@ describe("TelemetryModule Integration", () => {
       await dispatcher.dispatch(shutdownIntent());
 
       expect(boundary).toHaveBeenShutdown();
+    });
+  });
+
+  describe("session record", () => {
+    const enabled = { telemetryEnabled: true, distinctId: "test-id", agent: "claude" } as const;
+    const startedAt = "2026-11-03T08:00:00.000Z";
+
+    function launchedProps(boundary: TestSetup["boundary"]): Record<string, unknown> | undefined {
+      return boundary.$.capturedEvents.find((e) => e.event === "app_launched")?.properties;
+    }
+
+    it("reports a previous session that reached its shutdown", async () => {
+      const endedAt = "2026-11-03T09:00:00.000Z";
+      const { dispatcher, boundary } = createTestSetup({
+        ...enabled,
+        lastSession: { startedAt, endedAt },
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(launchedProps(boundary)).toMatchObject({
+        previous_session_clean_exit: true,
+        previous_session_started_at: startedAt,
+        previous_session_ended_at: endedAt,
+      });
+    });
+
+    it("reports a previous session that never reached its shutdown", async () => {
+      const { dispatcher, boundary } = createTestSetup({
+        ...enabled,
+        lastSession: { startedAt, endedAt: null },
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(launchedProps(boundary)).toMatchObject({
+        previous_session_clean_exit: false,
+        previous_session_ended_at: null,
+      });
+    });
+
+    it("reports no previous session on a first launch", async () => {
+      const { dispatcher, boundary } = createTestSetup(enabled);
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(launchedProps(boundary)).not.toHaveProperty("previous_session_clean_exit");
+    });
+
+    it("leaves a session open while it runs and closes it at shutdown", async () => {
+      const { dispatcher, state } = createTestSetup(enabled);
+
+      await dispatcher.dispatch(startIntent());
+      expect(state.getEffective()["telemetry.last-session"]).toMatchObject({ endedAt: null });
+
+      await dispatcher.dispatch(shutdownIntent());
+      expect(state.getEffective()["telemetry.last-session"]).toMatchObject({
+        endedAt: expect.any(String) as string,
+      });
     });
   });
 });
