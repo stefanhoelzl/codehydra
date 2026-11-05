@@ -508,6 +508,22 @@ describe("Sidebar", () => {
       expect(container.querySelector(".empty")?.textContent).toContain("zzz");
     });
 
+    it("matches several words across fields and marks each", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const input = container.querySelector("input")!;
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "acm login pkce" } });
+      expect(rowOpen(container, "acme-api/oauth-pkce")).toBe(true);
+      expect(rowOpen(container, "acme-api/rate-limit")).toBe(false);
+      expect(card(container, "acme-api").querySelector(".name mark")?.textContent).toBe("acm");
+      const title = row(container, "acme-api/oauth-pkce").querySelector(".title")!;
+      expect([...title.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual([
+        "login",
+        "PKCE",
+      ]);
+      expect(title.textContent).toBe("Switch login to PKCE");
+    });
+
     it("puts the marker on the active row, moves it with the arrows and Enter switches", async () => {
       const { container } = setup({ projects: sampleProjects() });
       const input = container.querySelector("input")!;

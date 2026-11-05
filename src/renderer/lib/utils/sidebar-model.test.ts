@@ -107,6 +107,15 @@ describe("sidebar-model", () => {
     expect(matches(p, rowOf(p, "oauth-pkce"), "website")).toBe(false);
   });
 
+  it("needs every word to match, in any field and any order", () => {
+    const p = project("acme-api");
+    expect(matches(p, rowOf(p, "oauth-pkce"), "acm pkce")).toBe(true);
+    expect(matches(p, rowOf(p, "oauth-pkce"), "pkce acm")).toBe(true);
+    expect(matches(p, rowOf(p, "oauth-pkce"), "acm   oauth")).toBe(true);
+    expect(matches(p, rowOf(p, "oauth-pkce"), "acm website")).toBe(false);
+    expect(matches(p, rowOf(p, "oauth-pkce"), "")).toBe(true);
+  });
+
   it("the marker walks visible rows only", () => {
     const keys = markerRows(sampleProjects(), find("ci")).map((row) => row.key);
     expect(keys).toEqual(["infra/ci-cache"]);
@@ -136,12 +145,36 @@ describe("sidebar-model", () => {
     expect(projectColor(PROJECT_COLOR_COUNT - 1)).toBe(PROJECT_COLORS[PROJECT_COLOR_COUNT - 1]);
   });
 
-  it("splits text around the first match", () => {
-    expect(highlightParts("Switch login to PKCE", "pkce")).toEqual({
-      before: "Switch login to ",
-      match: "PKCE",
-      after: "",
-    });
-    expect(highlightParts("abc", "")).toBeNull();
+  it("marks the first match of each word", () => {
+    expect(highlightParts("Switch login to PKCE", "pkce login")).toEqual([
+      { text: "Switch ", marked: false },
+      { text: "login", marked: true },
+      { text: " to ", marked: false },
+      { text: "PKCE", marked: true },
+    ]);
+    expect(highlightParts("abab", "ab")).toEqual([
+      { text: "ab", marked: true },
+      { text: "ab", marked: false },
+    ]);
+  });
+
+  it("merges marks that overlap or touch", () => {
+    expect(highlightParts("abcdef", "abc bcd")).toEqual([
+      { text: "abcd", marked: true },
+      { text: "ef", marked: false },
+    ]);
+    expect(highlightParts("abcdef", "cd ab")).toEqual([
+      { text: "abcd", marked: true },
+      { text: "ef", marked: false },
+    ]);
+    expect(highlightParts("abcdef", "abc b")).toEqual([
+      { text: "abc", marked: true },
+      { text: "def", marked: false },
+    ]);
+  });
+
+  it("marks nothing without a match", () => {
+    expect(highlightParts("abc", "")).toEqual([{ text: "abc", marked: false }]);
+    expect(highlightParts("abc", "x")).toEqual([{ text: "abc", marked: false }]);
   });
 });

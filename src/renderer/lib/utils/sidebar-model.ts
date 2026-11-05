@@ -138,16 +138,18 @@ export function normalizedQuery(view: SidebarView): string {
   return view.find === null ? "" : view.query.trim().toLowerCase();
 }
 
-/** Whether a row matches the Find text: its project, title, branch or a tag. */
+/** The words of a normalized Find text. */
+const queryWords = (ql: string): readonly string[] => (ql === "" ? [] : ql.split(/\s+/));
+
+/** Whether every word of the Find text is in a row's project, title, branch or a tag. */
 export function matches(project: UiProjectRow, row: UiWorkspaceRow, ql: string): boolean {
-  if (ql === "") return true;
-  const words = [
+  const fields = [
     project.name,
     row.title,
     row.name,
     ...row.tags.flatMap((tag) => [tag.name, tag.label, tag.description]),
-  ];
-  return words.some((word) => word !== undefined && word.toLowerCase().includes(ql));
+  ].flatMap((field) => (field === undefined ? [] : [field.toLowerCase()]));
+  return queryWords(ql).every((word) => fields.some((field) => field.includes(word)));
 }
 
 /** Whether a project's automated rows are shown (outside Find). */
@@ -277,17 +279,31 @@ export function moonToggle(view: HibernatedView): HibernatedView {
   return view === "hidden" ? "manual" : "hidden";
 }
 
-/** Split text around the first match of the Find text, for highlighting. */
+/** Split text into runs, marking the first match of each word of the Find text. */
 export function highlightParts(
   text: string,
   ql: string
-): { readonly before: string; readonly match: string; readonly after: string } | null {
-  if (ql === "") return null;
-  const index = text.toLowerCase().indexOf(ql);
-  if (index < 0) return null;
-  return {
-    before: text.slice(0, index),
-    match: text.slice(index, index + ql.length),
-    after: text.slice(index + ql.length),
-  };
+): readonly { readonly text: string; readonly marked: boolean }[] {
+  const lower = text.toLowerCase();
+  const hits = queryWords(ql)
+    .map((word) => ({ start: lower.indexOf(word), length: word.length }))
+    .filter((hit) => hit.start >= 0)
+    .sort((a, b) => a.start - b.start);
+
+  const marks: { start: number; end: number }[] = [];
+  for (const { start, length } of hits) {
+    const last = marks.at(-1);
+    if (last !== undefined && start <= last.end) last.end = Math.max(last.end, start + length);
+    else marks.push({ start, end: start + length });
+  }
+
+  const parts: { text: string; marked: boolean }[] = [];
+  let position = 0;
+  for (const { start, end } of marks) {
+    if (start > position) parts.push({ text: text.slice(position, start), marked: false });
+    parts.push({ text: text.slice(start, end), marked: true });
+    position = end;
+  }
+  if (position < text.length) parts.push({ text: text.slice(position), marked: false });
+  return parts;
 }
