@@ -182,6 +182,23 @@ describe("GetWorkspaceStatus Operation", () => {
         counts: { idle: 1, busy: 0, total: 1 },
       });
     });
+
+    it.each([
+      ["busy", { status: "busy", counts: { idle: 0, busy: 1 } }],
+      ["none", { status: "none", counts: { idle: 0, busy: 0 } }],
+    ] as const)("passes the agent's changedAt through (%s)", async (_label, agentStatus) => {
+      const changedAt = "2026-11-05T10:00:00.000Z";
+      const stamped = createTestSetup({
+        workspaceProvider: createMockWorkspaceProvider({ [WORKSPACE_PATH]: false }),
+        agentStatus: { ...agentStatus, changedAt },
+      });
+
+      const result = (await stamped.dispatcher.dispatch(
+        statusIntent(WORKSPACE_REF)
+      )) as WorkspaceStatus;
+
+      expect(result.agent.changedAt).toBe(changedAt);
+    });
   });
 
   describe("no agent status manager (#2)", () => {

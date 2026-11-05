@@ -10,7 +10,8 @@
  * react to the transition itself (the callback gets the workspace and its status
  * before and after).
  *
- * - agent:status-updated → set(workspace.ref, status)
+ * - agent:status-updated → set(workspace.ref, status), `changedAt` carried over
+ *   while the state (none, idle, working) is unchanged
  * - workspace:deleted    → delete(workspaceRef)
  *
  * The `workspace:deleted` subscription covers both full deletion and
@@ -22,6 +23,7 @@ import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import type { WorkspaceRef, AggregatedAgentStatus } from "../shared/ipc";
 import type { EventFor } from "../intents/declarations";
+import { stampStatusChange } from "./agent-module/status-utils";
 
 /**
  * Called after every set/delete with the workspace that changed and its status
@@ -64,8 +66,12 @@ export function createWorkspaceStatusCache(onChange?: WorkspaceStatusChange): Wo
     events: {
       [EVENT_AGENT_STATUS_UPDATED]: {
         handler: async (event): Promise<void> => {
-          const { workspaceRef, status } = event.payload;
+          const { workspaceRef } = event.payload;
           const previous = statuses.get(workspaceRef);
+          // An `agent.status.set` nudge carries no stamp, and the agent module's
+          // own may be newer than the state the UI last showed: the cache keeps
+          // `changedAt` while the workspace stays none, idle or working.
+          const status = stampStatusChange(previous, event.payload.status);
           statuses.set(workspaceRef, status);
           onChange?.(workspaceRef, previous, status);
         },

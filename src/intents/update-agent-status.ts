@@ -14,7 +14,11 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { workspaceIdentityPayloadSchema, workspaceRefSchema } from "./contract";
+import {
+  agentStatusChangedAtSchema,
+  workspaceIdentityPayloadSchema,
+  workspaceRefSchema,
+} from "./contract";
 import {
   resolveWorkspaceIdentity,
   workspaceIdentityPayload,
@@ -47,11 +51,15 @@ const internalAgentCountsSchema = z
  * `status`. Not part of the intent `contract` vocabulary, so it is defined here; its inferred
  * type is structurally identical to `AggregatedAgentStatus`.
  */
+const aggregatedFields = {
+  counts: internalAgentCountsSchema,
+  changedAt: agentStatusChangedAtSchema,
+};
 const aggregatedAgentStatusSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("none"), counts: internalAgentCountsSchema }).readonly(),
-  z.object({ status: z.literal("idle"), counts: internalAgentCountsSchema }).readonly(),
-  z.object({ status: z.literal("busy"), counts: internalAgentCountsSchema }).readonly(),
-  z.object({ status: z.literal("mixed"), counts: internalAgentCountsSchema }).readonly(),
+  z.object({ status: z.literal("none"), ...aggregatedFields }).readonly(),
+  z.object({ status: z.literal("idle"), ...aggregatedFields }).readonly(),
+  z.object({ status: z.literal("busy"), ...aggregatedFields }).readonly(),
+  z.object({ status: z.literal("mixed"), ...aggregatedFields }).readonly(),
 ]);
 
 export const updateAgentStatusPayloadSchema = z

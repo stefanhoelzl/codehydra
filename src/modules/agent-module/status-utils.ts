@@ -26,6 +26,28 @@ export function convertToAggregatedStatus(status: AgentActivity): AggregatedAgen
   }
 }
 
+/** The three states `changedAt` tracks: busy and mixed are both working. */
+function phaseOf(status: AggregatedAgentStatus): "none" | "idle" | "working" {
+  return status.status === "busy" || status.status === "mixed" ? "working" : status.status;
+}
+
+/**
+ * `next` with its `changedAt` set: `previous`'s when both are in the same
+ * state (none, idle, working — busy ↔ mixed and count-only changes keep it),
+ * `next`'s own when it carries one and the state changed, otherwise `now`.
+ */
+export function stampStatusChange(
+  previous: AggregatedAgentStatus | undefined,
+  next: AggregatedAgentStatus,
+  now: () => string = () => new Date().toISOString()
+): AggregatedAgentStatus {
+  const changedAt =
+    previous?.changedAt !== undefined && phaseOf(previous) === phaseOf(next)
+      ? previous.changedAt
+      : (next.changedAt ?? now());
+  return next.changedAt === changedAt ? next : { ...next, changedAt };
+}
+
 /**
  * Detect the `[bg]` marker on a sub-agent's label.
  *

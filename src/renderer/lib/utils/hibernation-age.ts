@@ -1,6 +1,6 @@
 /**
  * How long a workspace has been hibernated, for the sidebar row, its tooltip
- * and the hibernated overlay. Pure: callers pass `now` (see minute-clock).
+ * and the hibernated overlay. Pure: callers pass `now` (see clock.svelte.ts).
  */
 
 const MINUTE = 60_000;

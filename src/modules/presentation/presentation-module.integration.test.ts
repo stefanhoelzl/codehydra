@@ -1091,13 +1091,18 @@ describe("PresentationModule - ui:state snapshots", () => {
       projectId: PROJECT_ID,
       workspaceName: workspace.name,
       active: false,
-      status: { status: "busy", counts: { idle: 1, busy: 2 } },
+      status: {
+        status: "busy",
+        counts: { idle: 1, busy: 2 },
+        changedAt: "2026-11-05T10:00:00.000Z",
+      },
     });
     await flush();
 
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.agent).toEqual({
       type: "busy",
       counts: { idle: 1, busy: 2, total: 3 },
+      changedAt: "2026-11-05T10:00:00.000Z",
     });
   });
 

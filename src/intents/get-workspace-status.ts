@@ -16,6 +16,7 @@ import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import {
+  agentStatusChangedAtSchema,
   hookCtxSchema,
   workspaceClosingSchema,
   workspaceRefSchema,
@@ -51,11 +52,15 @@ export const getWorkspaceStatusPayloadSchema = z
  * The discriminated union of internal agent-status shapes with `{ idle, busy }` counts.
  */
 const internalAgentCountsSchema = z.object({ idle: z.number(), busy: z.number() }).readonly();
+const aggregatedFields = {
+  counts: internalAgentCountsSchema,
+  changedAt: agentStatusChangedAtSchema,
+};
 const aggregatedAgentStatusSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("none"), counts: internalAgentCountsSchema }),
-  z.object({ status: z.literal("idle"), counts: internalAgentCountsSchema }),
-  z.object({ status: z.literal("busy"), counts: internalAgentCountsSchema }),
-  z.object({ status: z.literal("mixed"), counts: internalAgentCountsSchema }),
+  z.object({ status: z.literal("none"), ...aggregatedFields }),
+  z.object({ status: z.literal("idle"), ...aggregatedFields }),
+  z.object({ status: z.literal("busy"), ...aggregatedFields }),
+  z.object({ status: z.literal("mixed"), ...aggregatedFields }),
 ]);
 
 /**
@@ -183,12 +188,14 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
       counts: { idle: 0, busy: 0 },
     };
 
+    const changedAt =
+      finalAgentStatus.changedAt !== undefined ? { changedAt: finalAgentStatus.changedAt } : {};
     return {
       isDirty,
       unmergedCommits,
       agent:
         finalAgentStatus.status === "none"
-          ? { type: "none" }
+          ? { type: "none", ...changedAt }
           : {
               type: finalAgentStatus.status,
               counts: {
@@ -196,6 +203,7 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
                 busy: finalAgentStatus.counts.busy,
                 total: finalAgentStatus.counts.idle + finalAgentStatus.counts.busy,
               },
+              ...changedAt,
             },
     };
   }

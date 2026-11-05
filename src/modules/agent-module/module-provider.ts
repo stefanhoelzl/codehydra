@@ -42,7 +42,7 @@ import type { BinaryType } from "../../utils/binary-resolution/types";
 import { AgentBinaryError, getErrorMessage } from "../../shared/errors/service-errors";
 import { toError } from "../../shared/error-utils";
 import type { Logger } from "../../boundaries/platform/logging";
-import { createNoneStatus, convertToAggregatedStatus } from "./status-utils";
+import { createNoneStatus, convertToAggregatedStatus, stampStatusChange } from "./status-utils";
 import { AgentUnreachableError } from "./types";
 import type { ModalSource } from "../../intents/vscode-modal-changed";
 
@@ -243,9 +243,21 @@ export function createAgentModuleProvider<P extends AgentProvider>(
    * which parks the workspace on the user — idle even when the agent is still
    * working or has no session.
    */
-  function effectiveStatus(workspaceRef: WorkspaceRef): AggregatedAgentStatus {
+  function unstampedStatus(workspaceRef: WorkspaceRef): AggregatedAgentStatus {
     if (modalOpen.has(workspaceRef)) return convertToAggregatedStatus("idle");
     return statusCache.get(workspaceRef) ?? createNoneStatus();
+  }
+
+  /**
+   * The last effective status seen per workspace, with its `changedAt`: the
+   * stamp carries over while the workspace stays none, idle or working.
+   */
+  const stamped = new Map<WorkspaceRef, AggregatedAgentStatus>();
+
+  function effectiveStatus(workspaceRef: WorkspaceRef): AggregatedAgentStatus {
+    const status = stampStatusChange(stamped.get(workspaceRef), unstampedStatus(workspaceRef));
+    stamped.set(workspaceRef, status);
+    return status;
   }
 
   function handleStatusUpdate(workspaceRef: WorkspaceRef, agentStatus: AgentActivity): void {
@@ -261,7 +273,9 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       statusCache.set(workspaceRef, status);
       // While parked, the agent's changes are recorded but not reported: the
       // workspace keeps reading idle until the modal closes.
-      if (!modalOpen.has(workspaceRef)) notifyStatusChange(workspaceRef, status);
+      if (!modalOpen.has(workspaceRef)) {
+        notifyStatusChange(workspaceRef, effectiveStatus(workspaceRef));
+      }
     }
   }
 
@@ -439,6 +453,7 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       }
       providers.clear();
       statusCache.clear();
+      stamped.clear();
       modalOpen.clear();
       statusChangeListeners.clear();
       spec.onDispose?.();
@@ -537,6 +552,7 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       // but that report resolves the agent from metadata that teardown may
       // already have removed, so it can land in another agent's module.
       modalOpen.delete(workspaceRef);
+      stamped.delete(workspaceRef);
       spec.clearWorkspaceTracking?.(workspaceRef);
     },
   };

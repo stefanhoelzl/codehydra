@@ -11,7 +11,7 @@
  * - Cleanup and disposal
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createClaudeModuleProvider } from "./module-provider";
 import type { ClaudeCodeServerManager } from "./server-manager";
 import type { AgentProvider, AgentActivity } from "../types";
@@ -313,7 +313,7 @@ describe("createClaudeModuleProvider", () => {
 
       // Initial status should be emitted (none, since addProvider calls handleStatusUpdate with "none")
       expect(statusChanges).toHaveLength(1);
-      expect(statusChanges[0]).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
+      expect(statusChanges[0]).toMatchObject({ status: "none", counts: { idle: 0, busy: 0 } });
     });
 
     it("reconnects existing provider on restart (server started again)", async () => {
@@ -376,7 +376,10 @@ describe("createClaudeModuleProvider", () => {
 
       // Should emit "none" status after removal
       expect(statusChanges).toHaveLength(1);
-      expect(statusChanges[0]!.status).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
+      expect(statusChanges[0]!.status).toMatchObject({
+        status: "none",
+        counts: { idle: 0, busy: 0 },
+      });
     });
   });
 
@@ -400,7 +403,7 @@ describe("createClaudeModuleProvider", () => {
       capturedStatusCallback!("busy");
 
       expect(statusChanges).toHaveLength(1);
-      expect(statusChanges[0]).toEqual({
+      expect(statusChanges[0]).toMatchObject({
         path: WS_REF,
         status: { status: "busy", counts: { idle: 0, busy: 1 } },
       });
@@ -422,7 +425,7 @@ describe("createClaudeModuleProvider", () => {
 
       // Only one change should be emitted
       expect(statusChanges).toHaveLength(1);
-      expect(statusChanges[0]).toEqual({ status: "idle", counts: { idle: 1, busy: 0 } });
+      expect(statusChanges[0]).toMatchObject({ status: "idle", counts: { idle: 1, busy: 0 } });
     });
 
     it("emits when status changes from idle to busy", async () => {
@@ -484,11 +487,11 @@ describe("createClaudeModuleProvider", () => {
       capturedStatusCallback!("busy");
 
       provider.setModalOpen(WS_REF, "editor", true);
-      expect(provider.getStatus(WS_REF)).toEqual(IDLE);
+      expect(provider.getStatus(WS_REF)).toMatchObject(IDLE);
 
       provider.setModalOpen(WS_REF, "editor", false);
-      expect(provider.getStatus(WS_REF)).toEqual(BUSY);
-      expect(statusChanges).toEqual([BUSY, IDLE, BUSY]);
+      expect(provider.getStatus(WS_REF)).toMatchObject(BUSY);
+      expect(statusChanges).toMatchObject([BUSY, IDLE, BUSY]);
     });
 
     it("records agent changes while parked without reporting them", async () => {
@@ -499,10 +502,10 @@ describe("createClaudeModuleProvider", () => {
 
       capturedStatusCallback!("idle");
       capturedStatusCallback!("busy");
-      expect(statusChanges).toEqual([]);
+      expect(statusChanges).toMatchObject([]);
 
       provider.setModalOpen(WS_REF, "editor", false);
-      expect(statusChanges).toEqual([BUSY]);
+      expect(statusChanges).toMatchObject([BUSY]);
     });
 
     it("parks a workspace with no agent session, and returns it to none", async () => {
@@ -511,11 +514,11 @@ describe("createClaudeModuleProvider", () => {
       provider.onStatusChange((_wp, status) => statusChanges.push(status));
 
       provider.setModalOpen(WS_REF, "editor", true);
-      expect(provider.getStatus(WS_REF)).toEqual(IDLE);
+      expect(provider.getStatus(WS_REF)).toMatchObject(IDLE);
 
       provider.setModalOpen(WS_REF, "editor", false);
-      expect(provider.getStatus(WS_REF)).toEqual(NONE);
-      expect(statusChanges).toEqual([IDLE, NONE]);
+      expect(provider.getStatus(WS_REF)).toMatchObject(NONE);
+      expect(statusChanges).toMatchObject([IDLE, NONE]);
     });
 
     it("re-reports on every edge, even when the status did not change", async () => {
@@ -528,7 +531,7 @@ describe("createClaudeModuleProvider", () => {
 
       // An agent.status.set nudge bypasses the core, so the last report here is
       // not necessarily what the UI shows — each edge corrects it.
-      expect(statusChanges).toEqual([IDLE, IDLE]);
+      expect(statusChanges).toMatchObject([IDLE, IDLE]);
     });
 
     it("stays parked when the provider is removed mid-modal", async () => {
@@ -540,7 +543,7 @@ describe("createClaudeModuleProvider", () => {
       const onStoppedCb = serverStoppedCallback();
       onStoppedCb(WS_REF, false);
 
-      expect(statusChanges).toEqual([IDLE]);
+      expect(statusChanges).toMatchObject([IDLE]);
     });
 
     it("clearWorkspaceTracking drops the park", async () => {
@@ -550,7 +553,7 @@ describe("createClaudeModuleProvider", () => {
 
       provider.clearWorkspaceTracking(WS_REF);
 
-      expect(provider.getStatus(WS_REF)).toEqual(BUSY);
+      expect(provider.getStatus(WS_REF)).toMatchObject(BUSY);
     });
 
     it("stays parked until every source has closed", async () => {
@@ -560,11 +563,11 @@ describe("createClaudeModuleProvider", () => {
       provider.setModalOpen(WS_REF, "editor", true);
       provider.setModalOpen(WS_REF, "sidebar", true);
       provider.setModalOpen(WS_REF, "editor", false);
-      expect(provider.getStatus(WS_REF)).toEqual(IDLE);
+      expect(provider.getStatus(WS_REF)).toMatchObject(IDLE);
 
       provider.setModalOpen(WS_REF, "sidebar", false);
-      expect(provider.getStatus(WS_REF)).toEqual(BUSY);
-      expect(statusChanges).toEqual([BUSY, IDLE, IDLE, IDLE, BUSY]);
+      expect(provider.getStatus(WS_REF)).toMatchObject(BUSY);
+      expect(statusChanges).toMatchObject([BUSY, IDLE, IDLE, IDLE, BUSY]);
     });
 
     it("parks only the workspace showing the modal", async () => {
@@ -573,8 +576,8 @@ describe("createClaudeModuleProvider", () => {
 
       provider.setModalOpen(WS_REF_B, "editor", true);
 
-      expect(provider.getStatus(WS_REF)).toEqual(BUSY);
-      expect(provider.getStatus(WS_REF_B)).toEqual(IDLE);
+      expect(provider.getStatus(WS_REF)).toMatchObject(BUSY);
+      expect(provider.getStatus(WS_REF_B)).toMatchObject(IDLE);
     });
   });
 
@@ -587,7 +590,7 @@ describe("createClaudeModuleProvider", () => {
       const provider = createProvider();
       const status = provider.getStatus(WS_REF);
 
-      expect(status).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
+      expect(status).toMatchObject({ status: "none", counts: { idle: 0, busy: 0 } });
     });
 
     it("returns cached status after provider emits", async () => {
@@ -598,10 +601,68 @@ describe("createClaudeModuleProvider", () => {
 
       capturedStatusCallback!("busy");
 
-      expect(provider.getStatus(WS_REF)).toEqual({
+      expect(provider.getStatus(WS_REF)).toMatchObject({
         status: "busy",
         counts: { idle: 0, busy: 1 },
       });
+    });
+  });
+
+  describe("changedAt", () => {
+    const at = (minute: number): string =>
+      new Date(Date.UTC(2026, 10, 5, 10, minute)).toISOString();
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(at(0)));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function startedProvider() {
+      const provider = createInitializedProvider();
+      const changes: Array<string | undefined> = [];
+      provider.onStatusChange((_wp, status) => changes.push(status.changedAt));
+      await serverStartedCallback()(WS_REF, 8080);
+      return { provider, changes };
+    }
+
+    it("stamps the first status, then each move between none, idle and working", async () => {
+      const { provider, changes } = await startedProvider();
+      expect(provider.getStatus(WS_REF).changedAt).toBe(at(0));
+
+      vi.setSystemTime(new Date(at(1)));
+      capturedStatusCallback!("busy");
+      vi.setSystemTime(new Date(at(7)));
+      expect(provider.getStatus(WS_REF).changedAt).toBe(at(1));
+
+      capturedStatusCallback!("idle");
+      expect(provider.getStatus(WS_REF).changedAt).toBe(at(7));
+      expect(changes).toEqual([at(0), at(1), at(7)]);
+    });
+
+    it("restarts the busy time when a modal parks the workspace on idle", async () => {
+      const { provider } = await startedProvider();
+      vi.setSystemTime(new Date(at(1)));
+      capturedStatusCallback!("busy");
+
+      vi.setSystemTime(new Date(at(2)));
+      provider.setModalOpen(WS_REF, "editor", true);
+      expect(provider.getStatus(WS_REF).changedAt).toBe(at(2));
+
+      vi.setSystemTime(new Date(at(3)));
+      provider.setModalOpen(WS_REF, "editor", false);
+      expect(provider.getStatus(WS_REF)).toMatchObject({ status: "busy", changedAt: at(3) });
+    });
+
+    it("keeps the stamp when the same state is reported again", async () => {
+      const { provider } = await startedProvider();
+      vi.setSystemTime(new Date(at(1)));
+      capturedStatusCallback!("busy");
+      vi.setSystemTime(new Date(at(4)));
+      provider.setModalOpen(WS_REF, "editor", false);
+      expect(provider.getStatus(WS_REF).changedAt).toBe(at(1));
     });
   });
 
@@ -830,11 +891,11 @@ describe("createClaudeModuleProvider", () => {
       // Change B to idle
       callbackB("idle");
 
-      expect(provider.getStatus(WS_REF)).toEqual({
+      expect(provider.getStatus(WS_REF)).toMatchObject({
         status: "busy",
         counts: { idle: 0, busy: 1 },
       });
-      expect(provider.getStatus(WS_REF_B)).toEqual({
+      expect(provider.getStatus(WS_REF_B)).toMatchObject({
         status: "idle",
         counts: { idle: 1, busy: 0 },
       });

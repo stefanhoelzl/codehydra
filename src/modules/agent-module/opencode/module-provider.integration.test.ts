@@ -459,7 +459,7 @@ describe("OpenCode module provider", () => {
 
       // The status is set during addProvider which already ran
       const status = provider.getStatus(WS_REF);
-      expect(status).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
+      expect(status).toMatchObject({ status: "none", counts: { idle: 0, busy: 0 } });
     });
 
     it("reports idle when idle count is positive on addProvider", async () => {
@@ -470,7 +470,7 @@ describe("OpenCode module provider", () => {
       await initializeAndStart(provider, serverManager);
 
       const status = provider.getStatus(WS_REF);
-      expect(status).toEqual({ status: "idle", counts: { idle: 1, busy: 0 } });
+      expect(status).toMatchObject({ status: "idle", counts: { idle: 1, busy: 0 } });
     });
 
     it("reports busy when busy count is positive on addProvider", async () => {
@@ -481,7 +481,7 @@ describe("OpenCode module provider", () => {
       await initializeAndStart(provider, serverManager);
 
       const status = provider.getStatus(WS_REF);
-      expect(status).toEqual({ status: "busy", counts: { idle: 0, busy: 1 } });
+      expect(status).toMatchObject({ status: "busy", counts: { idle: 0, busy: 1 } });
     });
 
     it("reports status change via onStatusChange callback", async () => {
@@ -499,7 +499,7 @@ describe("OpenCode module provider", () => {
       const busyChange = statusChanges.find((c) => c.status.status === "busy");
       expect(busyChange).toBeDefined();
       expect(busyChange!.path).toBe(WS_REF);
-      expect(busyChange!.status).toEqual({ status: "busy", counts: { idle: 0, busy: 1 } });
+      expect(busyChange!.status).toMatchObject({ status: "busy", counts: { idle: 0, busy: 1 } });
     });
 
     it("deduplicates identical status updates", async () => {
@@ -549,7 +549,7 @@ describe("OpenCode module provider", () => {
       });
 
       const lastStatus = statusChanges[statusChanges.length - 1];
-      expect(lastStatus).toEqual({ status: "idle", counts: { idle: 1, busy: 0 } });
+      expect(lastStatus).toMatchObject({ status: "idle", counts: { idle: 1, busy: 0 } });
     });
   });
 
@@ -791,7 +791,7 @@ describe("OpenCode module provider", () => {
       serverManager._triggerStopped(WS_REF, false);
 
       const lastStatus = statusChanges[statusChanges.length - 1];
-      expect(lastStatus).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
+      expect(lastStatus).toMatchObject({ status: "none", counts: { idle: 0, busy: 0 } });
     });
   });
 
@@ -802,7 +802,7 @@ describe("OpenCode module provider", () => {
   describe("getStatus", () => {
     it("returns none for unknown workspace", () => {
       const status = provider.getStatus(WS_REF);
-      expect(status).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
+      expect(status).toMatchObject({ status: "none", counts: { idle: 0, busy: 0 } });
     });
   });
 
@@ -942,7 +942,7 @@ describe("OpenCode module provider", () => {
 
       // After dispose, getStatus returns none
       const status = provider.getStatus(WS_REF);
-      expect(status).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
+      expect(status).toMatchObject({ status: "none", counts: { idle: 0, busy: 0 } });
 
       // After dispose, getSession returns null
       const session = provider.getSession(WS_REF);

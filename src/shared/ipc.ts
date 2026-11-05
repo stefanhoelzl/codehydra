@@ -33,12 +33,33 @@ export interface InternalAgentCounts {
 /**
  * Aggregated agent status for a workspace (discriminated union).
  * Used internally for status aggregation.
+ *
+ * `changedAt` (ISO-8601) is when the workspace last moved between running no
+ * agent (`none`), waiting (`idle`) and working (`busy` or `mixed`); a move
+ * between busy and mixed, or a change of the counts alone, keeps it. Absent
+ * while nothing has stamped it (a workspace that has reported no status yet).
  */
 export type AggregatedAgentStatus =
-  | { readonly status: "none"; readonly counts: InternalAgentCounts }
-  | { readonly status: "idle"; readonly counts: InternalAgentCounts }
-  | { readonly status: "busy"; readonly counts: InternalAgentCounts }
-  | { readonly status: "mixed"; readonly counts: InternalAgentCounts };
+  | {
+      readonly status: "none";
+      readonly counts: InternalAgentCounts;
+      readonly changedAt?: string | undefined;
+    }
+  | {
+      readonly status: "idle";
+      readonly counts: InternalAgentCounts;
+      readonly changedAt?: string | undefined;
+    }
+  | {
+      readonly status: "busy";
+      readonly counts: InternalAgentCounts;
+      readonly changedAt?: string | undefined;
+    }
+  | {
+      readonly status: "mixed";
+      readonly counts: InternalAgentCounts;
+      readonly changedAt?: string | undefined;
+    };
 
 // ============ UI Mode Types ============
 
