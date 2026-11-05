@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { PROJECT_COLOR_COUNT, type UiProjectRow } from "@shared/ui-state";
 import { sampleProjects } from "../components/sidebar-fixture";
 import {
+  describeRowCounts,
   highlightParts,
   markerRows,
   matches,
@@ -9,6 +10,7 @@ import {
   PROJECT_COLORS,
   projectColor,
   projectFolds,
+  rowCounts,
   rowGlyph,
   rowGroup,
   rowHidden,
@@ -35,6 +37,23 @@ const rowOf = (p: UiProjectRow, name: string) => {
 };
 
 describe("sidebar-model", () => {
+  it("counts a row at most once, by the glyph it shows, and names the non-zero counts", () => {
+    const counts = rowCounts(project("codehydra").workspaces);
+    // e2e-flake-hunt failed to open: it counts nowhere.
+    expect(counts).toEqual({
+      busy: 1,
+      loading: 1,
+      idle: 1,
+      noAgent: 0,
+      hibernated: 2,
+      automated: 2,
+    });
+    expect(describeRowCounts(counts)).toBe(
+      "1 working · 1 loading · 1 waiting for you · 2 hibernated · 2 automated"
+    );
+    expect(describeRowCounts(rowCounts([]))).toBe("");
+  });
+
   it("groups rows into hibernated, automated and awake", () => {
     const p = project("codehydra");
     expect(rowGroup(rowOf(p, "atomic-state-writes"))).toBe("hibernated");

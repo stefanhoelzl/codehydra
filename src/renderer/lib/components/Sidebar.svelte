@@ -26,12 +26,14 @@
   import { clampSidebarWidthMin } from "@shared/ui-state";
   import { createLogger } from "$lib/logging";
   import {
+    describeRowCounts,
     isQuestion,
     markerRows,
     normalizedQuery,
     nothingMatches,
     projectColor,
     projectShown,
+    rowCounts,
     rowGlyph,
     rowGroup,
     rowHidden,
@@ -42,6 +44,7 @@
   import ProjectCard from "./sidebar/ProjectCard.svelte";
   import NoteCard from "./sidebar/NoteCard.svelte";
   import SidebarIcon from "./sidebar/SidebarIcon.svelte";
+  import RowCountItems from "./sidebar/RowCountItems.svelte";
   import { describeProcessTotals, formatProcessBadge } from "$lib/utils/process-summary.js";
   import { watchFit } from "$lib/utils/watch-fit.js";
   import { createRowMotion, highlight, noteIn, noteOut } from "./sidebar/motion";
@@ -568,16 +571,8 @@
   });
 
   const bottomNotes = $derived([...notifications].filter((note) => !isQuestion(note)).reverse());
-  const summary = $derived({
-    busy: allRows.filter((row) => rowGlyph(row) === "busy").length,
-    loading: allRows.filter((row) => rowGlyph(row) === "pending").length,
-    idle: allRows.filter((row) => rowGlyph(row) === "idle").length,
-    noAgent: allRows.filter((row) => rowGlyph(row) === "none").length,
-    hibernated: allRows.filter((row) => row.status === "ready" && rowGroup(row) === "hibernated")
-      .length,
-    automated: allRows.filter((row) => row.status === "ready" && rowGroup(row) === "automated")
-      .length,
-  });
+  const summary = $derived(rowCounts(allRows));
+  const summaryTitle = $derived(describeRowCounts(summary));
   // The footer total moves to the pulse button's tooltip when it doesn't fit.
   let footerTotalFits = $state(true);
   const hiddenTotals = $derived(
@@ -586,21 +581,6 @@
       : null
   );
   const pulseHint = $derived(`${processSummary ? "Hide" : "Show"} process summary (Alt+X, P)`);
-
-  /** The footer summary names only the counts it shows: the non-zero ones. */
-  const summaryTitle = $derived(
-    [
-      [summary.busy, "working"],
-      [summary.loading, "loading"],
-      [summary.idle, "waiting for you"],
-      [summary.noAgent, "no agent"],
-      [summary.hibernated, "hibernated"],
-      [summary.automated, "automated"],
-    ]
-      .filter(([count]) => count !== 0)
-      .map(([count, label]) => `${count} ${label}`)
-      .join(" · ")
-  );
 
   /** The rail: per expanded project its awake rows (and the active one); a dot per question. */
   const railGroups = $derived(
@@ -717,16 +697,7 @@
         title={summaryTitle || undefined}
         use:watchFit={(fits) => (footerTotalFits = fits)}
       >
-        {#if summary.busy > 0}<i><span class="ring busy"></span>{summary.busy}</i>{/if}
-        {#if summary.loading > 0}<i class="loading"><span class="ring"></span>{summary.loading}</i
-          >{/if}
-        {#if summary.idle > 0}<i><span class="d"></span>{summary.idle}</i>{/if}
-        {#if summary.noAgent > 0}<i class="none"><span class="n"></span>{summary.noAgent}</i>{/if}
-        {#if summary.hibernated > 0}<i><SidebarIcon name="moon" size={10} />{summary.hibernated}</i
-          >{/if}
-        {#if summary.automated > 0}<i class="auto"
-            ><SidebarIcon name="alarm" size={10} />{summary.automated}</i
-          >{/if}
+        <RowCountItems counts={summary} still />
         {#if processSummary && processTotals !== undefined}<i
             id="sidebar-process-total"
             class="proc"
@@ -1069,28 +1040,9 @@
     display: flex;
     gap: 10px;
   }
-  .sum i {
-    font-style: normal;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .sum .ring {
-    width: 9px;
-    height: 9px;
-    border-width: 1.5px;
-    animation: none;
-  }
-  .sum .d {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-  }
-  .sum .auto {
-    color: var(--ch-sb-auto);
-  }
   /* The worst-case width (see watchFit): digits changing can't flip it. */
   .sum .proc {
+    font-style: normal;
     color: var(--ch-sb-fg-2);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -1101,17 +1053,6 @@
     left: 0;
     top: 0;
     visibility: hidden;
-  }
-  .sum .d {
-    background: var(--ch-sb-idle);
-  }
-  /* No agent: the row's hollow dot, at the summary's size. */
-  .sum .n {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    box-sizing: border-box;
-    border: 1.5px solid var(--ch-sb-fg-3);
   }
   .vsep {
     width: 1px;

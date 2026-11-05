@@ -10,7 +10,7 @@ import { render, fireEvent } from "@testing-library/svelte";
 import { flushSync, tick } from "svelte";
 import type { Api } from "@shared/electron-api";
 import type { UiNotification, UiProcessTotals, UiProjectRow } from "@shared/ui-state";
-import { createMockApi } from "../test-utils";
+import { createMockApi, makeUiWorkspaceRow } from "../test-utils";
 import { NOW, question, sampleProjects } from "./sidebar-fixture";
 
 const mockApi: Api = createMockApi();
@@ -148,7 +148,7 @@ describe("Sidebar", () => {
       expect(sum).toEqual(["4", "1", "4", "3", "5", "3"]);
       // Loading is the grey spinner, working the red one; no agent the hollow dot.
       expect(container.querySelector(".sb-foot .sum .loading .ring:not(.busy)")).not.toBeNull();
-      expect(container.querySelector(".sb-foot .sum .none .n")).not.toBeNull();
+      expect(container.querySelector(".sb-foot .sum .none .dot")).not.toBeNull();
       expect(container.querySelector(".sb-foot .sum")!.getAttribute("title")).toBe(
         "4 working · 1 loading · 4 waiting for you · 3 no agent · 5 hibernated · 3 automated"
       );
@@ -178,13 +178,78 @@ describe("Sidebar", () => {
         const button = card(container, projectId).querySelector(".sleepers")!;
         return {
           hibernated: button.querySelector(".hib")?.textContent ?? null,
-          automated: button.querySelector(".na")?.textContent ?? null,
+          automated: button.querySelector(".auto")?.textContent ?? null,
         };
       };
       expect(hibGroupOpen(container, "codehydra")).toBe(false);
       expect(counts("codehydra")).toEqual({ hibernated: "2", automated: "2" });
       expect(counts("acme-api")).toEqual({ hibernated: "1", automated: "1" });
       expect(counts("website")).toEqual({ hibernated: "1", automated: null });
+    });
+
+    it("an expanded header counts the other rows beside the button, which alone toggles the list", async () => {
+      const { container } = setup({ projects: sampleProjects() });
+      const code = card(container, "codehydra");
+      expect(code.classList.contains("closed")).toBe(false);
+      const cnt = code.querySelector(".cnt")!;
+      expect(cnt.getAttribute("title")).toBe("1 working · 1 loading · 1 waiting for you");
+      expect([...cnt.querySelectorAll(":scope > i")].map((i) => i.textContent)).toEqual([
+        "1",
+        "1",
+        "1",
+      ]);
+      expect(code.querySelector(".sleepers .hib")?.textContent).toBe("2");
+
+      await fireEvent.click(cnt);
+      expect(events()).toContainEqual({
+        kind: "toggle-project-collapsed",
+        projectId: "codehydra",
+      });
+    });
+
+    it("the button counts only ready rows, and is a bare moon while none are", () => {
+      const rows = (status: "ready" | "deleting") => [
+        makeUiWorkspaceRow("sleeping", { key: "website/sleeping", hibernated: true, status }),
+        makeUiWorkspaceRow("cron", {
+          key: "website/cron",
+          hibernated: true,
+          status,
+          wakeupScript: "cron",
+        }),
+      ];
+      const { container, rerender } = setup({
+        projects: withProject(sampleProjects(), "website", {
+          workspaces: [
+            ...rows("ready"),
+            makeUiWorkspaceRow("gone", {
+              key: "website/gone",
+              hibernated: true,
+              status: "deleting",
+            }),
+          ],
+          hibernatedView: "manual",
+        }),
+      });
+      const site = card(container, "website");
+      expect(site.querySelector(".sleepers .hib")?.textContent).toBe("1");
+      expect(site.querySelector(".sleepers .auto")?.textContent).toBe("1");
+      expect(site.querySelector(".auto-menu")?.textContent).toContain(
+        "Show automated workspaces (1)"
+      );
+
+      rerender({
+        projects: withProject(sampleProjects(), "website", {
+          workspaces: rows("deleting"),
+          hibernatedView: "manual",
+        }),
+      });
+      const button = site.querySelector(".sleepers")!;
+      expect(button.querySelector(":scope > .sb-icon")).not.toBeNull();
+      expect(button.querySelector(".auto")).toBeNull();
+      expect(button.textContent?.trim()).toBe("");
+      expect(site.querySelector(".auto-menu")?.textContent?.trim()).toBe(
+        "Show automated workspaces"
+      );
     });
 
     it("the moon asks to show the list, and to hide it again", async () => {
@@ -262,13 +327,56 @@ describe("Sidebar", () => {
   });
 
   describe("collapsed project", () => {
-    it("shows working and idle counts instead of the moon", () => {
+    it("counts its rows instead of the moon button, naming only what it shows", () => {
       const { container } = setup({ projects: sampleProjects() });
       const infra = card(container, "infra");
       expect(infra.classList.contains("closed")).toBe(true);
       expect(infra.querySelector(".sleepers")).toBeNull();
       // k8s-autoscaling has no agent: it is not counted as idle (the footer agrees).
-      expect([...infra.querySelectorAll(".cnt i")].map((i) => i.textContent)).toEqual(["1", "1"]);
+      expect([...infra.querySelectorAll(".cnt i")].map((i) => i.textContent)).toEqual([
+        "1",
+        "1",
+        "1",
+        "1",
+      ]);
+      expect(infra.querySelector(".cnt")!.getAttribute("title")).toBe(
+        "1 working · 1 waiting for you · 1 no agent · 1 hibernated"
+      );
+    });
+
+    it("counts a row mid-change as loading only, and a failed row nowhere", () => {
+      const projects = withProject(sampleProjects(), "infra", {
+        workspaces: [
+          makeUiWorkspaceRow("sleeping", { key: "infra/sleeping", hibernated: true }),
+          makeUiWorkspaceRow("gone", { key: "infra/gone", hibernated: true, status: "deleting" }),
+          makeUiWorkspaceRow("stuck", {
+            key: "infra/stuck",
+            hibernated: true,
+            status: "delete-failed",
+          }),
+          makeUiWorkspaceRow("cron", {
+            key: "infra/cron",
+            hibernated: true,
+            wakeupScript: "cron",
+          }),
+        ],
+      });
+      const { container } = setup({ projects });
+      const cnt = card(container, "infra").querySelector(".cnt")!;
+      expect(cnt.getAttribute("title")).toBe("1 loading · 1 hibernated · 1 automated");
+      expect(cnt.querySelector(".loading")?.textContent).toBe("1");
+      expect(cnt.querySelector(".auto")?.textContent).toBe("1");
+      expect(cnt.querySelectorAll("i").length).toBe(3);
+    });
+
+    it("has no counts and no tooltip with nothing to count", () => {
+      const projects = withProject(sampleProjects(), "infra", {
+        workspaces: [makeUiWorkspaceRow("stuck", { key: "infra/stuck", status: "open-failed" })],
+      });
+      const { container } = setup({ projects });
+      const cnt = card(container, "infra").querySelector(".cnt")!;
+      expect(cnt.querySelectorAll("i").length).toBe(0);
+      expect(cnt.hasAttribute("title")).toBe(false);
     });
 
     it("its header toggles it (and not while Find has the focus)", async () => {

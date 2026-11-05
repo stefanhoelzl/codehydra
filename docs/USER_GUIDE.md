@@ -149,18 +149,23 @@ has, and keeps it until you close it, also across restarts. With more than 12
 projects open, colors repeat.
 
 - Click the header bar to **collapse** the project to its header, and again to
-  expand it; each project remembers this, also after a restart. A collapsed
-  project counts its working and waiting workspaces
-  ([status](#status-indicators)). Collapsing
+  expand it; each project remembers this, also after a restart. The header
+  counts the project's workspaces like the footer
+  ([status](#status-indicators)). Short of room, the process summary makes way
+  first, then the name is cut off, the counts never; a click on a count
+  collapses or expands like the rest of the header, except on the hibernated
+  button below. Collapsing
   the project you are in moves you to the first awake workspace of the next
   expanded project, as <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>↓</kbd> would from its
   last workspace; there is none when every other project is collapsed, and
   you stay, your row still shown under the collapsed header. Shortcut
   navigation skips the workspaces of collapsed projects.
-- Its **hibernated workspaces** are folded away. A button in the header counts
-  the hibernated and the **automated** ones (with a
+- Its **hibernated workspaces** are folded away. In an expanded project, a
+  button in the header counts the hibernated and the **automated** ones (with a
   [wakeup script](#wakeup-scripts), they wake by themselves; see
-  [status](#status-indicators)). Click it to show the hibernated ones at the top of the card,
+  [status](#status-indicators)); it is a bare moon while every one of them is
+  being deleted or failed to delete, which it does not count. Click it to show
+  the hibernated ones at the top of the card,
   most recently hibernated first; a **Show automated workspaces** item, in its
   own color, shows the automated ones below them. Moving the pointer off the
   card, or clicking anything else in it, folds the list away again. The
@@ -194,19 +199,21 @@ opened, or remove for a hibernated one.
 #### Status indicators
 
 Every workspace row starts with a status glyph, and the collapsed rail shows the
-same glyphs. Where workspaces are counted — the footer, a collapsed project's
-header, a project's hibernated button — each count carries the glyph of what it
-counts, and only counts above zero are shown; hover a count to have it named.
+same glyphs. Where workspaces are counted — the footer, a project's header and
+its hibernated button — each count carries the glyph of what it
+counts, and only counts above zero are shown; hover a count to have it named. A
+workspace counts by the glyph it shows now: a hibernated one being deleted
+counts as loading, not as hibernated.
 
-| Glyph                                                   | Meaning                                                           | Counted in                |
-| ------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------- |
-| Red spinner                                             | The agent is working                                              | footer, collapsed header  |
-| Grey spinner                                            | Being created, opened or removed                                  | footer                    |
-| Green dot                                               | The agent is waiting for you                                      | footer, collapsed header  |
-| Hollow dot                                              | No agent running (also while its agent is still starting)         | footer                    |
-| Red warning                                             | Could not be opened (the reason on hover), or its deletion failed | —                         |
-| Moon                                                    | Hibernated                                                        | footer, hibernated button |
-| Moon in the automated color (alarm clock in the counts) | Hibernated with a [wakeup script](#wakeup-scripts): automated     | footer, hibernated button |
+| Glyph                                                   | Meaning                                                           | Counted in             |
+| ------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------- |
+| Red spinner                                             | The agent is working                                              | footer, project header |
+| Grey spinner                                            | Being created, opened or removed                                  | footer, project header |
+| Green dot                                               | The agent is waiting for you                                      | footer, project header |
+| Hollow dot                                              | No agent running (also while its agent is still starting)         | footer, project header |
+| Red warning                                             | Could not be opened (the reason on hover), or its deletion failed | —                      |
+| Moon                                                    | Hibernated                                                        | footer, project header |
+| Moon in the automated color (alarm clock in the counts) | Hibernated with a [wakeup script](#wakeup-scripts): automated     | footer, project header |
 
 A row also turns green while a question or dialog about that workspace is
 waiting for you — a question open in its editor, a hook trust question, a failed
