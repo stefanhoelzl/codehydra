@@ -14,9 +14,10 @@
   import type { UiNotification, UiProjectRow, UiWorkspaceRow } from "@shared/ui-state";
   import {
     automatedShown,
+    describeRowCounts,
     projectColor,
     projectFolds,
-    rowGlyph,
+    rowCounts,
     rowGroup,
     rowOn,
     rowHidden,
@@ -26,6 +27,7 @@
   } from "$lib/utils/sidebar-model.js";
   import { watchFit } from "$lib/utils/watch-fit.js";
   import SidebarIcon from "./SidebarIcon.svelte";
+  import RowCountItems from "./RowCountItems.svelte";
   import Highlighted from "./Highlighted.svelte";
   import {
     describeProcessSummary,
@@ -91,10 +93,18 @@
     !finding && folds.expanded && automated.length > 0 && !automatedShown(project)
   );
   const delimOn = $derived(([...hibernated, ...automated].some(on) || menuOn) && awake.some(on));
-  const running = $derived(project.workspaces.filter((row) => rowGlyph(row) === "busy").length);
-  // Only an idle agent, as the row's green dot and the footer count it: a
-  // workspace with no agent (yet, e.g. during startup) is not waiting for you.
-  const idle = $derived(project.workspaces.filter((row) => rowGlyph(row) === "idle").length);
+  const counts = $derived(rowCounts(project.workspaces));
+  // Split so an expanded header's hibernated button can hold the sleeping counts,
+  // which stay where a collapsed header has them. The button has its own tooltip.
+  const awakeCounts = $derived({ ...counts, hibernated: 0, automated: 0 });
+  const sleepingCounts = $derived({
+    busy: 0,
+    loading: 0,
+    idle: 0,
+    noAgent: 0,
+    hibernated: counts.hibernated,
+    automated: counts.automated,
+  });
   // With the process summary on, the header totals its rows' CPU and memory
   // (null otherwise); as just an icon with a tooltip when the numbers don't fit.
   const processTotal = $derived(
@@ -186,6 +196,7 @@
   <div
     class="proj-h"
     class:stats={processTotal !== null}
+    class:badged={processTotal !== null && totalFits}
     data-act="toggle"
     use:watchFit={(fits) => (totalFits = fits)}
     title={`${folds.expanded ? "Collapse" : "Expand"} ${project.name}`}
@@ -193,25 +204,23 @@
     <span class="mono-av">{project.name.slice(0, 1).toUpperCase()}</span>
     <span class="name" title={project.title}><Highlighted text={project.name} {query} /></span>
     {#if project.remote}<SidebarIcon name="cloud" class="remote" />{/if}
-    {#if !folds.expanded}
-      <span class="cnt" title={`${running} working · ${idle} idle`}>
-        {#if running > 0}<i><span class="ring busy"></span>{running}</i>{/if}
-        {#if idle > 0}<i><span class="dot idle"></span>{idle}</i>{/if}
-      </span>
-    {:else if hibernated.length + automated.length > 0}
-      <button
-        type="button"
-        class="sleepers"
-        data-act="hibtoggle"
-        aria-pressed={hibernatedOpen}
-        title={`${hibernatedOpen ? "Hide" : "Show"} hibernated: ${hibernated.length} · automated: ${automated.length}`}
-        >{#if hibernated.length > 0}<span class="hib"
-            ><SidebarIcon name="moon" />{hibernated.length}</span
-          >{/if}{#if automated.length > 0}<span class="na"
-            ><SidebarIcon name="alarm" />{automated.length}</span
-          >{/if}</button
-      >
-    {/if}
+    <span class="cnt" title={describeRowCounts(folds.expanded ? awakeCounts : counts) || undefined}>
+      <RowCountItems counts={awakeCounts} />
+      {#if !folds.expanded}
+        <RowCountItems counts={sleepingCounts} />
+      {:else if hibernated.length + automated.length > 0}
+        <button
+          type="button"
+          class="sleepers"
+          data-act="hibtoggle"
+          aria-pressed={hibernatedOpen}
+          title={`${hibernatedOpen ? "Hide" : "Show"} hibernated: ${counts.hibernated} · automated: ${counts.automated}`}
+        >
+          <RowCountItems counts={sleepingCounts} />
+          {#if counts.hibernated + counts.automated === 0}<SidebarIcon name="moon" size={11} />{/if}
+        </button>
+      {/if}
+    </span>
     {#if processTotal !== null}
       <span
         class="cnt proc"
@@ -252,7 +261,9 @@
               <div class="cl" class:open={menuOn}>
                 <div class="clin">
                   <button type="button" class="auto-menu" data-act="autoshow"
-                    ><SidebarIcon name="moon" />Show automated workspaces ({automated.length})</button
+                    ><SidebarIcon name="moon" />Show automated workspaces{counts.automated > 0
+                      ? ` (${counts.automated})`
+                      : ""}</button
                   >
                 </div>
               </div>
@@ -324,7 +335,7 @@
     background: var(--pc);
   }
   .name {
-    flex-shrink: 0;
+    flex-shrink: 100;
     max-width: 120px;
     font-weight: 600;
     font-size: 12.5px;
@@ -333,6 +344,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
+  }
+  /* The process badge makes way before the name does: watchFit measures the name
+     at its full width as long as the badge is there. */
+  .proj-h.badged .name {
+    flex-shrink: 0;
   }
   .proj-h :global(.sb-icon.remote) {
     color: var(--ch-sb-fg-3);
@@ -377,6 +393,20 @@
   .proj-h.stats:hover .hov {
     visibility: visible;
   }
+  /* The header has no room to spare: the trash sits over whatever is left of
+     the + (22px wide, past the chevron's 14px and 4px padding, 5px gaps) instead
+     of pushing + and the chevron out of the card. */
+  .hov {
+    position: absolute;
+    right: 50px;
+  }
+  .hov:not(:hover) {
+    background: var(--ch-sb-head-hover);
+  }
+  /* Room for it, taken from the name before any overlap. */
+  .proj-h:hover .spacer {
+    flex: 1 1 27px;
+  }
   .proj-h :global(.sb-icon.chev) {
     width: 12px;
     height: 12px;
@@ -391,7 +421,7 @@
   .sleepers {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: 5px;
     font: inherit;
     font-size: 11px;
     color: var(--ch-sb-fg-3);
@@ -399,13 +429,11 @@
     font-variant-numeric: tabular-nums;
     border: 0;
     background: transparent;
-    padding: 2px 6px;
+    /* The pill reaches past its counts, which stay where a collapsed header has them. */
+    padding: 2px 4px;
+    margin: 0 -4px;
     border-radius: 99px;
     cursor: pointer;
-  }
-  .sleepers :global(.sb-icon) {
-    width: 11px;
-    height: 11px;
   }
   .sleepers:hover {
     color: var(--ch-sb-fg);
@@ -416,24 +444,15 @@
     background: var(--ch-sb-s2);
     box-shadow: inset 0 0 0 1px var(--ch-sb-line-2);
   }
-  .sleepers .hib,
-  .sleepers .na {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-  }
-  .sleepers .na {
-    color: var(--ch-sb-auto);
-  }
   .cnt {
     display: inline-flex;
     align-items: center;
-    gap: 9px;
+    gap: 5px;
     font-size: 11px;
     color: var(--ch-sb-fg-3);
     font-variant-numeric: tabular-nums;
     flex: none;
-    padding: 0 4px;
+    padding: 0 2px;
   }
   /* The worst-case width (see watchFit): digits changing can't flip it. */
   .cnt.proc {
@@ -451,34 +470,6 @@
     place-items: center;
     flex: none;
     color: var(--ch-sb-accent);
-  }
-  .cnt i {
-    font-style: normal;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .cnt .ring {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    border: 1.5px solid var(--ch-sb-busy-track);
-    border-top-color: var(--ch-sb-busy);
-    animation: spin 0.9s linear infinite;
-    display: block;
-    box-sizing: border-box;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  .cnt .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    display: block;
-    background: var(--ch-sb-idle);
   }
 
   .hib-group {

@@ -58,6 +58,50 @@ export function rowGlyph(row: UiWorkspaceRow): RowGlyph {
 }
 
 /**
+ * How many rows show each status, by the glyph each shows now. A row counts at
+ * most once: one mid-change is loading even if hibernated, a failed one nowhere.
+ */
+export interface RowCounts {
+  readonly busy: number;
+  readonly loading: number;
+  readonly idle: number;
+  readonly noAgent: number;
+  readonly hibernated: number;
+  readonly automated: number;
+}
+
+export function rowCounts(rows: readonly UiWorkspaceRow[]): RowCounts {
+  const showing = (glyph: RowGlyph): readonly UiWorkspaceRow[] =>
+    rows.filter((row) => rowGlyph(row) === glyph);
+  const sleeping = showing("hibernated");
+  const automated = sleeping.filter(isAutomated).length;
+  return {
+    busy: showing("busy").length,
+    loading: showing("pending").length,
+    idle: showing("idle").length,
+    noAgent: showing("none").length,
+    hibernated: sleeping.length - automated,
+    automated,
+  };
+}
+
+/** Names the counts that are shown, the non-zero ones; empty when there are none. */
+export function describeRowCounts(counts: RowCounts): string {
+  const named: readonly (readonly [number, string])[] = [
+    [counts.busy, "working"],
+    [counts.loading, "loading"],
+    [counts.idle, "waiting for you"],
+    [counts.noAgent, "no agent"],
+    [counts.hibernated, "hibernated"],
+    [counts.automated, "automated"],
+  ];
+  return named
+    .filter(([count]) => count !== 0)
+    .map(([count, label]) => `${count} ${label}`)
+    .join(" · ");
+}
+
+/**
  * The status part of a row's accessible name ("alpha in web - 1 agent idle").
  * `hibernated` is the hibernated wording, which carries the row's age.
  */
