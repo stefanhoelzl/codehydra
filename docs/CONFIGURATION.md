@@ -118,7 +118,7 @@ Default `true`, computed `false` in dev/unpackaged · `src/main.ts`. Enable tele
 
 #### `log.level`
 
-Default `warn`, computed `debug` in dev · `logging-module.ts`. Level spec `<level>` or `<level>:<filter>` (levels `silly|debug|info|warn|error`; e.g. `debug:git,process`).
+Default `notice`, computed `debug` in dev · `logging-module.ts`. Level spec `<level>` or `<level>:<filter>` (levels `silly|debug|info|notice|warn|error`; e.g. `debug:git,process`).
 
 #### `log.output`
 

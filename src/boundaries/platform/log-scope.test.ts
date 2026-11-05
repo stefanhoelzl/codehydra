@@ -100,6 +100,7 @@ describe("ScopedLogger", () => {
       silly: record,
       debug: record,
       info: record,
+      notice: record,
       warn: record,
       error: record,
       scoped: (hint) => new ScopedLogger(logger, store, hint),

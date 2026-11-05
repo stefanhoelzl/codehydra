@@ -84,6 +84,9 @@ function createMockLogger(): Logger & {
     info(message: string, context?: unknown) {
       calls.push({ level: "info", message, context });
     },
+    notice(message: string, context?: unknown) {
+      calls.push({ level: "notice", message, context });
+    },
     warn(message: string, context?: unknown) {
       calls.push({ level: "warn", message, context });
     },
@@ -933,6 +936,7 @@ describe("Dispatcher", () => {
         silly: record,
         debug: record,
         info: record,
+        notice: record,
         warn: record,
         error: record,
         scoped: (hint) => new ScopedLogger(logger, store, hint),

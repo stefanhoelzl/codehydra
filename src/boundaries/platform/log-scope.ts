@@ -220,6 +220,10 @@ export class ScopedLogger implements Logger {
     this.write(context, (c) => this.inner.info(message, c));
   }
 
+  notice(message: string, context?: LogContext): void {
+    this.write(context, (c) => this.inner.notice(message, c));
+  }
+
   warn(message: string, context?: LogContext): void {
     this.write(context, (c) => this.inner.warn(message, c));
   }

@@ -32,7 +32,15 @@ import { AsyncLogScopeStore, formatContext, formatLogScope, ScopedLogger } from 
 /**
  * Type for electron-log scope (log functions).
  */
-type ElectronLogScope = ReturnType<typeof log.scope>;
+type ElectronLogScope = ReturnType<typeof log.scope> & {
+  /** Added by `log.addLevel`; electron-log's types only know its built-in levels. */
+  notice: (...params: unknown[]) => void;
+};
+
+/** A scope for `name`. It has `notice` because the `ElectronLog` constructor added that level. */
+function electronLogScope(name: LoggerName): ElectronLogScope {
+  return log.scope(name) as ElectronLogScope;
+}
 
 /**
  * Parse and validate a log level string.
@@ -188,6 +196,10 @@ class JsonLogLogger implements Logger {
     this.scope.info(message, ...this.args(context));
   }
 
+  notice(message: string, context?: LogContext): void {
+    this.scope.notice(message, ...this.args(context));
+  }
+
   warn(message: string, context?: LogContext): void {
     this.scope.warn(message, ...this.args(context));
   }
@@ -245,6 +257,10 @@ class ElectronLogLogger implements Logger {
 
   info(message: string, context?: LogContext): void {
     this.scope.info(this.text(message, context));
+  }
+
+  notice(message: string, context?: LogContext): void {
+    this.scope.notice(this.text(message, context));
   }
 
   warn(message: string, context?: LogContext): void {
@@ -311,6 +327,10 @@ class FilteredLogger implements Logger {
 
   info(message: string, context?: LogContext): void {
     if (this.enabled) this.inner.info(message, context);
+  }
+
+  notice(message: string, context?: LogContext): void {
+    if (this.enabled) this.inner.notice(message, context);
   }
 
   warn(message: string, context?: LogContext): void {
@@ -406,6 +426,10 @@ class QueuedLogger implements Logger {
     this.write("info", message, context);
   }
 
+  notice(message: string, context?: LogContext): void {
+    this.write("notice", message, context);
+  }
+
   warn(message: string, context?: LogContext): void {
     this.write("warn", message, context);
   }
@@ -442,7 +466,7 @@ class QueuedLogger implements Logger {
 export class ElectronLog implements Logging {
   private readonly loggers = new Map<LoggerName, QueuedLogger>();
   private configured = false;
-  private logLevel: LogLevel = "warn";
+  private logLevel: LogLevel = "notice";
   private logFormat: LogFormat = "text";
   private allowedLoggers: Set<LoggerName> | undefined;
   private readonly logPath: string;
@@ -459,6 +483,12 @@ export class ElectronLog implements Logging {
   };
 
   constructor(pathProvider: PathProvider) {
+    // Just below warn (electron-log lists levels most severe first). `log` is a
+    // singleton that outlives this object, so add the level only once.
+    if (!log.levels.includes("notice")) {
+      log.addLevel("notice", log.levels.indexOf("warn") + 1);
+    }
+
     // Transports start silent — configure() enables them
     log.transports.file.level = false;
     log.transports.console.level = false;
@@ -485,8 +515,10 @@ export class ElectronLog implements Logging {
     this.allowedLoggers = options.allowedLoggers;
 
     // Enable transports with the configured level
-    log.transports.file.level = options.logFile ? this.logLevel : false;
-    log.transports.console.level = options.logConsole ? this.logLevel : false;
+    // The cast: electron-log's types only know its built-in levels.
+    const level = this.logLevel as typeof log.transports.file.level;
+    log.transports.file.level = options.logFile ? level : false;
+    log.transports.console.level = options.logConsole ? level : false;
 
     // Set transport format based on log format
     const format = this.logFormat === "json" ? createJsonFormatFn() : TEXT_FORMAT;
@@ -495,7 +527,7 @@ export class ElectronLog implements Logging {
 
     // Activate all existing queued loggers
     for (const [name, queued] of this.loggers) {
-      const scope = log.scope(name);
+      const scope = electronLogScope(name);
       const filtered = new FilteredLogger(
         this.createInner(scope),
         this.allowedLoggers,
@@ -523,7 +555,7 @@ export class ElectronLog implements Logging {
 
     // If already configured, activate immediately
     if (this.configured) {
-      const scope = log.scope(name);
+      const scope = electronLogScope(name);
       const filtered = new FilteredLogger(
         this.createInner(scope),
         this.allowedLoggers,

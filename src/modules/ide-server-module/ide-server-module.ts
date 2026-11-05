@@ -690,7 +690,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
    */
   function logHolders(port: number, holders: readonly ListeningProcess[]): void {
     for (const { pid, name, origin } of holders) {
-      logger.warn("Port holder", { port, pid, name, ...origin });
+      logger.notice("Port holder", { port, pid, name, ...origin });
     }
   }
 
@@ -753,10 +753,10 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     try {
       for (;;) {
         const action = await nextAction(handle);
-        // Warn level, like everything here: it is the default, and only what is
-        // logged at it reaches a crash report. Whether the port is free by now
-        // tells a holder that went away by itself from one still running.
-        logger.warn("Port conflict answered", {
+        // Notice level: the default, and only what is logged at it or above
+        // reaches a crash report. Whether the port is free by now tells a holder
+        // that went away by itself from one still running.
+        logger.notice("Port conflict answered", {
           port,
           action,
           openMs: Date.now() - openedAt,

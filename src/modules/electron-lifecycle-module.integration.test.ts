@@ -9,8 +9,11 @@ import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { createIdempotencyModule } from "../intents/lib/idempotency-module";
 import { describe, it, expect, vi } from "vitest";
 import type { SupportedPlatform } from "../boundaries/platform/platform-info";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
-import { SILENT_LOGGER } from "../boundaries/platform/logging";
+import {
+  createBehavioralLogger,
+  createMockLogger,
+} from "../boundaries/platform/logging.test-utils";
+import { SILENT_LOGGER, type Logger } from "../boundaries/platform/logging";
 
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
@@ -212,7 +215,7 @@ describe("ElectronLifecycleModule Integration", () => {
     type Listener = (event: { preventDefault(): void }) => void;
 
     /** Wire the module to a real shutdown whose stop hook finishes only when told to. */
-    function setup(platform: SupportedPlatform = "linux") {
+    function setup(platform: SupportedPlatform = "linux", logger: Logger = SILENT_LOGGER) {
       const mockApp = createMockApp();
       const listeners = new Map<string, Listener>();
       mockApp.on = vi.fn((event: string, listener: Listener) => {
@@ -230,7 +233,7 @@ describe("ElectronLifecycleModule Integration", () => {
         hooks: { [APP_SHUTDOWN_OPERATION_ID]: { stop: { handler: () => stopFinished } } },
       });
       dispatcher.registerModule(
-        createElectronLifecycleModule(createDeps({ app: mockApp, dispatcher, platform }))
+        createElectronLifecycleModule(createDeps({ app: mockApp, dispatcher, platform, logger }))
       );
 
       const emit = (name: string): { preventDefault: ReturnType<typeof vi.fn> } => {
@@ -242,6 +245,20 @@ describe("ElectronLifecycleModule Integration", () => {
       };
       return { mockApp, quit: () => emit("before-quit"), emit, finishStop };
     }
+
+    it("marks a clean exit at notice level, not as a warning", () => {
+      const logger = createBehavioralLogger();
+      const { quit, emit } = setup("linux", logger);
+
+      quit();
+      emit("window-all-closed");
+
+      expect(logger.getMessagesByLevel("notice").map((m) => m.message)).toEqual([
+        "Quit requested",
+        "Last window closed",
+      ]);
+      expect(logger.getMessagesByLevel("warn")).toEqual([]);
+    });
 
     it("shuts down and quits when the last window closes", async () => {
       const { mockApp, emit, finishStop } = setup("win32");

@@ -20,6 +20,7 @@ describe("ElectronLog log-level parsing", () => {
     it("parses valid log levels", async () => {
       expect(parseLogLevel("debug")).toBe("debug");
       expect(parseLogLevel("info")).toBe("info");
+      expect(parseLogLevel("notice")).toBe("notice");
       expect(parseLogLevel("warn")).toBe("warn");
       expect(parseLogLevel("error")).toBe("error");
       expect(parseLogLevel("silly")).toBe("silly");

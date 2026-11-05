@@ -212,6 +212,55 @@ describe("ElectronLog boundary tests", () => {
     return readFile(join(logsDir, files[0] as string), "utf-8");
   }
 
+  describe("notice level", () => {
+    /** Write one line per level around notice at `logLevel`, and return the file. */
+    async function writeAround(
+      logLevel: LoggingConfigureOptions["logLevel"],
+      logFormat: LoggingConfigureOptions["logFormat"] = "text"
+    ): Promise<string> {
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
+      service.configure({ ...DEFAULT_OPTIONS, logLevel, logFormat });
+      const logger = service.createLogger("app");
+      logger.info("an info line");
+      logger.notice("a notice line");
+      logger.warn("a warn line");
+      await waitForWrite();
+      return readLogFile();
+    }
+
+    it("is written at its own level, and info is not", async () => {
+      const logContent = await writeAround("notice");
+
+      expect(logContent).toMatch(/\[notice\]\s+\(app\) a notice line/);
+      expect(logContent).toContain("a warn line");
+      expect(logContent).not.toContain("an info line");
+    });
+
+    it("is not written at warn level", async () => {
+      const logContent = await writeAround("warn");
+
+      expect(logContent).toContain("a warn line");
+      expect(logContent).not.toContain("a notice line");
+    });
+
+    it("is written at info level", async () => {
+      const logContent = await writeAround("info");
+
+      expect(logContent).toContain("an info line");
+      expect(logContent).toContain("a notice line");
+    });
+
+    it("carries its level in JSON format", async () => {
+      const logContent = await writeAround("notice", "json");
+
+      const levels = logContent
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as { level: string }).level);
+      expect(levels).toEqual(["notice", "warn"]);
+    });
+  });
+
   describe("logger filtering", () => {
     it("writes from every logger when allowedLoggers is undefined", async () => {
       const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
