@@ -46,7 +46,8 @@ uvx --refresh codehydra
 Or download it from
 [GitHub Releases](https://github.com/stefanhoelzl/codehydra/releases).
 
-On first launch (no `config.json` yet), CodeHydra asks which coding agent to
+On first launch, unless an agent is already set (in `config.json`, as
+`--agent`, or as `CH_AGENT`), CodeHydra asks which coding agent to
 use — **Claude Code** or **OpenCode** — then downloads what it needs: the
 embedded editor, and the agent unless it is already installed (see
 [Which agent binary runs](#which-agent-binary-runs)). Then open a project

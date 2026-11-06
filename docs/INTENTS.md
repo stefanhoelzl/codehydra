@@ -619,7 +619,7 @@ The `app-start` operation runs these hook points in sequence:
 - **init**: Initialization (logging, shell, scripts). ElectronLifecycleModule provides `"app-ready"` capability after `app.whenReady()`; handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`.
 - **show-ui**: Show starting screen, capture waitForRetry callback
 - **migrations**: Bring data on disk in line with the configuration before anything reads it (state.json is loaded by now; projects are not). The workspaces-root module runs a requested move of the workspaces root (`paths.workspaces-pending`) here, on the starting screen. A handler may quit the app instead of returning (it dispatches `app:shutdown` and never resolves).
-- **register-agents** / **agent-selection** / **save-agent**: First run only (`Config.wasConfigured()` is false). Collect the selectable agents, show the picker, persist the choice. Wrapped in the same retry loop `app:setup` uses.
+- **register-agents** / **agent-selection** / **save-agent**: Only while `agent` is set nowhere (`Config.getSource("agent")` is `default`: not in config.json, env or CLI). Collect the selectable agents, show the picker, persist the choice. Wrapped in the same retry loop `app:setup` uses.
 - **check-deps**: Binary + extension checks (collect, isolated contexts). Dispatches `app:setup` if needed.
 - **start**: Start servers with capability-based ordering (`apiPort` → `ideServerPort` → downstream handlers).
 

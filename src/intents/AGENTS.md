@@ -39,7 +39,7 @@ A per-key rule with `wait` holds a duplicate until the key is released instead o
 2. `init`: logging, shell, scripts. `electron-lifecycle-module` provides the `"app-ready"` capability after `whenReady()`; handlers that need Electron declare `requires: { "app-ready": ANY_VALUE }`.
 3. `show-ui`: starting screen.
 4. `migrations`: bring on-disk data in line before anything reads it (e.g. a requested workspaces-root move). May block on the starting screen or quit.
-5. `register-agents` / `agent-selection` / `save-agent`: first run only (no `config.json` yet), the agent picker. Must precede `check-deps`, which is agent-specific.
+5. `register-agents` / `agent-selection` / `save-agent`: only while `agent` is set nowhere (not in `config.json`, env or CLI), the agent picker. Must precede `check-deps`, which is agent-specific.
 6. `check-deps`: binary and extension checks. When they report setup is needed, `app:setup` is dispatched; on failure `await-retry` blocks until the user retries, then the checks rerun.
 7. `start`: servers, wiring.
 

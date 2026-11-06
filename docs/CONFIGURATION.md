@@ -42,7 +42,7 @@ Owner = the file that calls `register()`.
 
 #### `agent`
 
-Default `claude` · `src/main.ts`. Agent selection: `claude` | `opencode`. Restart. First-run onboarding is gated on whether `config.json` existed (`Config.wasConfigured()`), not on this value.
+Default `claude` · `src/main.ts`. Agent selection: `claude` | `opencode`. Restart. Agent-selection onboarding runs while this key is set nowhere (source `default`: not in `config.json`, `CH_AGENT` or `--agent`), not on its value.
 
 #### `sidebar.width`
 
