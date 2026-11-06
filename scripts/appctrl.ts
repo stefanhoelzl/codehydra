@@ -311,6 +311,49 @@ async function killLeftovers(captured: readonly ProcessEntry[]): Promise<Process
   return leftovers;
 }
 
+/** Ticks (100 ns) between 0001-01-01, where .NET counts from, and the Unix epoch. */
+const DOTNET_EPOCH_TICKS = 621_355_968_000_000_000n;
+
+/** When the process started (epoch ms), or null when the table had no start time. */
+function startedAtMs(entry: ProcessEntry): number | null {
+  if (entry.started === "") return null;
+  if (process.platform === "win32") {
+    return Number((BigInt(entry.started) - DOTNET_EPOCH_TICKS) / 10_000n);
+  }
+  const ms = Date.parse(entry.started);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * Processes that may be holding a quit app's stdio pipes open: started since
+ * `since` (epoch ms), and orphaned — their parent is gone (Windows keeps a dead
+ * parent's pid, so an absent or implausible parent) or they were handed to init.
+ *
+ * Every process the app starts inherits those pipes on Windows, and its
+ * children do too, so one that outlives the app keeps them open. The app's own
+ * tree, snapshotted before the quit, cannot name it: an orphan is no longer
+ * linked to it, and a process started after the snapshot was never in it. This
+ * is a best-effort guess for the error message only — never a kill list, since
+ * on a developer's machine it can match unrelated processes.
+ */
+function orphansSince(since: number): ProcessEntry[] {
+  const table = processTable();
+  const byPid = new Map(table.map((entry) => [entry.pid, entry]));
+  return table.filter((entry) => {
+    const started = startedAtMs(entry);
+    if (started === null || started < since) return false;
+    const parent = byPid.get(entry.ppid);
+    return parent === undefined || !plausibleParent(parent, entry) || entry.ppid === 1;
+  });
+}
+
+/**
+ * How long a quit app's stdio pipes may stay open after it exited. They close
+ * once every process holding them has gone, which normally follows the exit
+ * within milliseconds.
+ */
+const PIPE_CLOSE_GRACE_MS = 2_000;
+
 /**
  * Resolved interaction target. The app has one page (the UI); workspaces are
  * VSCodium iframes inside it, addressed as Playwright Frames.
@@ -515,6 +558,8 @@ export async function expandSidebarOn(ui: Page): Promise<void> {
  */
 export function createDriver() {
   let electronApp: ElectronApplication | null = null;
+  /** When the running app was launched (epoch ms), less the table's one-second start resolution. */
+  let launchedAt = 0;
   const consoleBuffer: ConsoleEntry[] = [];
   let consoleSink: ((entry: ConsoleEntry) => void) | undefined;
 
@@ -580,6 +625,7 @@ export function createDriver() {
     }
 
     try {
+      launchedAt = Date.now() - 1_000;
       electronApp = await _electron.launch({
         executablePath,
         args: [...(appPath !== null ? [appPath] : []), ...appArgs],
@@ -612,10 +658,14 @@ export function createDriver() {
    *
    * `killLeftovers` is the backstop for whatever the app does not take down.
    * Needing it means the app's shutdown is broken, so once everything is torn
-   * down this throws, naming what was left.
+   * down this throws, naming what was left. It throws too when the app's stdio
+   * pipes stay open after it exited: a process outside the tree it was
+   * snapshotted with (an orphan, or one started after the snapshot) outlived it.
    */
   async function stop(): Promise<void> {
     let leftovers: ProcessEntry[] = [];
+    /** Set when a process outside the app's tree kept its pipes open: who that may be. */
+    let pipeHolders: string | null = null;
     if (electronApp) {
       const app = electronApp;
       electronApp = null;
@@ -638,6 +688,15 @@ export function createDriver() {
       const tree = processTree(appPid);
 
       const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+      // "close" follows "exit" once every stdio pipe is at EOF, i.e. once no
+      // process holds one any more. Playwright's worker teardown waits for it.
+      let pipesClosed = false;
+      const closed = new Promise<void>((resolve) =>
+        proc.once("close", () => {
+          pipesClosed = true;
+          resolve();
+        })
+      );
 
       // Fire-and-forget: the main process exits mid-call, so this evaluate never
       // settles — neither resolving nor rejecting. Awaiting it hangs forever.
@@ -662,16 +721,39 @@ export function createDriver() {
         new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
       ]);
 
-      // Even reaped, the pipes can linger; nothing reads them after this point.
-      proc.stdout?.destroy();
-      proc.stderr?.destroy();
-      proc.stdin?.destroy();
+      await Promise.race([
+        closed,
+        new Promise<void>((resolve) => setTimeout(resolve, PIPE_CLOSE_GRACE_MS)),
+      ]);
+      if (!pipesClosed) {
+        // Something outside the snapshotted tree still holds the pipes.
+        // Unnamed by killLeftovers, it would otherwise surface only as
+        // Playwright's worker teardown hanging until its timeout.
+        const suspects = orphansSince(launchedAt);
+        const names = suspects.map((entry) => `${entry.name} (${entry.pid})`).join(", ");
+        pipeHolders = names === "" ? "not identified" : `possibly ${names}`;
+        process.stderr.write(`appctrl: the app's stdio pipes are still open: ${pipeHolders}\n`);
+      }
+
+      // Every pipe, not only the standard three: Playwright launches Electron
+      // with five, and the child's "close" — what its worker teardown waits
+      // for — needs each one closed. Nothing reads them after this point.
+      for (const stream of proc.stdio) stream?.destroy();
+      // "close" is emitted a tick or so after the last pipe goes; until then
+      // Playwright still counts the process as running, and closing it then
+      // waits on its DevTools socket — which the outliving process may hold.
+      await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
     }
     consoleBuffer.length = 0;
 
     if (leftovers.length > 0) {
       const names = leftovers.map((entry) => `${entry.name} (${entry.pid})`).join(", ");
       throw new Error(`the app left processes running after it quit: ${names}`);
+    }
+    if (pipeHolders !== null) {
+      throw new Error(
+        `a process outlived the app and still holds its stdio pipes (${pipeHolders})`
+      );
     }
   }
 
@@ -1358,7 +1440,8 @@ const COMMANDS: Record<string, CliCommand> = {
     usage: "stop [--snapshot <name>]",
     summary:
       "Quit the app through its own shutdown path. The daemon exits with it. Fails if the app " +
-      "left processes running (they are killed). A clean stop saves a snapshot: --snapshot\n" +
+      "left processes running (they are killed), or a process outlived it holding its output\n" +
+      "pipes (named, not killed). A clean stop saves a snapshot: --snapshot\n" +
       "names it (replacing one of that name), else it is named by its time. Prints its name.",
     options: { snapshot: { type: "string" } },
     run: async ({ values }) => {
