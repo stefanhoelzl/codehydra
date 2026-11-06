@@ -3,7 +3,7 @@
  * the row (`12% · 874M · 7`) and a spelled-out tooltip. Pure.
  */
 
-import type { UiProcessSummary, UiProcessTotals } from "@shared/ui-state";
+import type { UiProcessNode, UiProcessSummary, UiProcessTotals } from "@shared/ui-state";
 
 const KIB = 1024;
 const MIB = KIB * 1024;
@@ -52,18 +52,30 @@ export function describeProcessSummary(summary: UiProcessSummary): string {
   return `${cpu} · ${formatMemory(summary.rssBytes)} memory · ${count}`;
 }
 
-/** The footer bar's tooltip before the first scan. */
+/** The process bar's tooltip before the first scan. */
 export const PROCESS_TOTALS_PENDING = "All of CodeHydra: not measured yet";
 
 /**
- * The footer badge's tooltip: CodeHydra's whole footprint, then its split into
- * the workspaces' processes and CodeHydra's own.
+ * The process bar's tooltip: CodeHydra's whole footprint, then its split into
+ * the workspaces' processes, the code server's and the rest of CodeHydra's.
  */
 export function describeProcessTotals(totals: UiProcessTotals): string {
   return [
     `All of CodeHydra: ${describeProcessSummary(totals.all)}`,
     `Workspaces: ${describeProcessSummary(totals.workspaces)}`,
+    `Code server: ${describeProcessSummary(totals.codeServer)}`,
     `CodeHydra itself: ${describeProcessSummary(totals.codehydra)}`,
+  ].join("\n");
+}
+
+/** A process row's tooltip in the tree: its command line, pid, directory and ports. */
+export function describeProcessNode(node: UiProcessNode): string {
+  return [
+    node.commandLine ?? node.name,
+    `pid ${node.pid}`,
+    ...(node.cwd === null ? [] : [node.cwd]),
+    ...(node.ports.length === 0 ? [] : [`ports ${node.ports.join(", ")}`]),
+    describeProcessSummary(node.subtree),
   ].join("\n");
 }
 

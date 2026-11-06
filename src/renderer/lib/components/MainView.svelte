@@ -175,7 +175,10 @@
     sidebarMode={ui.sidebar.mode}
     find={ui.sidebar.find}
     processSummary={ui.sidebar.processSummary}
+    processLevel={ui.sidebar.processLevel}
+    processTreeHeight={ui.sidebar.processTreeHeight}
     processTotals={ui.sidebar.processTotals}
+    processTree={ui.sidebar.processTree}
     notifications={ui.notifications}
     {mode}
     shortcutModeActive={mode === "shortcut"}
@@ -192,7 +195,7 @@
     hibernatedView={hibernatedViewForT}
     activeCollapsed={activeCollapsedForC}
     sidebarDocked={ui.sidebar.mode === "docked"}
-    processSummary={ui.sidebar.processSummary}
+    processSummary={ui.sidebar.processSummary !== "off"}
   />
 
   <!-- Creation panel ("modeless"): the backend creation module's always-alive

@@ -193,7 +193,9 @@ describe("MainView component", () => {
             width: 320,
             mode: "docked",
             find: null,
-            processSummary: false,
+            processSummary: "off",
+            processLevel: "total",
+            processTreeHeight: 0.25,
           },
         })
       );

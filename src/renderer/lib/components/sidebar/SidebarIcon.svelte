@@ -27,7 +27,10 @@
     | "pulse"
     | "cpu"
     | "memory"
-    | "processes";
+    | "processes"
+    | "level-total"
+    | "level-breakdown"
+    | "level-tree";
 </script>
 
 <script lang="ts">
@@ -110,6 +113,15 @@
     />
   {:else if name === "processes"}
     <path d="M8 2.5l5.5 3-5.5 3-5.5-3z" /><path d="M2.5 8.5l5.5 3 5.5-3M2.5 11l5.5 3 5.5-3" />
+  {:else if name === "level-total"}
+    <!-- One bar: the single total row. -->
+    <rect x="2" y="5.5" width="12" height="5" rx="1.5" />
+  {:else if name === "level-breakdown"}
+    <!-- Three bars of different lengths over a sum line: the breakdown rows. -->
+    <path d="M2.5 3.5h7M2.5 6.5h11M2.5 9.5h5" /><path d="M2.5 13h11" />
+  {:else if name === "level-tree"}
+    <!-- A root with nested children: the process tree. -->
+    <path d="M3 3h4M4.5 3v9.5h3M4.5 8h3M9.5 8h4M9.5 12.5h4" />
   {/if}
 </svg>
 

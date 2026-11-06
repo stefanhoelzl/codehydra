@@ -4,8 +4,8 @@
  * is hibernated or removed, stop what is still running in it.
  *
  * What runs in it is the process monitor's answer (`teardownProcesses`, the
- * same attribution as the Processes view): every process the workspace
- * started — by `_CH_WORKSPACE`, working directory or ancestry, wherever it runs
+ * same attribution as the sidebar's process tree): every process the workspace
+ * started — by `_CH_WORKSPACE`, working directory, its extension host's pid or ancestry, wherever it runs
  * now — and, for a deletion, also every process whose working directory is in
  * the worktree, whoever started it: the directory is going away, and on
  * Windows such a process keeps it from being removed. Only termination differs

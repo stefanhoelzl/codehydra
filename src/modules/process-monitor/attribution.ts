@@ -9,14 +9,20 @@
  *    the worktree, or a build an agent starts in /tmp, stays with the workspace
  *    that started it, even when that is inside another worktree.
  * 2. Its working directory is inside a worktree (the deepest one wins).
+ * A pinned process (a workspace's extension host, which names its pid when its
+ * sidekick connects: it has neither) belongs to the workspace it is pinned to,
+ * before either rule.
  * Otherwise it inherits its parent's workspace: `pnpm dev` in a workspace
- * terminal owns the `vite` it starts, even after `vite` `cd`s out.
+ * terminal owns the `vite` it starts, even after `vite` `cd`s out; a language
+ * server inherits its extension host's.
  *
  * Inheritance stops at CodeHydra itself. The app is the ancestor of every
  * workspace's IDE server, terminals and agents, so a process that only reaches
  * a workspace through the app — the IDE server, its helpers — belongs to none.
  * Those count only in CodeHydra's own totals (codeHydraTotals: the app's
- * process tree and every workspace's processes, the sidebar footer).
+ * process tree and every workspace's processes, the sidebar's process bar),
+ * split into the code server (the IDE server's tree) and the rest
+ * (codeHydraGroups).
  *
  * The same attribution decides what hibernating or deleting a workspace stops
  * (teardownProcesses).
@@ -68,7 +74,8 @@ export function isPlausibleParent(
 export function attributeProcesses(
   processes: readonly ProcessSnapshotEntry[],
   workspaces: readonly MonitoredWorkspace[],
-  appPid: number
+  appPid: number,
+  pinned: ReadonlyMap<number, WorkspaceRef> = new Map()
 ): Map<number, WorkspaceRef> {
   // Deepest first, so a worktree nested in another wins for its own tree.
   const roots = workspaces
@@ -78,6 +85,8 @@ export function attributeProcesses(
   const byPid = new Map(processes.map((entry) => [entry.pid, entry]));
 
   const ownWorkspace = (entry: ProcessSnapshotEntry): WorkspaceRef | null => {
+    const pin = pinned.get(entry.pid);
+    if (pin !== undefined && byRef.has(String(pin))) return pin;
     // A ref this app does not monitor (another CodeHydra instance's, a removed
     // workspace's) says nothing; the working directory decides.
     const named = entry.envValue === null ? undefined : byRef.get(entry.envValue);
@@ -152,10 +161,18 @@ export function appTreePids(
   processes: readonly ProcessSnapshotEntry[],
   appPid: number
 ): Set<number> {
+  return subtreePids(processes, appPid, childrenByPid(processes));
+}
+
+/** `rootPid` and every process descending from it; empty when it is not in the snapshot. */
+function subtreePids(
+  processes: readonly ProcessSnapshotEntry[],
+  rootPid: number,
+  children: ReadonlyMap<number, readonly number[]>
+): Set<number> {
   const tree = new Set<number>();
-  if (!processes.some((entry) => entry.pid === appPid)) return tree;
-  const children = childrenByPid(processes);
-  const pending = [appPid];
+  if (!processes.some((entry) => entry.pid === rootPid)) return tree;
+  const pending = [rootPid];
   while (pending.length > 0) {
     const pid = pending.pop() as number;
     if (tree.has(pid)) continue;
@@ -223,41 +240,101 @@ export function teardownProcesses(
     .map((entry) => ({ pid: entry.pid, name: entry.name }));
 }
 
-/** Every process CodeHydra accounts for, totalled (the sidebar footer). */
+/** The two parts of CodeHydra's own processes, those that belong to no workspace. */
+export type CodeHydraGroup = "codeServer" | "codehydra";
+
+/**
+ * pid → its part of CodeHydra, for every process in the app's tree that
+ * belongs to no workspace: `codeServer` for the IDE server and what descends
+ * from it, `codehydra` for the rest (the app, its Electron helpers).
+ */
+export function codeHydraGroups(
+  processes: readonly ProcessSnapshotEntry[],
+  owners: ReadonlyMap<number, WorkspaceRef>,
+  appPid: number,
+  ideServerPid: number | null
+): Map<number, CodeHydraGroup> {
+  const children = childrenByPid(processes);
+  const app = subtreePids(processes, appPid, children);
+  const ide =
+    ideServerPid === null ? new Set<number>() : subtreePids(processes, ideServerPid, children);
+  const groups = new Map<number, CodeHydraGroup>();
+  for (const pid of app) {
+    if (!owners.has(pid)) groups.set(pid, ide.has(pid) ? "codeServer" : "codehydra");
+  }
+  return groups;
+}
+
+/** Every process CodeHydra accounts for, totalled (the sidebar's process bar). */
 export interface CodeHydraTotals {
-  /** `workspaces` and `codehydra` together. */
+  /** `workspaces`, `codeServer` and `codehydra` together. */
   readonly all: ProcessTotals;
   /** Every process attributed to a workspace, wherever it runs. */
   readonly workspaces: ProcessTotals;
-  /** The rest of the app's process tree: the app, its helpers, the IDE server. */
+  /** The IDE server and what descends from it, less what belongs to a workspace. */
+  readonly codeServer: ProcessTotals;
+  /** The rest of the app's process tree: the app and its helpers. */
   readonly codehydra: ProcessTotals;
 }
 
 /**
- * The footer's totals from one scan: the app's process tree and every process
- * attributed to a workspace, each counted once.
+ * The process bar's totals from one scan: the app's process tree and every
+ * process attributed to a workspace, each counted once.
  */
 export function codeHydraTotals(
   processes: readonly ProcessSnapshotEntry[],
   owners: ReadonlyMap<number, WorkspaceRef>,
-  cpu: ReadonlyMap<number, number> | null,
-  appPid: number
+  groups: ReadonlyMap<number, CodeHydraGroup>,
+  cpu: ReadonlyMap<number, number> | null
 ): CodeHydraTotals {
-  const tree = appTreePids(processes, appPid);
   let workspaces = EMPTY_TOTALS;
+  let codeServer = EMPTY_TOTALS;
   let codehydra = EMPTY_TOTALS;
   for (const entry of processes) {
     const inWorkspace = owners.has(entry.pid);
-    if (!inWorkspace && !tree.has(entry.pid)) continue;
+    const group = groups.get(entry.pid);
+    if (!inWorkspace && group === undefined) continue;
     const own: ProcessTotals = {
       cpuPercent: cpu === null ? null : (cpu.get(entry.pid) ?? null),
       rssBytes: entry.rssBytes,
       count: 1,
     };
     if (inWorkspace) workspaces = addTotals(workspaces, own);
+    else if (group === "codeServer") codeServer = addTotals(codeServer, own);
     else codehydra = addTotals(codehydra, own);
   }
-  return { all: addTotals(workspaces, codehydra), workspaces, codehydra };
+  return {
+    all: addTotals(addTotals(workspaces, codeServer), codehydra),
+    workspaces,
+    codeServer,
+    codehydra,
+  };
+}
+
+/**
+ * The processes to stop when one process is killed from the sidebar: `pid`,
+ * started at `startedAt` (ISO), and every process below it that belongs to the
+ * same workspace. Empty when the pid is gone, was reused by another process,
+ * belongs to no workspace, or is the app or one of its ancestors.
+ */
+export function killTargets(
+  processes: readonly ProcessSnapshotEntry[],
+  owners: ReadonlyMap<number, WorkspaceRef>,
+  pid: number,
+  startedAt: string | null,
+  appPid: number
+): TeardownProcess[] {
+  const entry = processes.find((candidate) => candidate.pid === pid);
+  if (entry === undefined) return [];
+  const started = entry.startedAt === null ? null : new Date(entry.startedAt).toISOString();
+  if (started !== startedAt) return [];
+  const owner = owners.get(pid);
+  if (owner === undefined) return [];
+  const spared = appAndAncestors(processes, appPid);
+  const byPid = new Map(processes.map((candidate) => [candidate.pid, candidate]));
+  return [...subtreePids(processes, pid, childrenByPid(processes))]
+    .filter((member) => owners.get(member) === owner && !spared.has(member))
+    .map((member) => ({ pid: member, name: byPid.get(member)?.name ?? "" }));
 }
 
 /**
@@ -309,16 +386,20 @@ function byStart(a: ProcessSnapshotEntry, b: ProcessSnapshotEntry): number {
   return a.pid - b.pid;
 }
 
-/** Each workspace's process tree, from one scan. Workspaces with no process are absent. */
-export function buildWorkspaceProcesses(
+/**
+ * Each owner's process tree, from one scan: a workspace's (owners by ref), or
+ * a part of CodeHydra's (owners by CodeHydraGroup). Owners with no process are
+ * absent.
+ */
+export function buildWorkspaceProcesses<Owner>(
   snapshot: ProcessSnapshot,
-  owners: ReadonlyMap<number, WorkspaceRef>,
+  owners: ReadonlyMap<number, Owner>,
   cpu: ReadonlyMap<number, number> | null,
   ports: ReadonlyMap<number, readonly number[]>
-): Map<WorkspaceRef, WorkspaceProcesses> {
+): Map<Owner, WorkspaceProcesses> {
   const byPid = new Map(snapshot.processes.map((entry) => [entry.pid, entry]));
   const childrenOf = new Map<number, ProcessSnapshotEntry[]>();
-  const rootsOf = new Map<WorkspaceRef, ProcessSnapshotEntry[]>();
+  const rootsOf = new Map<Owner, ProcessSnapshotEntry[]>();
 
   for (const entry of snapshot.processes) {
     const owner = owners.get(entry.pid);
@@ -361,8 +442,8 @@ export function buildWorkspaceProcesses(
     };
   };
 
-  const result = new Map<WorkspaceRef, WorkspaceProcesses>();
-  const owned = new Map<WorkspaceRef, ProcessSnapshotEntry[]>();
+  const result = new Map<Owner, WorkspaceProcesses>();
+  const owned = new Map<Owner, ProcessSnapshotEntry[]>();
   for (const entry of snapshot.processes) {
     const owner = owners.get(entry.pid);
     if (owner === undefined) continue;

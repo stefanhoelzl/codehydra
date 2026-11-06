@@ -3,8 +3,9 @@
 
   The sidebar: a floating card with the Find field on top, one card per
   project, the notifications at the bottom, the process bar (with the process
-  summary on) and a footer (status summary, +, pulse, dock, settings, help). Collapsed (overlay mode, not hovered) it is a rail of
-  status glyphs.
+  summary on; sidebar/ProcessBar.svelte) and a footer (status summary, +,
+  pulse, dock, settings, help). Collapsed (overlay mode, not hovered) it is a
+  rail of status glyphs.
 
   Main owns what persists or what keys change (collapsed projects, each
   project's hibernated list, whether Find is open); the Find text, the Find
@@ -15,15 +16,18 @@
   import * as api from "$lib/api";
   import type {
     HibernatedView,
+    ProcessBarLevel,
+    ProcessSummaryMode,
     SidebarMode,
     UiNotification,
     UiProcessTotals,
+    UiProcessTree,
     UiProjectRow,
     UiSidebarFind,
     UiWorkspaceRow,
   } from "@shared/ui-state";
   import type { UIMode } from "@shared/ipc";
-  import { clampSidebarWidthMin } from "@shared/ui-state";
+  import { clampSidebarWidthMin, PROCESS_TREE_DEFAULT_HEIGHT } from "@shared/ui-state";
   import { createLogger } from "$lib/logging";
   import {
     describeRowCounts,
@@ -45,11 +49,7 @@
   import NoteCard from "./sidebar/NoteCard.svelte";
   import SidebarIcon from "./sidebar/SidebarIcon.svelte";
   import RowCountItems from "./sidebar/RowCountItems.svelte";
-  import {
-    describeProcessTotals,
-    processBadgeParts,
-    PROCESS_TOTALS_PENDING,
-  } from "$lib/utils/process-summary.js";
+  import ProcessBar from "./sidebar/ProcessBar.svelte";
   import { createRowMotion, highlight, noteIn, noteOut } from "./sidebar/motion";
 
   const logger = createLogger("ui");
@@ -80,10 +80,16 @@
      * shot. A docked sidebar never covers the workspace, so it ignores this.
      */
     capturing?: boolean;
-    /** Whether rows show their CPU and memory (config `sidebar.process-summary`). */
-    processSummary?: boolean;
-    /** CodeHydra's whole footprint, for the footer (with the process summary on). */
+    /** Off, or the process bar's level (config `sidebar.process-summary`). */
+    processSummary?: ProcessSummaryMode;
+    /** The level the pulse button turns the summary back on at. */
+    processLevel?: ProcessBarLevel;
+    /** The process tree's height, a fraction of the sidebar's. */
+    processTreeHeight?: number;
+    /** CodeHydra's whole footprint, for the process bar (with the process summary on). */
     processTotals?: UiProcessTotals | undefined;
+    /** Every process, for the process bar's tree level. */
+    processTree?: UiProcessTree | undefined;
   }
 
   let {
@@ -96,9 +102,14 @@
     mode = "workspace",
     shortcutModeActive = false,
     capturing = false,
-    processSummary = false,
+    processSummary = "off",
+    processLevel = "total",
+    processTreeHeight = PROCESS_TREE_DEFAULT_HEIGHT,
     processTotals,
+    processTree,
   }: SidebarProps = $props();
+
+  const processOn = $derived(processSummary !== "off");
 
   const reducedMotion =
     typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -576,12 +587,7 @@
   const bottomNotes = $derived([...notifications].filter((note) => !isQuestion(note)).reverse());
   const summary = $derived(rowCounts(allRows));
   const summaryTitle = $derived(describeRowCounts(summary));
-  // The process bar above the footer: dashes until the first scan.
-  const processParts = $derived(processBadgeParts(processTotals?.all));
-  const processTip = $derived(
-    processTotals === undefined ? PROCESS_TOTALS_PENDING : describeProcessTotals(processTotals)
-  );
-  const pulseHint = $derived(`${processSummary ? "Hide" : "Show"} process summary (Alt+X, P)`);
+  const pulseHint = $derived(`${processOn ? "Hide" : "Show"} process summary (Alt+X, P)`);
 
   /** The rail: per expanded project its awake rows (and the active one); a dot per question. */
   const railGroups = $derived(
@@ -695,22 +701,17 @@
     <!-- Always in the page so toggling the summary folds it open or closed. -->
     <div
       class="cl procf"
-      class:open={processSummary}
-      inert={!processSummary}
-      aria-hidden={processSummary ? undefined : "true"}
+      class:open={processOn}
+      inert={!processOn}
+      aria-hidden={processOn ? undefined : "true"}
     >
       <div class="clin">
-        <div class="proc-bar">
-          <span class="proc" title={processTip} aria-label={processTip}
-            ><span class="pm" data-part="cpu"
-              ><SidebarIcon name="cpu" size={12} />{processParts.cpu}</span
-            ><span class="pm" data-part="memory"
-              ><SidebarIcon name="memory" size={12} />{processParts.memory}</span
-            ><span class="pm" data-part="count"
-              ><SidebarIcon name="processes" size={12} />{processParts.count}</span
-            ></span
-          >
-        </div>
+        <ProcessBar
+          level={processLevel}
+          totals={processTotals}
+          tree={processTree}
+          treeHeight={processTreeHeight}
+        />
       </div>
     </div>
 
@@ -732,13 +733,15 @@
       <button
         type="button"
         class="ib"
-        class:on={processSummary}
+        class:on={processOn}
         title={pulseHint}
-        aria-label={processSummary ? "Hide process summary" : "Show process summary"}
-        aria-pressed={processSummary}
+        aria-label={processOn ? "Hide process summary" : "Show process summary"}
+        aria-pressed={processOn}
         onclick={() =>
-          api.emitEvent({ kind: "set-sidebar-process-summary", enabled: !processSummary })}
-        ><SidebarIcon name="pulse" /></button
+          api.emitEvent({
+            kind: "set-sidebar-process-summary",
+            mode: processOn ? "off" : processLevel,
+          })}><SidebarIcon name="pulse" /></button
       >
       <button
         type="button"
@@ -1048,34 +1051,6 @@
     padding-left: 6px;
     display: flex;
     gap: 10px;
-  }
-  /* Right edge in line with an idle row's badge: the list's 6px, the card's 1px
-     border and 3px padding, the row's 8px and the 10px gap before its (empty)
-     end column. */
-  .proc-bar {
-    border-top: 1px solid var(--ch-sb-line);
-    padding: 4px 28px 4px 12px;
-    display: flex;
-    justify-content: flex-end;
-    font-size: 11px;
-  }
-  /* A block of inline items, so a sidebar too narrow for it ends in "…". */
-  .proc-bar .proc {
-    display: block;
-    min-width: 0;
-    color: var(--ch-sb-fg-2);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .pm + .pm {
-    margin-left: 10px;
-  }
-  .pm :global(.sb-icon) {
-    vertical-align: -2px;
-    margin-right: 4px;
-    color: var(--ch-sb-fg-3);
   }
   .vsep {
     width: 1px;

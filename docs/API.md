@@ -416,11 +416,16 @@ External systems can connect directly to CodeHydra's API server via Socket.IO We
 The wire carries three kinds of client, declared in the handshake. They differ in
 what they may call and in how operations are addressed.
 
-| Kind     | Handshake                                          | Addresses operations as      |
-| -------- | -------------------------------------------------- | ---------------------------- |
-| _(none)_ | `{ workspacePath }` — an extension. **Unchanged.** | `api:workspace:getStatus`, … |
-| `cli`    | `{ client: "cli", token, cwd? }`                   | `api:operation:<name>`       |
-| `mcp`    | `{ client: "mcp", token, cwd?, workspace? }`       | `api:operation:<name>`       |
+| Kind     | Handshake                                    | Addresses operations as      |
+| -------- | -------------------------------------------- | ---------------------------- |
+| _(none)_ | `{ workspacePath, pid? }` — an extension¹    | `api:workspace:getStatus`, … |
+| `cli`    | `{ client: "cli", token, cwd? }`             | `api:operation:<name>`       |
+| `mcp`    | `{ client: "mcp", token, cwd?, workspace? }` | `api:operation:<name>`       |
+
+¹ `workspacePath` is unchanged. The bundled sidekick also sends `pid`, its
+extension host's process id, so the process monitor counts that process (and
+the language servers it starts) as the workspace's; a third-party extension
+leaves it out.
 
 The historical channel names are a compatibility surface for extensions, so they
 are kept exactly as they are and never grow for a new client. `ch` and the stdio

@@ -9,7 +9,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, cleanup, render, fireEvent } from "@testing-library/svelte";
 import { flushSync } from "svelte";
 import type { Api } from "@shared/electron-api";
-import type { UiNotification, UiProcessTotals, UiProjectRow } from "@shared/ui-state";
+import type {
+  ProcessBarLevel,
+  ProcessSummaryMode,
+  UiNotification,
+  UiProcessNode,
+  UiProcessTotals,
+  UiProcessTree,
+  UiProjectRow,
+} from "@shared/ui-state";
 import { createMockApi, makeUiWorkspaceRow } from "../test-utils";
 import { NOW, question, sampleProjects } from "./sidebar-fixture";
 
@@ -27,7 +35,10 @@ type Props = {
   sidebarMode?: "overlay" | "docked";
   mode?: "workspace" | "hover" | "shortcut" | "dialog";
   shortcutModeActive?: boolean;
-  processSummary?: boolean;
+  processSummary?: ProcessSummaryMode;
+  processLevel?: ProcessBarLevel;
+  processTree?: UiProcessTree;
+  processTreeHeight?: number;
   processTotals?: UiProcessTotals;
 };
 
@@ -476,7 +487,7 @@ describe("Sidebar", () => {
       }
       expect(events()).toEqual([
         { kind: "open-new-workspace", projectId: null },
-        { kind: "set-sidebar-process-summary", enabled: true },
+        { kind: "set-sidebar-process-summary", mode: "total" },
         { kind: "set-sidebar-mode", mode: "overlay" },
         { kind: "open-settings" },
         { kind: "open-help" },
@@ -778,9 +789,9 @@ describe("Sidebar", () => {
       const button = footerButton("Show process summary");
       expect(button.getAttribute("aria-pressed")).toBe("false");
       await fireEvent.click(button);
-      expect(events()).toContainEqual({ kind: "set-sidebar-process-summary", enabled: true });
+      expect(events()).toContainEqual({ kind: "set-sidebar-process-summary", mode: "total" });
 
-      rerender({ processSummary: true, projects: withProcesses() });
+      rerender({ processSummary: "total", projects: withProcesses() });
       const on = footerButton("Hide process summary");
       expect(on.getAttribute("aria-pressed")).toBe("true");
       expect(on.classList.contains("on")).toBe(true);
@@ -791,7 +802,7 @@ describe("Sidebar", () => {
       expect(meta(container, "codehydra/redesign-sidebar")).toBe("working");
       expect(rowStats(container, "codehydra/redesign-sidebar")).toBeNull();
 
-      rerender({ processSummary: true, projects: withProcesses() });
+      rerender({ processSummary: "total", projects: withProcesses() });
       expect(meta(container, "codehydra/redesign-sidebar")).toBe("working");
       expect(rowStats(container, "codehydra/redesign-sidebar")).toBe("10% · 100M · 2");
       expect(rowStats(container, "codehydra/hibernation-age")).toBe("10% · 100M · 2");
@@ -824,7 +835,7 @@ describe("Sidebar", () => {
             : { ...ws, processes: { cpuPercent: 10, rssBytes: 100 * MIB, count: 2 } }
         ),
       };
-      rerender({ processSummary: true, projects: [on] });
+      rerender({ processSummary: "total", projects: [on] });
       expect(rowStats(container, key)).toBe("10% · 100M · 2");
     });
 
@@ -832,7 +843,7 @@ describe("Sidebar", () => {
       const { container, rerender } = setup({ projects: sampleProjects() });
       expect(container.querySelector(".proc-icon")).toBeNull();
 
-      rerender({ processSummary: true, projects: [...withProcesses(), asleep()] });
+      rerender({ processSummary: "total", projects: [...withProcesses(), asleep()] });
       // infra is collapsed and has three awake rows; website is expanded.
       expect(card(container, "infra").querySelector(".proc-icon")?.getAttribute("title")).toBe(
         "infra: 30% CPU · 300M memory · 6 processes"
@@ -849,12 +860,14 @@ describe("Sidebar", () => {
       const totals: UiProcessTotals = {
         all: { cpuPercent: 150, rssBytes: 2048 * MIB, count: 40 },
         workspaces: { cpuPercent: 130, rssBytes: 1536 * MIB, count: 26 },
-        codehydra: { cpuPercent: 20, rssBytes: 512 * MIB, count: 14 },
+        codeServer: { cpuPercent: 15, rssBytes: 384 * MIB, count: 10 },
+        codehydra: { cpuPercent: 5, rssBytes: 128 * MIB, count: 4 },
       };
       const split = [
         "All of CodeHydra: 150% CPU · 2.0G memory · 40 processes",
         "Workspaces: 130% CPU · 1.5G memory · 26 processes",
-        "CodeHydra itself: 20% CPU · 512M memory · 14 processes",
+        "Code server: 15% CPU · 384M memory · 10 processes",
+        "CodeHydra itself: 5% CPU · 128M memory · 4 processes",
       ].join("\n");
       const pulse = (container: Element): Element =>
         container.querySelector('.sb-foot button[aria-label$="process summary"]')!;
@@ -877,7 +890,7 @@ describe("Sidebar", () => {
         expect(bar(container).hasAttribute("inert")).toBe(true);
         expect(bar(container).nextElementSibling?.classList.contains("sb-foot")).toBe(true);
 
-        rerender({ processSummary: true, projects: withProcesses() });
+        rerender({ processSummary: "total", projects: withProcesses() });
         expect(bar(container).classList.contains("open")).toBe(true);
         expect(bar(container).hasAttribute("inert")).toBe(false);
         expect(parts(container)).toEqual(["cpu:150%", "memory:2.0G", "count:40"]);
@@ -886,7 +899,7 @@ describe("Sidebar", () => {
       });
 
       it("shows placeholders before the first scan", () => {
-        const { container } = setup({ projects: withProcesses(), processSummary: true });
+        const { container } = setup({ projects: withProcesses(), processSummary: "total" });
         expect(bar(container).classList.contains("open")).toBe(true);
         expect(parts(container)).toEqual(["cpu:–%", "memory:–", "count:–"]);
         expect(badge(container).getAttribute("title")).toBe("All of CodeHydra: not measured yet");
@@ -895,12 +908,199 @@ describe("Sidebar", () => {
       it("leaves the footer row without numbers and the pulse button's tooltip the hint", () => {
         const { container } = setup({
           projects: withProcesses(),
-          processSummary: true,
+          processSummary: "total",
           processTotals: totals,
         });
         expect(container.querySelector(".sb-foot .proc")).toBeNull();
         expect(pulse(container).getAttribute("title")).toBe("Hide process summary (Alt+X, P)");
         expect(pulse(container).hasAttribute("aria-describedby")).toBe(false);
+      });
+
+      it("turns the summary off, and back on at the last level, from the pulse button", () => {
+        const { container, rerender } = setup({
+          projects: withProcesses(),
+          processSummary: "breakdown",
+          processLevel: "breakdown",
+        });
+        vi.mocked(emitEvent).mockClear();
+        fireEvent.click(pulse(container));
+        expect(events()).toEqual([{ kind: "set-sidebar-process-summary", mode: "off" }]);
+
+        rerender({ processSummary: "off", processLevel: "tree" });
+        vi.mocked(emitEvent).mockClear();
+        fireEvent.click(pulse(container));
+        expect(events()).toEqual([{ kind: "set-sidebar-process-summary", mode: "tree" }]);
+      });
+
+      const levelButton = (container: Element, label: string): HTMLElement =>
+        bar(container).querySelector<HTMLElement>(`.levels button[aria-label="${label}"]`)!;
+
+      it("picks the level with its buttons, the current one pressed", () => {
+        const { container } = setup({
+          projects: withProcesses(),
+          processSummary: "total",
+          processLevel: "total",
+          processTotals: totals,
+        });
+        expect(levelButton(container, "Total").getAttribute("aria-pressed")).toBe("true");
+        expect(levelButton(container, "Total").classList.contains("on")).toBe(true);
+        expect(levelButton(container, "Process tree").getAttribute("aria-pressed")).toBe("false");
+
+        vi.mocked(emitEvent).mockClear();
+        fireEvent.click(levelButton(container, "Breakdown"));
+        expect(events()).toEqual([{ kind: "set-sidebar-process-summary", mode: "breakdown" }]);
+      });
+
+      it("breaks the total down into workspaces, code server and CodeHydra", () => {
+        const { container } = setup({
+          projects: withProcesses(),
+          processSummary: "breakdown",
+          processLevel: "breakdown",
+          processTotals: totals,
+        });
+        const rows = [...bar(container).querySelectorAll(".parts .row")].map((row) =>
+          [
+            row.querySelector(".lbl")?.textContent,
+            ...[...row.querySelectorAll(".v")].map((v) => v.textContent),
+          ].join(" ")
+        );
+        expect(rows).toEqual([
+          "Workspaces 130% 1.5G 26",
+          "Code server 15% 384M 10",
+          "CodeHydra 5% 128M 4",
+        ]);
+      });
+
+      describe("tree", () => {
+        const node = (
+          pid: number,
+          name: string,
+          children: UiProcessNode[] = [],
+          rssBytes = MIB
+        ): UiProcessNode => ({
+          pid,
+          startedAt: `2026-01-01T00:00:0${pid % 10}.000Z`,
+          name,
+          commandLine: `${name} --serve`,
+          cwd: "/ws/a",
+          ports: pid === 12 ? [5173] : [],
+          subtree: { cpuPercent: 1, rssBytes, count: 1 + children.length },
+          children,
+        });
+        const vite = node(12, "vite");
+        const pnpm = node(11, "pnpm", [vite]);
+        const tree: UiProcessTree = {
+          projects: [
+            {
+              id: "p1",
+              name: "website",
+              total: pnpm.subtree,
+              workspaces: [
+                { key: "ws-a", name: "feature-a", total: pnpm.subtree, processes: [pnpm] },
+              ],
+            },
+          ],
+          codeServer: [node(30, "node")],
+          codehydra: [node(40, "codehydra")],
+        };
+        const labels = (container: Element): string[] =>
+          [...bar(container).querySelectorAll(".tree .row .lbl")].map(
+            (lbl) => lbl.textContent ?? ""
+          );
+        const rowOf = (container: Element, label: string): HTMLElement =>
+          [...bar(container).querySelectorAll<HTMLElement>(".tree .row")].find((row) =>
+            row.querySelector(".lbl")?.textContent?.startsWith(label)
+          )!;
+
+        function setupTree() {
+          return setup({
+            projects: withProcesses(),
+            processSummary: "tree",
+            processLevel: "tree",
+            processTotals: totals,
+            processTree: tree,
+          });
+        }
+
+        it("lists every process under its group, project and workspace, all expanded", () => {
+          const { container } = setupTree();
+          expect(labels(container)).toEqual([
+            "Workspaces",
+            "website",
+            "feature-a",
+            "pnpm11",
+            "vite12",
+            "Code server",
+            "node30",
+            "CodeHydra",
+            "codehydra40",
+          ]);
+          expect(rowOf(container, "vite").getAttribute("title")).toContain("ports 5173");
+        });
+
+        it("folds a row on click", () => {
+          const { container } = setupTree();
+          fireEvent.click(rowOf(container, "pnpm"));
+          expect(labels(container)).not.toContain("vite12");
+          fireEvent.click(rowOf(container, "Workspaces"));
+          expect(labels(container)).not.toContain("website");
+          fireEvent.click(rowOf(container, "Workspaces"));
+          expect(labels(container)).toContain("pnpm11");
+        });
+
+        it("kills a workspace's process on the second click only", () => {
+          const { container } = setupTree();
+          const kill = (): HTMLElement =>
+            rowOf(container, "pnpm").querySelector<HTMLElement>(".kill")!;
+          vi.mocked(emitEvent).mockClear();
+
+          fireEvent.click(kill());
+          expect(kill().textContent).toBe("Kill?");
+          expect(events()).toEqual([]);
+          // Clicking the button does not fold the row.
+          expect(labels(container)).toContain("vite12");
+
+          fireEvent.click(kill());
+          expect(events()).toEqual([{ kind: "kill-process", pid: 11, startedAt: pnpm.startedAt }]);
+        });
+
+        it("forgets the question when the pointer leaves the row", () => {
+          const { container } = setupTree();
+          const row = rowOf(container, "pnpm");
+          fireEvent.click(row.querySelector(".kill")!);
+          fireEvent.mouseLeave(row);
+          expect(row.querySelector(".kill")?.textContent).not.toBe("Kill?");
+        });
+
+        it("offers no kill for the code server's or CodeHydra's processes", () => {
+          const { container } = setupTree();
+          expect(rowOf(container, "node").querySelector(".kill")).toBeNull();
+          expect(rowOf(container, "codehydra").querySelector(".kill")).toBeNull();
+        });
+
+        it("resets its height on a double-click of its top edge", () => {
+          const { container } = setup({
+            projects: withProcesses(),
+            processSummary: "tree",
+            processLevel: "tree",
+            processTreeHeight: 0.5,
+            processTree: tree,
+          });
+          vi.mocked(emitEvent).mockClear();
+          fireEvent.dblClick(bar(container).querySelector(".grip")!);
+          expect(events()).toEqual([{ kind: "resize-process-tree", fraction: 0.25 }]);
+        });
+
+        it("says so before the first scan", () => {
+          const { container } = setup({
+            projects: withProcesses(),
+            processSummary: "tree",
+            processLevel: "tree",
+          });
+          expect(bar(container).querySelector(".tree .pending")?.textContent).toBe(
+            "Not measured yet"
+          );
+        });
       });
     });
   });

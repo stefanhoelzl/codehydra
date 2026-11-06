@@ -1,6 +1,6 @@
 /**
  * `workspace.processes` — the processes running in a workspace (`ch ws
- * processes`, MCP `workspace_list_processes`, the sidekick's Processes view).
+ * processes`, MCP `workspace_list_processes`).
  *
  * The scanning and attribution live in the process-monitor module, reached
  * through `deps.processes`; this entry only resolves the target.

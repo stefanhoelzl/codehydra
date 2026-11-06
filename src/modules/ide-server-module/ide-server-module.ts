@@ -252,6 +252,8 @@ export interface IdeServerModuleHandle {
   nodePath(): string;
   /** The IDE bundle version this launch resolved (config override or built-in). */
   version(): string;
+  /** The running server's pid (the root of the code server's processes), null while none runs. */
+  pid(): number | null;
   /** Download the IDE server bundle unless it is already present (`--download-binaries`). */
   ensureDownloaded(onProgress?: DownloadProgressCallback): Promise<void>;
 }
@@ -1332,6 +1334,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     // Read at call time, like nodePath: the version only settles once config
     // has loaded.
     version: () => vscodiumVersionConfig.get(),
+    pid: () => serverProcess?.pid ?? null,
     async ensureDownloaded(onProgress) {
       const result = await preflight();
       if (!result.success) {

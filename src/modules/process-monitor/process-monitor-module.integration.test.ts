@@ -34,7 +34,13 @@ function proc(pid: number, ppid: number, cwd: string | null, cpuTimeMs = 0): Pro
   };
 }
 
-function createSetup(options: { failScan?: boolean } = {}) {
+function createSetup(
+  options: {
+    failScan?: boolean;
+    ideServerPid?: number;
+    extensionHosts?: ReadonlyMap<WorkspaceRef, { pid: number; connectedAt: number }>;
+  } = {}
+) {
   /** The machine as the next scan sees it. */
   let machine: ProcessSnapshotEntry[] = [proc(10, 2, "/ws/alpha"), proc(11, 10, "/tmp")];
   let failScan = options.failScan ?? false;
@@ -72,10 +78,13 @@ function createSetup(options: { failScan?: boolean } = {}) {
     dispatcher: { dispatch } as never,
     logger: SILENT_LOGGER,
     appPid: APP_PID,
+    ideServerPid: () => options.ideServerPid ?? null,
+    extensionHosts: () => options.extensionHosts ?? new Map(),
     timing: { pollIntervalMs: POLL_MS, primeDelayMs: 500 },
   });
   return {
     monitor,
+    runner,
     get scans() {
       return scans;
     },
@@ -265,11 +274,84 @@ describe("process monitor: CodeHydra's totals", () => {
     expect(setup.monitor.totals()).toMatchObject({
       all: { count: 4 },
       workspaces: { count: 2, rssBytes: 1024 * (3 + 40) },
+      codeServer: { count: 0 },
       codehydra: { count: 2, rssBytes: 1024 * (APP_PID + 2) },
     });
 
     setup.monitor.setWatching(false);
     expect(setup.monitor.totals()).toBeNull();
+  });
+
+  it("splits out the code server, and counts a pinned extension host as its workspace's", async () => {
+    // The IDE server (2) runs alpha's extension host (4, pinned) with a
+    // language server (5), and an unpinned extension host (6).
+    const setup = createSetup({
+      ideServerPid: 2,
+      extensionHosts: new Map([[ALPHA, { pid: 4, connectedAt: 5000 }]]),
+    });
+    setup.setMachine([
+      proc(APP_PID, 0, "/"),
+      proc(2, APP_PID, "/runtime"),
+      proc(4, 2, "/runtime"),
+      proc(5, 4, "/runtime"),
+      proc(6, 2, "/runtime"),
+    ]);
+    await setup.start();
+    setup.monitor.setWatching(true);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(setup.monitor.totals()).toMatchObject({
+      all: { count: 5 },
+      workspaces: { count: 2, rssBytes: 1024 * (4 + 5) },
+      codeServer: { count: 2, rssBytes: 1024 * (2 + 6) },
+      codehydra: { count: 1 },
+    });
+    const trees = setup.monitor.trees()!;
+    expect(trees.workspaces.get(ALPHA)!.processes.map((node) => node.pid)).toEqual([4]);
+    expect(trees.groups.get("codeServer")!.processes.map((node) => node.pid)).toEqual([2]);
+    expect(trees.groups.get("codehydra")!.processes.map((node) => node.pid)).toEqual([APP_PID]);
+  });
+
+  it("drops a pin whose pid now names a process started after the sidekick connected", async () => {
+    const setup = createSetup({
+      ideServerPid: 2,
+      extensionHosts: new Map([[ALPHA, { pid: 4, connectedAt: -5000 }]]),
+    });
+    // startedAt 1000, well after the sidekick connected: a reused pid.
+    setup.setMachine([proc(APP_PID, 0, "/"), proc(2, APP_PID, "/runtime"), proc(4, 2, "/runtime")]);
+
+    await expect(
+      setup.monitor.teardownProcesses({ ref: ALPHA, path: "/ws/alpha" }, { cwdInside: false })
+    ).resolves.toEqual([]);
+  });
+});
+
+describe("process monitor: killProcess", () => {
+  const started = new Date(1000).toISOString();
+
+  it("kills a workspace's process and its subtree, after a fresh scan", async () => {
+    const setup = createSetup();
+    setup.setMachine([
+      proc(APP_PID, 0, "/"),
+      proc(10, APP_PID, "/ws/alpha"),
+      proc(11, 10, "/ws/alpha"),
+    ]);
+
+    await expect(setup.monitor.killProcess(10, started)).resolves.toBe(true);
+    expect([...setup.runner.$.killedPids].sort((a, b) => a - b)).toEqual([10, 11]);
+  });
+
+  it("kills nothing when the pid was reused, or is CodeHydra's own", async () => {
+    const setup = createSetup({ ideServerPid: 2 });
+    setup.setMachine([
+      proc(APP_PID, 0, "/"),
+      proc(2, APP_PID, "/"),
+      proc(10, APP_PID, "/ws/alpha"),
+    ]);
+
+    await expect(setup.monitor.killProcess(10, new Date(5).toISOString())).resolves.toBe(false);
+    await expect(setup.monitor.killProcess(2, started)).resolves.toBe(false);
+    expect(setup.runner.$.killedPids).toEqual([]);
   });
 });
 

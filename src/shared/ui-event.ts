@@ -26,7 +26,7 @@
  */
 
 import { z } from "zod/v4";
-import { HIBERNATED_VIEWS, SIDEBAR_MODES } from "./ui-state";
+import { HIBERNATED_VIEWS, PROCESS_SUMMARY_MODES, SIDEBAR_MODES } from "./ui-state";
 
 const logContextSchema = z.record(
   z.string(),
@@ -60,11 +60,26 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // `sidebar.mode` config key and echoes it back in the snapshot. The Alt+X+D
   // shortcut toggles the same key via the shortcut-key domain event.
   z.object({ kind: z.literal("set-sidebar-mode"), mode: z.enum(SIDEBAR_MODES) }),
-  // Show or hide each row's process summary (header button). The presenter
-  // writes the `sidebar.process-summary` config key, which also starts or stops
-  // the process monitor's polling, and echoes it back in the snapshot. Alt+X+P
-  // toggles the same key.
-  z.object({ kind: z.literal("set-sidebar-process-summary"), enabled: z.boolean() }),
+  // Set the process summary's mode (the footer's pulse button, the process
+  // bar's level buttons). The presenter writes the `sidebar.process-summary`
+  // config key, which also starts or stops the process monitor's polling, and
+  // echoes it back in the snapshot. Alt+X+P toggles the same key.
+  z.object({
+    kind: z.literal("set-sidebar-process-summary"),
+    mode: z.enum(PROCESS_SUMMARY_MODES),
+  }),
+  // Persist the process tree's height, a fraction of the sidebar's, after a
+  // drag on its top edge (fired once on release). The presenter clamps it and
+  // writes the `sidebar.process-tree-height` state key.
+  z.object({ kind: z.literal("resize-process-tree"), fraction: z.number() }),
+  // Stop a workspace's process and everything below it (the process tree's
+  // kill button, confirmed in place). Main re-checks against a fresh scan that
+  // the pid, started at `startedAt`, still belongs to a workspace.
+  z.object({
+    kind: z.literal("kill-process"),
+    pid: z.number().int().positive(),
+    startedAt: z.string().nullable(),
+  }),
   z.object({
     kind: z.literal("log"),
     level: z.enum(["debug", "info", "warn", "error"]),
