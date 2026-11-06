@@ -2,8 +2,8 @@
   Sidebar.svelte
 
   The sidebar: a floating card with the Find field on top, one card per
-  project, the notifications at the bottom and a footer (status summary, +,
-  dock, settings, help). Collapsed (overlay mode, not hovered) it is a rail of
+  project, the notifications at the bottom, the process bar (with the process
+  summary on) and a footer (status summary, +, pulse, dock, settings, help). Collapsed (overlay mode, not hovered) it is a rail of
   status glyphs.
 
   Main owns what persists or what keys change (collapsed projects, each
@@ -45,8 +45,11 @@
   import NoteCard from "./sidebar/NoteCard.svelte";
   import SidebarIcon from "./sidebar/SidebarIcon.svelte";
   import RowCountItems from "./sidebar/RowCountItems.svelte";
-  import { describeProcessTotals, formatProcessBadge } from "$lib/utils/process-summary.js";
-  import { watchFit } from "$lib/utils/watch-fit.js";
+  import {
+    describeProcessTotals,
+    processBadgeParts,
+    PROCESS_TOTALS_PENDING,
+  } from "$lib/utils/process-summary.js";
   import { createRowMotion, highlight, noteIn, noteOut } from "./sidebar/motion";
 
   const logger = createLogger("ui");
@@ -573,12 +576,10 @@
   const bottomNotes = $derived([...notifications].filter((note) => !isQuestion(note)).reverse());
   const summary = $derived(rowCounts(allRows));
   const summaryTitle = $derived(describeRowCounts(summary));
-  // The footer total moves to the pulse button's tooltip when it doesn't fit.
-  let footerTotalFits = $state(true);
-  const hiddenTotals = $derived(
-    processSummary && processTotals !== undefined && !footerTotalFits
-      ? describeProcessTotals(processTotals)
-      : null
+  // The process bar above the footer: dashes until the first scan.
+  const processParts = $derived(processBadgeParts(processTotals?.all));
+  const processTip = $derived(
+    processTotals === undefined ? PROCESS_TOTALS_PENDING : describeProcessTotals(processTotals)
   );
   const pulseHint = $derived(`${processSummary ? "Hide" : "Show"} process summary (Alt+X, P)`);
 
@@ -691,21 +692,31 @@
       {/each}
     </div>
 
+    <!-- Always in the page so toggling the summary folds it open or closed. -->
+    <div
+      class="cl procf"
+      class:open={processSummary}
+      inert={!processSummary}
+      aria-hidden={processSummary ? undefined : "true"}
+    >
+      <div class="clin">
+        <div class="proc-bar">
+          <span class="proc" title={processTip} aria-label={processTip}
+            ><span class="pm" data-part="cpu"
+              ><SidebarIcon name="cpu" size={12} />{processParts.cpu}</span
+            ><span class="pm" data-part="memory"
+              ><SidebarIcon name="memory" size={12} />{processParts.memory}</span
+            ><span class="pm" data-part="count"
+              ><SidebarIcon name="processes" size={12} />{processParts.count}</span
+            ></span
+          >
+        </div>
+      </div>
+    </div>
+
     <div class="sb-foot">
-      <div
-        class="sum"
-        title={summaryTitle || undefined}
-        use:watchFit={(fits) => (footerTotalFits = fits)}
-      >
+      <div class="sum" title={summaryTitle || undefined}>
         <RowCountItems counts={summary} still />
-        {#if processSummary && processTotals !== undefined}<i
-            id="sidebar-process-total"
-            class="proc"
-            class:overflowed={!footerTotalFits}
-            title={describeProcessTotals(processTotals)}
-            aria-label={describeProcessTotals(processTotals)}
-            >{formatProcessBadge(processTotals.all)}</i
-          >{/if}
       </div>
       <button
         type="button"
@@ -722,9 +733,8 @@
         type="button"
         class="ib"
         class:on={processSummary}
-        title={hiddenTotals === null ? pulseHint : `${hiddenTotals}\n${pulseHint}`}
+        title={pulseHint}
         aria-label={processSummary ? "Hide process summary" : "Show process summary"}
-        aria-describedby={hiddenTotals === null ? undefined : "sidebar-process-total"}
         aria-pressed={processSummary}
         onclick={() =>
           api.emitEvent({ kind: "set-sidebar-process-summary", enabled: !processSummary })}
@@ -1030,7 +1040,6 @@
     gap: 1px;
   }
   .sum {
-    position: relative;
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -1040,19 +1049,33 @@
     display: flex;
     gap: 10px;
   }
-  /* The worst-case width (see watchFit): digits changing can't flip it. */
-  .sum .proc {
-    font-style: normal;
+  /* Right edge in line with an idle row's badge: the list's 6px, the card's 1px
+     border and 3px padding, the row's 8px and the 10px gap before its (empty)
+     end column. */
+  .proc-bar {
+    border-top: 1px solid var(--ch-sb-line);
+    padding: 4px 28px 4px 12px;
+    display: flex;
+    justify-content: flex-end;
+    font-size: 11px;
+  }
+  /* A block of inline items, so a sidebar too narrow for it ends in "…". */
+  .proc-bar .proc {
+    display: block;
+    min-width: 0;
     color: var(--ch-sb-fg-2);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    min-width: 11.7ch; /* `999% 12G · 99` */
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .sum .proc.overflowed {
-    position: absolute;
-    left: 0;
-    top: 0;
-    visibility: hidden;
+  .pm + .pm {
+    margin-left: 10px;
+  }
+  .pm :global(.sb-icon) {
+    vertical-align: -2px;
+    margin-right: 4px;
+    color: var(--ch-sb-fg-3);
   }
   .vsep {
     width: 1px;

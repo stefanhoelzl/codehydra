@@ -130,14 +130,14 @@ Projects are sorted by name.
   button, the **gear** (settings) and **?** (this guide). Hover any sidebar icon
   for what it does.
 - The **process summary** shows the CPU, memory and number of processes of what
-  each workspace runs, e.g. `12% 874M · 7`: on the second line of each awake
-  row, and in each project's header for the whole project. The footer shows all
-  of CodeHydra: every workspace's processes plus CodeHydra's own (its window,
-  the editor server and their helpers), each counted once; hover it for the
-  split between the two. Where a header or the footer has no room for the
-  numbers they make way: a header shows a pulse icon with the numbers as its
-  tooltip, and the footer's total moves to the pulse button's tooltip. Toggle
-  it with the pulse button
+  each workspace runs, e.g. `12% · 874M · 7`: on the second line of each awake
+  row, and as a pulse icon in each project's header, with the whole project's
+  numbers on hover. A bar above the footer shows all of CodeHydra, each number
+  behind its icon (a chip for CPU, a memory stick, stacked layers for the
+  processes): every workspace's processes plus CodeHydra's own (its window, the
+  editor server and their helpers), each counted once; hover it for the split
+  between the two. Until the first count arrives it shows dashes. Toggle it with
+  the pulse button
   (highlighted while on) or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>; the
   choice is saved as `sidebar.process-summary` (off by default). It refreshes
   every few seconds, only while it is on, and hibernated workspaces have none.
@@ -154,8 +154,8 @@ projects open, colors repeat.
   expand it; each project remembers this, also after a restart, until you close
   it. Switching to a workspace in a collapsed project expands it. The header
   counts the project's workspaces like the footer
-  ([status](#status-indicators)). Short of room, the process summary makes way
-  first, then the name is cut off, the counts never; a click on a count
+  ([status](#status-indicators)). Short of room, the name is cut off, the
+  counts never; a click on a count
   collapses or expands like the rest of the header, except on the hibernated
   button below. Collapsing
   the project you are in moves you to the first awake workspace of the next
@@ -539,7 +539,8 @@ There are three ways to look:
   row for its command line and directory. It refreshes every few seconds
   while it is visible; the refresh button asks right away.
 - **The process summary** in the sidebar (see [The sidebar](#the-sidebar)):
-  every workspace's total at a glance, and in the footer all of CodeHydra.
+  every workspace's total at a glance, and in the bar above the footer all of
+  CodeHydra.
   CodeHydra's own processes — its window, the editor server — belong to no
   workspace; they count only there.
 - **`ch ws processes`** (MCP `workspace_list_processes`) prints the same tree

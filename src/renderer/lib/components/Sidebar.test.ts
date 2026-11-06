@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, cleanup, render, fireEvent } from "@testing-library/svelte";
-import { flushSync, tick } from "svelte";
+import { flushSync } from "svelte";
 import type { Api } from "@shared/electron-api";
 import type { UiNotification, UiProcessTotals, UiProjectRow } from "@shared/ui-state";
 import { createMockApi, makeUiWorkspaceRow } from "../test-utils";
@@ -757,23 +757,6 @@ describe("Sidebar", () => {
     const rowStats = (container: Element, key: string): string | null =>
       row(container, key).querySelector(".sub .proc")?.textContent ?? null;
 
-    /**
-     * The test DOM has no layout: give what the fit checks measure a width. `.proc`
-     * stands for the badge, `.sum` and `.proj-h` for the room it has.
-     */
-    function layout(room: number): void {
-      const rects = vi.spyOn(Element.prototype, "getBoundingClientRect");
-      rects.mockImplementation(function (this: Element) {
-        const width = this.matches(".sum, .proj-h") ? room : this.matches(".proc") ? 80 : 0;
-        return { width } as DOMRect;
-      });
-      restoreLayout = () => rects.mockRestore();
-    }
-    let restoreLayout = (): void => {};
-    afterEach(() => {
-      restoreLayout();
-      restoreLayout = (): void => {};
-    });
     /** A project with only hibernated rows, so with no process total. */
     function asleep(): UiProjectRow {
       const first = withProcesses()[0]!;
@@ -810,8 +793,8 @@ describe("Sidebar", () => {
 
       rerender({ processSummary: true, projects: withProcesses() });
       expect(meta(container, "codehydra/redesign-sidebar")).toBe("working");
-      expect(rowStats(container, "codehydra/redesign-sidebar")).toBe("10% 100M · 2");
-      expect(rowStats(container, "codehydra/hibernation-age")).toBe("10% 100M · 2");
+      expect(rowStats(container, "codehydra/redesign-sidebar")).toBe("10% · 100M · 2");
+      expect(rowStats(container, "codehydra/hibernation-age")).toBe("10% · 100M · 2");
       expect(meta(container, "codehydra/find-workspace-dialog")).toBe("5h");
       expect(rowStats(container, "codehydra/find-workspace-dialog")).toBeNull();
       expect(row(container, "codehydra/hibernation-age").getAttribute("title")).toBe(
@@ -842,47 +825,27 @@ describe("Sidebar", () => {
         ),
       };
       rerender({ processSummary: true, projects: [on] });
-      expect(rowStats(container, key)).toBe("10% 100M · 2");
+      expect(rowStats(container, key)).toBe("10% · 100M · 2");
     });
 
-    it("totals every project in its header, collapsed or expanded", () => {
+    it("gives every project with a total a pulse icon, its numbers on hover, collapsed or expanded", () => {
       const { container, rerender } = setup({ projects: sampleProjects() });
-      expect(container.querySelector(".cnt.proc")).toBeNull();
+      expect(container.querySelector(".proc-icon")).toBeNull();
 
       rerender({ processSummary: true, projects: [...withProcesses(), asleep()] });
       // infra is collapsed and has three awake rows; website is expanded.
-      expect(card(container, "infra").querySelector(".cnt.proc")?.textContent).toBe("30% 300M · 6");
-      expect(card(container, "website").querySelector(".cnt.proc")?.textContent).toBe(
-        "30% 300M · 6"
-      );
-      expect(card(container, "asleep").querySelector(".cnt.proc")).toBeNull();
-    });
-
-    it("swaps a header's numbers for an icon with the same tooltip when they don't fit", async () => {
-      layout(50);
-      const { container } = setup({
-        projects: [...withProcesses(), asleep()],
-        processSummary: true,
-      });
-      await tick();
-      const infra = card(container, "infra");
-      expect(infra.querySelector(".cnt.proc")?.classList.contains("overflowed")).toBe(true);
-      expect(infra.querySelector(".proc-icon")?.getAttribute("title")).toBe(
+      expect(card(container, "infra").querySelector(".proc-icon")?.getAttribute("title")).toBe(
         "infra: 30% CPU · 300M memory · 6 processes"
       );
+      expect(card(container, "website").querySelector(".proc-icon")?.getAttribute("title")).toBe(
+        "website: 30% CPU · 300M memory · 6 processes"
+      );
       expect(card(container, "asleep").querySelector(".proc-icon")).toBeNull();
+      // The numbers themselves are never in the header.
+      expect(card(container, "infra").querySelector(".proj-h")?.textContent).not.toContain("300M");
     });
 
-    it("keeps a header's numbers while they fit", async () => {
-      layout(500);
-      const { container } = setup({ projects: withProcesses(), processSummary: true });
-      await tick();
-      const infra = card(container, "infra");
-      expect(infra.querySelector(".cnt.proc")?.classList.contains("overflowed")).toBe(false);
-      expect(infra.querySelector(".proc-icon")).toBeNull();
-    });
-
-    describe("footer total", () => {
+    describe("process bar", () => {
       const totals: UiProcessTotals = {
         all: { cpuPercent: 150, rssBytes: 2048 * MIB, count: 40 },
         workspaces: { cpuPercent: 130, rssBytes: 1536 * MIB, count: 26 },
@@ -895,71 +858,50 @@ describe("Sidebar", () => {
       ].join("\n");
       const pulse = (container: Element): Element =>
         container.querySelector('.sb-foot button[aria-label$="process summary"]')!;
+      const bar = (container: Element): Element => container.querySelector(".procf")!;
+      const badge = (container: Element): Element => bar(container).querySelector(".proc")!;
+      /** Each number as `<part>:<text>`, checking it starts with its icon. */
+      const parts = (container: Element): string[] =>
+        [...badge(container).querySelectorAll(".pm")].map((part) => {
+          expect(part.firstElementChild?.tagName.toLowerCase()).toBe("svg");
+          return `${part.getAttribute("data-part")}:${part.textContent}`;
+        });
 
-      it("moves to the pulse button's tooltip when it doesn't fit; the button's name stays the toggle", async () => {
-        layout(50);
-        const { container } = setup({
-          projects: withProcesses(),
-          processSummary: true,
+      it("folds open above the footer with all of CodeHydra, split in its tooltip", () => {
+        const { container, rerender } = setup({
+          projects: sampleProjects(),
           processTotals: totals,
         });
-        await tick();
-        expect(container.querySelector(".sum .proc")?.classList.contains("overflowed")).toBe(true);
-        expect(pulse(container).getAttribute("title")).toBe(
-          `${split}\nHide process summary (Alt+X, P)`
-        );
-        expect(pulse(container).getAttribute("aria-label")).toBe("Hide process summary");
-        const describedBy = pulse(container).getAttribute("aria-describedby");
-        expect(container.querySelector(".sum .proc")?.id).toBe(describedBy);
-        expect(container.querySelector(".sum .proc")?.getAttribute("aria-label")).toBe(split);
+        // Off: folded away and out of reach, even with totals still around.
+        expect(bar(container).classList.contains("open")).toBe(false);
+        expect(bar(container).hasAttribute("inert")).toBe(true);
+        expect(bar(container).nextElementSibling?.classList.contains("sb-foot")).toBe(true);
+
+        rerender({ processSummary: true, projects: withProcesses() });
+        expect(bar(container).classList.contains("open")).toBe(true);
+        expect(bar(container).hasAttribute("inert")).toBe(false);
+        expect(parts(container)).toEqual(["cpu:150%", "memory:2.0G", "count:40"]);
+        expect(badge(container).getAttribute("title")).toBe(split);
+        expect(badge(container).getAttribute("aria-label")).toBe(split);
       });
 
-      it("leaves the pulse button's tooltip alone while it fits", async () => {
-        layout(500);
+      it("shows placeholders before the first scan", () => {
+        const { container } = setup({ projects: withProcesses(), processSummary: true });
+        expect(bar(container).classList.contains("open")).toBe(true);
+        expect(parts(container)).toEqual(["cpu:–%", "memory:–", "count:–"]);
+        expect(badge(container).getAttribute("title")).toBe("All of CodeHydra: not measured yet");
+      });
+
+      it("leaves the footer row without numbers and the pulse button's tooltip the hint", () => {
         const { container } = setup({
           projects: withProcesses(),
           processSummary: true,
           processTotals: totals,
         });
-        await tick();
-        expect(container.querySelector(".sum .proc")?.classList.contains("overflowed")).toBe(false);
+        expect(container.querySelector(".sb-foot .proc")).toBeNull();
         expect(pulse(container).getAttribute("title")).toBe("Hide process summary (Alt+X, P)");
         expect(pulse(container).hasAttribute("aria-describedby")).toBe(false);
       });
-
-      it("only offers the toggle with the summary off, however tight the footer", async () => {
-        layout(50);
-        const { container } = setup({ projects: sampleProjects(), processTotals: totals });
-        await tick();
-        expect(pulse(container).getAttribute("title")).toBe("Show process summary (Alt+X, P)");
-      });
-    });
-
-    it("shows all of CodeHydra in the footer, split in its tooltip, not the rows' sum", () => {
-      const totals: UiProcessTotals = {
-        all: { cpuPercent: 150, rssBytes: 2048 * MIB, count: 40 },
-        workspaces: { cpuPercent: 130, rssBytes: 1536 * MIB, count: 26 },
-        codehydra: { cpuPercent: 20, rssBytes: 512 * MIB, count: 14 },
-      };
-      const { container, rerender } = setup({ projects: sampleProjects(), processTotals: totals });
-      // Off: no badge, even with totals still around.
-      expect(container.querySelector(".sum .proc")).toBeNull();
-
-      rerender({ processSummary: true, projects: withProcesses() });
-      const badge = container.querySelector(".sum .proc");
-      expect(badge?.textContent).toBe("150% 2.0G · 40");
-      expect(badge?.getAttribute("title")).toBe(
-        [
-          "All of CodeHydra: 150% CPU · 2.0G memory · 40 processes",
-          "Workspaces: 130% CPU · 1.5G memory · 26 processes",
-          "CodeHydra itself: 20% CPU · 512M memory · 14 processes",
-        ].join("\n")
-      );
-    });
-
-    it("shows no footer badge before the first scan", () => {
-      const { container } = setup({ projects: withProcesses(), processSummary: true });
-      expect(container.querySelector(".sum .proc")).toBeNull();
     });
   });
 

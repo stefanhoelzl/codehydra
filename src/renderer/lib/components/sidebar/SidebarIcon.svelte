@@ -24,7 +24,10 @@
     | "xcircle"
     | "close"
     | "refresh"
-    | "pulse";
+    | "pulse"
+    | "cpu"
+    | "memory"
+    | "processes";
 </script>
 
 <script lang="ts">
@@ -97,6 +100,16 @@
     <path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3h-3" />
   {:else if name === "pulse"}
     <path d="M1.5 8.5h3l1.8-4 3 8 1.9-4h3.3" />
+  {:else if name === "cpu"}
+    <rect x="4" y="4" width="8" height="8" rx="1.5" /><path
+      d="M6.5 2v2M9.5 2v2M6.5 12v2M9.5 12v2M2 6.5h2M2 9.5h2M12 6.5h2M12 9.5h2"
+    />
+  {:else if name === "memory"}
+    <rect x="1.5" y="4" width="13" height="6.5" rx="1" /><path
+      d="M4 10.5v2M6.5 10.5v2M9.5 10.5v2M12 10.5v2M4.5 6.5v1.5M8 6.5v1.5M11.5 6.5v1.5"
+    />
+  {:else if name === "processes"}
+    <path d="M8 2.5l5.5 3-5.5 3-5.5-3z" /><path d="M2.5 8.5l5.5 3 5.5-3M2.5 11l5.5 3 5.5-3" />
   {/if}
 </svg>
 

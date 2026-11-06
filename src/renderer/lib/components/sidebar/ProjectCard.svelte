@@ -2,7 +2,7 @@
   ProjectCard.svelte
 
   One project: a header bar (letter badge, name, hibernated/automated counts
-  or the collapsed counts, the process total, close and +) over its rows. Every row is always in
+  or the collapsed counts, the process icon, close and +) over its rows. Every row is always in
   the page and folds open or closed, so collapsing, opening the hibernated list
   or entering Find animates.
 
@@ -25,15 +25,10 @@
     type RowAction,
     type SidebarView,
   } from "$lib/utils/sidebar-model.js";
-  import { watchFit } from "$lib/utils/watch-fit.js";
   import SidebarIcon from "./SidebarIcon.svelte";
   import RowCountItems from "./RowCountItems.svelte";
   import Highlighted from "./Highlighted.svelte";
-  import {
-    describeProcessSummary,
-    formatProcessBadge,
-    sumProcessSummaries,
-  } from "$lib/utils/process-summary.js";
+  import { describeProcessSummary, sumProcessSummaries } from "$lib/utils/process-summary.js";
   import WorkspaceRow from "./WorkspaceRow.svelte";
   import type { TransitionConfig } from "svelte/transition";
   import type { RowMotion } from "./motion";
@@ -106,14 +101,13 @@
     automated: counts.automated,
   });
   // With the process summary on, the header totals its rows' CPU and memory
-  // (null otherwise); as just an icon with a tooltip when the numbers don't fit.
+  // (null otherwise), shown as an icon with the numbers as its tooltip.
   const processTotal = $derived(
     sumProcessSummaries(project.workspaces.map((row) => row.processes))
   );
   const processTip = $derived(
     processTotal === null ? "" : `${project.name}: ${describeProcessSummary(processTotal)}`
   );
-  let totalFits = $state(true);
   const hibernatedOpen = $derived(project.hibernatedView !== "hidden");
   const color = $derived(projectColor(project.colorIndex));
 
@@ -195,10 +189,7 @@
 >
   <div
     class="proj-h"
-    class:stats={processTotal !== null}
-    class:badged={processTotal !== null && totalFits}
     data-act="toggle"
-    use:watchFit={(fits) => (totalFits = fits)}
     title={`${folds.expanded ? "Collapse" : "Expand"} ${project.name}`}
   >
     <span class="mono-av">{project.name.slice(0, 1).toUpperCase()}</span>
@@ -222,19 +213,11 @@
       {/if}
     </span>
     {#if processTotal !== null}
-      <span
-        class="cnt proc"
-        class:overflowed={!totalFits}
-        title={processTip}
-        aria-label={processTip}>{formatProcessBadge(processTotal)}</span
+      <span class="proc-icon" title={processTip} aria-label={processTip}
+        ><SidebarIcon name="pulse" /></span
       >
-      {#if !totalFits}
-        <span class="proc-icon" data-fit-skip title={processTip} aria-label={processTip}
-          ><SidebarIcon name="pulse" /></span
-        >
-      {/if}
     {/if}
-    <span class="spacer" data-fit-grow></span>
+    <span class="spacer"></span>
     <button
       type="button"
       class="ib hov"
@@ -345,11 +328,6 @@
     text-overflow: ellipsis;
     min-width: 0;
   }
-  /* The process badge makes way before the name does: watchFit measures the name
-     at its full width as long as the badge is there. */
-  .proj-h.badged .name {
-    flex-shrink: 0;
-  }
   .proj-h :global(.sb-icon.remote) {
     color: var(--ch-sb-fg-3);
     width: 12px;
@@ -383,15 +361,6 @@
   }
   .proj-h:hover .hov {
     display: grid;
-  }
-  /* With a process total, the close button's room is always taken: hovering
-     must not change what fits. */
-  .proj-h.stats .hov {
-    display: grid;
-    visibility: hidden;
-  }
-  .proj-h.stats:hover .hov {
-    visibility: visible;
   }
   /* The header has no room to spare: the trash sits over whatever is left of
      the + (22px wide, past the chevron's 14px and 4px padding, 5px gaps) instead
@@ -453,17 +422,6 @@
     font-variant-numeric: tabular-nums;
     flex: none;
     padding: 0 2px;
-  }
-  /* The worst-case width (see watchFit): digits changing can't flip it. */
-  .cnt.proc {
-    color: var(--ch-sb-fg-2);
-    min-width: 13ch; /* `999% 12G · 99` and the padding */
-  }
-  .cnt.proc.overflowed {
-    position: absolute;
-    left: 0;
-    top: 0;
-    visibility: hidden;
   }
   .proc-icon {
     display: grid;

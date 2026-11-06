@@ -1,6 +1,6 @@
 /**
  * A workspace's process summary as the sidebar shows it: a compact badge on
- * the row (`12% 874M · 7`) and a spelled-out tooltip. Pure.
+ * the row (`12% · 874M · 7`) and a spelled-out tooltip. Pure.
  */
 
 import type { UiProcessSummary, UiProcessTotals } from "@shared/ui-state";
@@ -22,9 +22,26 @@ export function formatMemory(bytes: number): string {
   return `${gib < 10 ? gib.toFixed(1) : Math.round(gib)}G`;
 }
 
-/** The badge: `12% 874M · 7` (CPU, memory, process count). */
+/** The badge's three numbers, each on its own; dashes before the first scan. */
+export interface ProcessBadgeParts {
+  cpu: string;
+  memory: string;
+  count: string;
+}
+
+export function processBadgeParts(summary: UiProcessSummary | undefined): ProcessBadgeParts {
+  if (summary === undefined) return { cpu: "–%", memory: "–", count: "–" };
+  return {
+    cpu: formatCpu(summary.cpuPercent),
+    memory: formatMemory(summary.rssBytes),
+    count: String(summary.count),
+  };
+}
+
+/** The badge: `12% · 874M · 7` (CPU, memory, process count). */
 export function formatProcessBadge(summary: UiProcessSummary): string {
-  return `${formatCpu(summary.cpuPercent)} ${formatMemory(summary.rssBytes)} · ${summary.count}`;
+  const { cpu, memory, count } = processBadgeParts(summary);
+  return `${cpu} · ${memory} · ${count}`;
 }
 
 /** The badge's tooltip: `12% CPU · 874M memory · 7 processes`. */
@@ -34,6 +51,9 @@ export function describeProcessSummary(summary: UiProcessSummary): string {
   const count = `${summary.count} ${summary.count === 1 ? "process" : "processes"}`;
   return `${cpu} · ${formatMemory(summary.rssBytes)} memory · ${count}`;
 }
+
+/** The footer bar's tooltip before the first scan. */
+export const PROCESS_TOTALS_PENDING = "All of CodeHydra: not measured yet";
 
 /**
  * The footer badge's tooltip: CodeHydra's whole footprint, then its split into

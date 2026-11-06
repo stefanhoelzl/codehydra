@@ -34,7 +34,7 @@ describe("formatMemory", () => {
 describe("process summary", () => {
   it("is a compact badge and a spelled-out tooltip", () => {
     const summary = { cpuPercent: 12, rssBytes: 874 * MIB, count: 7 };
-    expect(formatProcessBadge(summary)).toBe("12% 874M · 7");
+    expect(formatProcessBadge(summary)).toBe("12% · 874M · 7");
     expect(describeProcessSummary(summary)).toBe("12% CPU · 874M memory · 7 processes");
   });
 
