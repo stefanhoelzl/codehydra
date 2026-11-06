@@ -104,6 +104,16 @@ jobs:
             runs-on: macos-26
             artifact: CodeHydra-darwin-arm64.tar.gz
     steps:
+      # Spotlight indexes what lands on a fresh runner: on macos-26, mds_stores
+      # was seen at over a full core of the three after the app was unpacked. A
+      # starved box is what stalls Chromium's background-priority threads and
+      # processes, so an app quit or a helper's exit outlasts the leftover-process
+      # grace in scripts/appctrl.ts. First, before anything is written; nothing
+      # here needs search.
+      - name: Turn off Spotlight indexing
+        if: matrix.name == 'macos'
+        run: sudo mdutil -a -i off
+
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
         with:
