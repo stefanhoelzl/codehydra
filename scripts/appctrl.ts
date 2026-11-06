@@ -43,6 +43,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { formatLogScope } from "../src/boundaries/platform/log-scope";
 import { errorCode, getErrorMessage } from "../src/shared/error-utils";
+import {
+  createSnapshots,
+  timestampName,
+  validateSnapshotName,
+  type StartOrigin,
+} from "./appctrl-snapshot.ts";
 import type { LogScope } from "../src/boundaries/platform/logging-types";
 
 /** Repo root — this file lives in <root>/scripts/. */
@@ -940,6 +946,7 @@ const STATE_FILE = join(DATA_DIR, "appctrl.json");
 const CONSOLE_FILE = join(DATA_DIR, "appctrl-console.jsonl");
 const DAEMON_LOG = join(DATA_DIR, "appctrl-daemon.log");
 const SCREENSHOT_DIR = join(DATA_DIR, "screenshots");
+const snapshots = createSnapshots(DATA_DIR, process.cwd());
 
 /** How long a daemon waits for its `start` request before giving up. */
 const DAEMON_IDLE_TIMEOUT_MS = 120_000;
@@ -959,8 +966,8 @@ interface AppStatus {
 
 /** Request bodies, per daemon command. The CLI parses and validates; the daemon trusts. */
 interface DaemonRequests {
-  start: { headless: boolean; packaged?: string; flags: string[] };
-  stop: Record<string, never>;
+  start: { headless: boolean; packaged?: string; flags: string[]; origin?: StartOrigin };
+  stop: { snapshot?: string };
   status: Record<string, never>;
   screenshot: { target?: string };
   dom: { selector?: string; target?: string };
@@ -1002,6 +1009,13 @@ function readDaemonState(): DaemonState | null {
     return isAlive(state.pid) ? state : null;
   } catch {
     return null;
+  }
+}
+
+/** The state in ./app-data is only consistent, and only safe to replace, with no app on it. */
+function requireNoApp(): void {
+  if (readDaemonState()) {
+    throw new Error("App running — `pnpm -s appctrl stop` it first.");
   }
 }
 
@@ -1095,6 +1109,18 @@ function runDaemon(): void {
   let status: AppStatus | null = null;
   let stopping = false;
 
+  /** A snapshot named by its time, after a clean exit. Never fails the exit itself. */
+  function saveAutoSnapshot(): string | null {
+    const name = timestampName();
+    try {
+      snapshots.save(name, { auto: true });
+      return name;
+    } catch (err) {
+      process.stderr.write(`appctrl: auto snapshot failed: ${getErrorMessage(err)}\n`);
+      return null;
+    }
+  }
+
   function exit(code: number): never {
     driver.killSync();
     // Only our own state file: a successor may already have replaced it.
@@ -1126,8 +1152,11 @@ function runDaemon(): void {
       driver
         .electron()
         .process()
-        .once("exit", () => {
-          if (!stopping) exit(0);
+        .once("exit", (code) => {
+          if (stopping) return;
+          // Quit from its own UI: a clean exit is a consistent state, a crash is not.
+          if (code === 0) saveAutoSnapshot();
+          exit(0);
         });
       // Every other command needs the UI page; return once there is one.
       await driver.waitForUiPage();
@@ -1135,10 +1164,13 @@ function runDaemon(): void {
       status = { pid, headless, packaged: packaged ?? null };
       return status;
     },
-    stop: async () => {
+    stop: async ({ snapshot }) => {
       stopping = true;
+      // Throws when the app left processes behind: no snapshot of an unclean stop.
       await driver.stop();
-      return null;
+      if (snapshot === undefined) return { snapshot: saveAutoSnapshot() };
+      snapshots.save(snapshot, { auto: false });
+      return { snapshot };
     },
     status: async () => status,
     screenshot: async ({ target = "workspace" }) => {
@@ -1179,11 +1211,25 @@ function runDaemon(): void {
     }
     const handler = handlers[command as DaemonCommand] as (params: unknown) => Promise<unknown>;
 
+    const params: unknown = body ? JSON.parse(body) : {};
+    // The command log tells how the state was built; asking for status adds nothing.
+    const log = (error?: string): void => {
+      if (command === "status") return;
+      snapshots.logCommand({
+        ts: new Date().toISOString(),
+        command,
+        params,
+        ...(error !== undefined && { error }),
+      });
+    };
+
     try {
-      const result = await handler(body ? (JSON.parse(body) as unknown) : {});
+      const result = await handler(params);
+      log();
       // A daemon without an app has nothing left to serve.
       reply(200, { result: result ?? null }, driver.isRunning() ? undefined : () => exit(0));
     } catch (err) {
+      log(getErrorMessage(err));
       reply(500, { error: getErrorMessage(err) }, driver.isRunning() ? undefined : () => exit(1));
     }
   }
@@ -1262,41 +1308,92 @@ function targetOf(values: OptionValues): { target?: string } {
 
 const COMMANDS: Record<string, CliCommand> = {
   start: {
-    usage: "start [--headed] [--packaged <exe>] [-- <app flag>…]",
+    usage: "start [--headed] [--packaged <exe>] [--snapshot <name> | --fresh] [-- <app flag>…]",
     summary:
       "Launch CodeHydra (headless unless --headed) and return once its UI is up. Needs\n" +
       "`pnpm build` first. --packaged launches a packaged binary instead of the dev build\n" +
       "(e.g. dist/linux-unpacked/codehydra) to reproduce a CI failure. App flags follow `--`\n" +
-      "(e.g. -- --agent=opencode); log.level and log.format are managed by appctrl.\n" +
+      "(e.g. -- --agent=claude); log.level and log.format are managed by appctrl.\n" +
+      "The app starts on the state ./app-data holds: --snapshot restores a snapshot first,\n" +
+      "--fresh clears it first (logs, screenshots and snapshots stay).\n" +
       "Prints {pid, headless, packaged}.",
-    options: { headed: { type: "boolean" }, packaged: { type: "string" } },
+    options: {
+      headed: { type: "boolean" },
+      packaged: { type: "string" },
+      snapshot: { type: "string" },
+      fresh: { type: "boolean" },
+    },
     run: async ({ values, positionals }) => {
-      if (readDaemonState()) {
-        throw new Error("App already running — `pnpm -s appctrl stop` it first.");
+      const snapshot = stringOption(values, "snapshot");
+      const fresh = values["fresh"] === true;
+      if (snapshot !== undefined && fresh) {
+        throw new UsageError("--snapshot and --fresh exclude each other");
       }
+      if (snapshot !== undefined) validateSnapshotName(snapshot);
+      requireNoApp();
+      if (snapshot !== undefined) snapshots.restore(snapshot);
+      if (fresh) snapshots.clear();
       const packaged = stringOption(values, "packaged");
       const state = await spawnDaemon();
       const result = await callDaemon(state, "start", {
         headless: values["headed"] !== true,
         ...(packaged !== undefined && { packaged: resolve(packaged) }),
         flags: positionals,
+        ...(snapshot !== undefined && { origin: { snapshot } }),
+        ...(fresh && { origin: { fresh: true } }),
       });
       return json(result);
     },
   },
   stop: {
-    usage: "stop",
+    usage: "stop [--snapshot <name>]",
     summary:
       "Quit the app through its own shutdown path. The daemon exits with it. Fails if the app " +
-      "left processes running (they are killed).",
-    run: async () => {
+      "left processes running (they are killed). A clean stop saves a snapshot: --snapshot\n" +
+      "names it (replacing one of that name), else it is named by its time. Prints its name.",
+    options: { snapshot: { type: "string" } },
+    run: async ({ values }) => {
+      const snapshot = stringOption(values, "snapshot");
+      if (snapshot !== undefined) validateSnapshotName(snapshot);
       const state = readDaemonState();
       if (!state) {
         process.stderr.write("App not running.\n");
         return undefined;
       }
-      await callDaemon(state, "stop", {});
-      return undefined;
+      const result = (await callDaemon(state, "stop", {
+        ...(snapshot !== undefined && { snapshot }),
+      })) as { snapshot: string | null } | null;
+      return result?.snapshot ?? undefined;
+    },
+  },
+  snapshot: {
+    usage: "snapshot save|restore|show|delete <name> | snapshot list",
+    summary:
+      "Manage snapshots of ./app-data (in ./app-data/snapshots/): `save` the current state,\n" +
+      "`restore` one into ./app-data, `list` them newest first, `show` one's metadata and the\n" +
+      "commands that built it, `delete` one. save and restore need the app stopped; to\n" +
+      "launch from one use `start --snapshot`, to save while running `stop --snapshot`.\n" +
+      "Every clean exit saves one named by its time; all are kept.",
+    run: async (invocation) => {
+      const action = positional(invocation, 0, "action");
+      if (action === "list") return json(snapshots.list());
+      const name = validateSnapshotName(positional(invocation, 1, "name"));
+      switch (action) {
+        case "save":
+          requireNoApp();
+          return json(snapshots.save(name, { auto: false }));
+        case "restore":
+          requireNoApp();
+          snapshots.restore(name);
+          return undefined;
+        case "show":
+          return json(snapshots.show(name));
+        case "delete":
+          snapshots.remove(name);
+          return undefined;
+        default:
+          throw new UsageError(`unknown action "${action}"`);
+      }
     },
   },
   status: {
@@ -1515,6 +1612,19 @@ iframes inside it, addressed as Playwright frames:
 6. After a code change: \`stop\`, \`pnpm build\`, \`start\`
 7. \`stop\` when done
 
+## Snapshots
+Every clean exit (\`stop\`, or the app quit from its own UI) saves ./app-data as a
+snapshot named by its time; a crash saves none. Name the ones worth keeping:
+- Prepare a state once, then \`stop --snapshot <name>\` (a clean stop, then save)
+- Iterate from it: \`stop\`, \`pnpm build\`, \`start --snapshot <name>\` — every run starts
+  from the same prepared state instead of whatever the last run left
+- \`start --fresh\` starts from an empty app-data. Pass config as app flags:
+  \`start --fresh -- --agent=claude\` skips onboarding
+- \`snapshot list\` / \`show <name>\` / \`delete <name>\`; \`snapshot save|restore <name>\`
+  with the app stopped
+- \`show\` prints the metadata (HEAD, flags, the snapshot it came from) and every
+  appctrl command that built the state, back to the last \`--fresh\`
+
 ## Shadow DOM — critical for UI interaction
 CodeHydra uses \`@vscode-elements\` web components for form controls:
 \`vscode-button\`, \`vscode-textfield\`, \`vscode-checkbox\`, \`vscode-single-select\`, …
@@ -1540,13 +1650,13 @@ clicking anything in it. To collapse it again:
     pnpm -s appctrl eval --target ui "document.querySelector('nav.sidebar')?.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, clientX: 100 })) ?? null"
 
 ## Opening a project
-1. Create a temp git repo:
-   \`git init /tmp/appctrl-test && git -C /tmp/appctrl-test commit --allow-empty -m init\`
-2. Mock the folder picker: \`dialog /tmp/appctrl-test\`
+1. Create a seed git repo in ./app-data/seed (never /tmp: snapshots would miss it):
+   \`R="$PWD/app-data/seed/sample"; git init -q "$R" && git -C "$R" commit -q --allow-empty -m init\`
+2. Mock the folder picker: \`dialog "$R"\`
 3. \`expand-sidebar\`, then click Open Project
 4. The mock returns the path — no native dialog appears
 
-IMPORTANT: never open the user's real projects. Always use temporary git repos.
+IMPORTANT: never open the user's real projects. Always use seed repos.
 
 ## Workspace (IDE) views
 - \`acquireVsCodeApi\` is NOT available — this is the IDE server, not a VS Code extension
