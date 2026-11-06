@@ -74,7 +74,11 @@ import type {
   DeletePipelineHookInput,
   DeleteHookResult,
 } from "../../intents/delete-workspace";
-import { createIdeServerModule, type IdeServerModuleDeps } from "./ide-server-module";
+import {
+  createIdeServerModule,
+  IDE_SERVER_STOP_GRACEFUL_TIMEOUT_MS,
+  type IdeServerModuleDeps,
+} from "./ide-server-module";
 import { applyBundlePatches } from "./bundle-patches";
 import { VSCODIUM_VERSION } from "./vscodium";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
@@ -87,6 +91,10 @@ import {
 } from "../../boundaries/platform/process.state-mock";
 import { createArchiveExtractorMock } from "../../boundaries/platform/archive-extractor.state-mock";
 import type { ListeningProcess } from "../../boundaries/platform/process";
+import {
+  PROCESS_KILL_FORCE_TIMEOUT_MS,
+  PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
+} from "../../boundaries/platform/process";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { createBehavioralLogger } from "../../boundaries/platform/logging.test-utils";
 import type { DialogConfig } from "../../shared/dialog-types";
@@ -825,6 +833,27 @@ describe("IdeServerModule", () => {
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
       expect(processRunner.$.spawned(0)).toHaveBeenKilled();
+    });
+
+    it("gives the server's agent terminals time to shut down before SIGKILL", async () => {
+      const processRunner = createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() });
+      const deps = createMockDeps({ processRunner });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(minimalStart());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      dispatcher.registerOperation(
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
+      );
+      await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
+
+      expect(processRunner.$.spawned(0)).toHaveBeenKilledWith(
+        IDE_SERVER_STOP_GRACEFUL_TIMEOUT_MS,
+        PROCESS_KILL_FORCE_TIMEOUT_MS
+      );
+      expect(IDE_SERVER_STOP_GRACEFUL_TIMEOUT_MS).toBeGreaterThan(PROCESS_KILL_GRACEFUL_TIMEOUT_MS);
     });
 
     it("cancels a start still waiting on the health check instead of failing it", async () => {

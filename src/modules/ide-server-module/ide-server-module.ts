@@ -123,6 +123,17 @@ const IDE_RECONNECTION_GRACE_MS = 3 * 60 * 60 * 1000;
 const PORT_RELEASE_TIMEOUT_MS = 3000;
 
 /**
+ * How long stop() waits after SIGTERM before it SIGKILLs the server.
+ *
+ * kill() waits for the whole tree, and the tree holds every agent terminal: a
+ * Claude agent that loses its pty and gets SIGTERM takes a second or two to shut
+ * down (measured: 2 s for an idle one), past the 1 s default. kill() returns as
+ * soon as the tree is gone, so a shutdown only waits this long for an agent
+ * that needs it; SIGKILL then means one is stuck.
+ */
+export const IDE_SERVER_STOP_GRACEFUL_TIMEOUT_MS = 5000;
+
+/**
  * How much of an exited server's output to keep in its start error. The error
  * travels into crash reports, so keep the end — where the cause is — and bound it.
  */
@@ -874,7 +885,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
 
     try {
       const result = await proc.kill(
-        PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
+        IDE_SERVER_STOP_GRACEFUL_TIMEOUT_MS,
         PROCESS_KILL_FORCE_TIMEOUT_MS
       );
 
