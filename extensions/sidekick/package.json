@@ -94,30 +94,9 @@
         "command": "codehydra.debug.connectionInfo",
         "title": "CodeHydra Debug: Show Connection Info",
         "enablement": "codehydra.isDevelopment"
-      },
-      {
-        "command": "codehydra.processes.refresh",
-        "title": "Refresh Processes",
-        "category": "CodeHydra",
-        "icon": "$(refresh)"
       }
     ],
-    "views": {
-      "explorer": [
-        {
-          "id": "codehydra.processes",
-          "name": "Processes"
-        }
-      ]
-    },
     "menus": {
-      "view/title": [
-        {
-          "command": "codehydra.processes.refresh",
-          "when": "view == codehydra.processes",
-          "group": "navigation"
-        }
-      ],
       "explorer/context": [
         {
           "command": "codehydra.revealInFileExplorer",

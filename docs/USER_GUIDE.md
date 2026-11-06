@@ -136,13 +136,28 @@ Projects are sorted by name.
   numbers on hover. A bar above the footer shows all of CodeHydra, each number
   behind its icon (a chip for CPU, a memory stick, stacked layers for the
   processes): every workspace's processes plus CodeHydra's own (its window, the
-  editor server and their helpers), each counted once; hover it for the split
-  between the two. Until the first count arrives it shows dashes. Toggle it with
-  the pulse button
-  (highlighted while on) or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>; the
-  choice is saved as `sidebar.process-summary` (off by default). It refreshes
-  every few seconds, only while it is on, and hibernated workspaces have none.
-  See [Processes](#processes) for what counts as a workspace's process.
+  editor server and their helpers), each counted once; hover it for the split.
+  Until the first count arrives it shows dashes. Three buttons on the bar's
+  left pick how much it shows (the current one highlighted):
+  - **Total**: just that one row.
+  - **Breakdown**: a row each for the workspaces, the code server (the editor
+    server and what it runs for no workspace) and CodeHydra itself (its
+    window and helpers), which add up to the total.
+  - **Process tree**: every process, under Workspaces › project › workspace,
+    Code server and CodeHydra, each row with the totals of everything below
+    it. Everything starts expanded; click a row to fold or unfold it. Hover a
+    process for its command line, pid, directory and ports. A workspace's
+    processes have a **×** on hover that stops the process and everything it
+    started: click it, then **Kill?** to confirm (moving away cancels). The
+    tree takes a quarter of the sidebar's height and scrolls; drag its top
+    edge to resize it (saved), double-click the edge to go back to a quarter.
+
+  Toggle the summary with the pulse button (highlighted while on) or
+  <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>; turning it back on returns to
+  the level you used last. The choice is saved as `sidebar.process-summary`
+  (`off`, the default, `total`, `breakdown` or `tree`). It refreshes every few
+  seconds, only while it is on, and hibernated workspaces have none. See
+  [Processes](#processes) for what counts as a workspace's process.
 
 A **project card** has a header bar with the project's letter, its name (a
 cloud marks a cloned project), and on hover a trash icon (close the project)
@@ -528,27 +543,26 @@ of the worktree, or a build an agent runs in another workspace's directory,
 stays with the workspace it came from. A process without it belongs to a
 workspace when its working directory is inside the worktree, or when it was
 started by one that belongs: a `pnpm dev` brings its whole tree along, even
-after it changes directory.
+after it changes directory. A workspace's editor extension host — which runs
+its extensions and their language servers — belongs to it too, once
+CodeHydra's own extension in it has connected.
 CPU is percent of one core over the last few seconds (`200%` is two cores).
 
-There are three ways to look:
+There are two ways to look:
 
-- **The Processes view**, in each workspace's Explorer (below the files). It
-  shows the processes as a tree: name, then pid, CPU, memory, how long it has
-  run and the ports it listens on. A collapsed row shows the totals of
-  everything below it, and the view's title the workspace's total. Hover a
-  row for its command line and directory. It refreshes every few seconds
-  while it is visible; the refresh button asks right away.
 - **The process summary** in the sidebar (see [The sidebar](#the-sidebar)):
   every workspace's total at a glance, and in the bar above the footer all of
-  CodeHydra.
+  CodeHydra — as one total, split into workspaces, code server and CodeHydra,
+  or as a tree of every process.
   CodeHydra's own processes — its window, the editor server — belong to no
   workspace; they count only there.
-- **`ch ws processes`** (MCP `workspace_list_processes`) prints the same tree
-  as JSON, for an agent checking what it left running.
+- **`ch ws processes`** (MCP `workspace_list_processes`) prints a workspace's
+  processes as a JSON tree, for an agent checking what it left running.
 
-They only show: to stop a process, use its terminal, or hibernate or delete
-the workspace, which stops everything in it — every process the workspace
+To stop one of a workspace's processes, use its terminal, or the **×** on its
+row in the sidebar's process tree, which stops it and everything it started.
+CodeHydra's own processes cannot be stopped there. Hibernating or deleting
+the workspace stops everything in it — every process the workspace
 started, by the rules above, wherever it runs now: a dev server left running
 in the background, a program started from one of its terminals. Deleting also
 stops any other process whose working directory is inside the worktree, since

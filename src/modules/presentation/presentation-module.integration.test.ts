@@ -34,6 +34,7 @@ import type { PathProvider } from "../../boundaries/platform/path-provider";
 import { Path } from "../../utils/path/path";
 import type { ProcessTotals } from "../../api/entries/deps";
 import type { CodeHydraTotals } from "../process-monitor/attribution";
+import type { ProcessTrees } from "../process-monitor/process-monitor-module";
 import type { WorkspaceRef } from "../../intents/contract";
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { UiProjectRow, UiState } from "../../shared/ui-state";
@@ -164,11 +165,16 @@ function createDeps() {
 function createFakeProcessMonitor() {
   let summaries = new Map<WorkspaceRef, ProcessTotals>();
   let totals: CodeHydraTotals | null = null;
+  let trees: ProcessTrees | null = null;
   const listeners = new Set<() => void>();
   return {
     watching: false,
     summaries: (): ReadonlyMap<WorkspaceRef, ProcessTotals> => summaries,
     totals: (): CodeHydraTotals | null => totals,
+    trees: (): ProcessTrees | null => trees,
+    killProcess: vi.fn<(pid: number, startedAt: string | null) => Promise<boolean>>(() =>
+      Promise.resolve(true)
+    ),
     onSummaries(listener: () => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -176,9 +182,14 @@ function createFakeProcessMonitor() {
     setWatching(watching: boolean) {
       this.watching = watching;
     },
-    publish(next: Record<string, ProcessTotals>, nextTotals: CodeHydraTotals | null = null) {
+    publish(
+      next: Record<string, ProcessTotals>,
+      nextTotals: CodeHydraTotals | null = null,
+      nextTrees: ProcessTrees | null = null
+    ) {
       summaries = new Map(Object.entries(next) as [WorkspaceRef, ProcessTotals][]);
       totals = nextTotals;
+      trees = nextTrees;
       for (const listener of listeners) listener();
     },
   };
@@ -541,7 +552,9 @@ describe("PresentationModule - ui:state snapshots", () => {
           width: SIDEBAR_DEFAULT_WIDTH,
           mode: "overlay",
           find: null,
-          processSummary: false,
+          processSummary: "off",
+          processLevel: "total",
+          processTreeHeight: 0.25,
         },
         frames: {},
         main: { kind: "starting" },
@@ -574,7 +587,9 @@ describe("PresentationModule - ui:state snapshots", () => {
         width: SIDEBAR_DEFAULT_WIDTH,
         mode: "overlay",
         find: null,
-        processSummary: false,
+        processSummary: "off",
+        processLevel: "total",
+        processTreeHeight: 0.25,
       },
       frames: {},
       main: { kind: "creation" },
@@ -633,7 +648,9 @@ describe("PresentationModule - ui:state snapshots", () => {
         width: SIDEBAR_DEFAULT_WIDTH,
         mode: "overlay",
         find: null,
-        processSummary: false,
+        processSummary: "off",
+        processLevel: "total",
+        processTreeHeight: 0.25,
       },
       frames: { [keyOf("main")]: "http://127.0.0.1:1/main" },
       main: { kind: "workspace", frameKey: keyOf("main") },
@@ -1511,7 +1528,7 @@ describe("PresentationModule - sidebar resize", () => {
       deps.processMonitor.publish({ [ws.ref]: { cpuPercent: 5, rssBytes: 1024, count: 1 } });
       await flush();
 
-      expect(lastSnapshot(deps).sidebar.processSummary).toBe(false);
+      expect(lastSnapshot(deps).sidebar.processSummary).toBe("off");
       expect(deps.processMonitor.watching).toBe(false);
       expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.processes).toBeUndefined();
     });
@@ -1522,10 +1539,10 @@ describe("PresentationModule - sidebar resize", () => {
       const ws = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
       await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([ws]) });
 
-      emitUiEvent(deps, { kind: "set-sidebar-process-summary", enabled: true });
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", mode: "total" });
       await flush();
-      expect(deps.configService.getEffective()["sidebar.process-summary"]).toBe(true);
-      expect(lastSnapshot(deps).sidebar.processSummary).toBe(true);
+      expect(deps.configService.getEffective()["sidebar.process-summary"]).toBe("total");
+      expect(lastSnapshot(deps).sidebar.processSummary).toBe("total");
       expect(deps.processMonitor.watching).toBe(true);
 
       deps.processMonitor.publish({ [ws.ref]: { cpuPercent: 12, rssBytes: 2048, count: 3 } });
@@ -1536,7 +1553,7 @@ describe("PresentationModule - sidebar resize", () => {
         count: 3,
       });
 
-      emitUiEvent(deps, { kind: "set-sidebar-process-summary", enabled: false });
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", mode: "off" });
       await flush();
       expect(deps.processMonitor.watching).toBe(false);
       expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.processes).toBeUndefined();
@@ -1544,11 +1561,44 @@ describe("PresentationModule - sidebar resize", () => {
 
     it("follows a value set elsewhere (settings, ch config) on the next push", async () => {
       const deps = createDeps();
-      await deps.configService.set("sidebar.process-summary", true);
+      await deps.configService.set("sidebar.process-summary", "breakdown");
       await startModule(deps);
 
-      expect(lastSnapshot(deps).sidebar.processSummary).toBe(true);
+      expect(lastSnapshot(deps).sidebar.processSummary).toBe("breakdown");
+      expect(lastSnapshot(deps).sidebar.processLevel).toBe("breakdown");
       expect(deps.processMonitor.watching).toBe(true);
+    });
+
+    it("reads the old boolean values as total and off", async () => {
+      const deps = createDeps();
+      await startModule(deps);
+      const definition = deps.configService.getDefinitions().get("sidebar.process-summary")!;
+
+      expect(definition.validate(true)).toBe("total");
+      expect(definition.validate(false)).toBe("off");
+      expect(definition.validate("tree")).toBe("tree");
+      expect(definition.validate("on")).toBeUndefined();
+      expect(definition.parse("true")).toBe("total");
+      expect(definition.parse("false")).toBe("off");
+      expect(definition.parse("breakdown")).toBe("breakdown");
+    });
+
+    it("remembers the last level, where turning the summary back on returns", async () => {
+      const deps = createDeps();
+      const module = await startModule(deps);
+
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", mode: "tree" });
+      await flush();
+      expect(deps.stateService.values.get("sidebar.process-level")).toBe("tree");
+
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", mode: "off" });
+      await flush();
+      expect(lastSnapshot(deps).sidebar.processSummary).toBe("off");
+      expect(lastSnapshot(deps).sidebar.processLevel).toBe("tree");
+
+      await emit(module, EVENT_SHORTCUT_KEY_PRESSED, { key: "p" });
+      await flush();
+      expect(lastSnapshot(deps).sidebar.processSummary).toBe("tree");
     });
 
     it("puts CodeHydra's whole footprint on the sidebar only while the summary is on", async () => {
@@ -1557,22 +1607,95 @@ describe("PresentationModule - sidebar resize", () => {
       const ws = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
       await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([ws]) });
       const totals: CodeHydraTotals = {
-        all: { cpuPercent: 30, rssBytes: 3072, count: 5 },
+        all: { cpuPercent: 30, rssBytes: 3072, count: 6 },
         workspaces: { cpuPercent: 10, rssBytes: 1024, count: 2 },
+        codeServer: { cpuPercent: 0, rssBytes: 0, count: 1 },
         codehydra: { cpuPercent: 20, rssBytes: 2048, count: 3 },
       };
       deps.processMonitor.publish({}, totals);
       await flush();
       expect(lastSnapshot(deps).sidebar.processTotals).toBeUndefined();
 
-      emitUiEvent(deps, { kind: "set-sidebar-process-summary", enabled: true });
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", mode: "total" });
       await flush();
       expect(lastSnapshot(deps).sidebar.processTotals).toEqual(totals);
     });
 
+    it("carries the process tree, by project and workspace, only at the tree level", async () => {
+      const deps = createDeps();
+      const module = await startModule(deps);
+      const ws = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
+      const idle = makeWorkspace("b", { url: "http://127.0.0.1:1/b" });
+      await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([ws, idle]) });
+      const node = {
+        pid: 42,
+        ppid: 1,
+        name: "vite",
+        commandLine: "vite",
+        cwd: "/w",
+        cpuPercent: 3,
+        rssBytes: 100,
+        startedAt: "2026-01-01T00:00:00.000Z",
+        ports: [5173],
+        subtree: { cpuPercent: 3, rssBytes: 100, count: 1 },
+        children: [],
+      };
+      const ide = { ...node, pid: 7, name: "node", ports: [] };
+      const processes = (root: typeof node) => ({
+        scannedAt: "2026-01-01T00:00:01.000Z",
+        total: root.subtree,
+        processes: [root],
+      });
+      const trees: ProcessTrees = {
+        workspaces: new Map([[ws.ref, processes(node)]]),
+        groups: new Map([["codeServer", processes(ide)]]),
+      };
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", mode: "breakdown" });
+      deps.processMonitor.publish({}, null, trees);
+      await flush();
+      expect(lastSnapshot(deps).sidebar.processTree).toBeUndefined();
+
+      emitUiEvent(deps, { kind: "set-sidebar-process-summary", mode: "tree" });
+      await flush();
+      expect(lastSnapshot(deps).sidebar.processTree).toEqual({
+        projects: [
+          {
+            id: PROJECT_ID,
+            name: "alpha",
+            total: node.subtree,
+            workspaces: [{ key: ws.ref, name: "a", total: node.subtree, processes: [node] }],
+          },
+        ],
+        codeServer: [ide],
+        codehydra: [],
+      });
+    });
+
+    it("persists the tree's height, clamped", async () => {
+      const deps = createDeps();
+      await startModule(deps);
+
+      emitUiEvent(deps, { kind: "resize-process-tree", fraction: 0.4 });
+      await flush();
+      expect(lastSnapshot(deps).sidebar.processTreeHeight).toBe(0.4);
+
+      emitUiEvent(deps, { kind: "resize-process-tree", fraction: 2 });
+      await flush();
+      expect(deps.stateService.values.get("sidebar.process-tree-height")).toBe(0.7);
+    });
+
+    it("hands kill-process to the monitor", async () => {
+      const deps = createDeps();
+      await startModule(deps);
+
+      emitUiEvent(deps, { kind: "kill-process", pid: 42, startedAt: "2026-01-01T00:00:00.000Z" });
+      await flush();
+      expect(deps.processMonitor.killProcess).toHaveBeenCalledWith(42, "2026-01-01T00:00:00.000Z");
+    });
+
     it("shows no totals on a hibernated row", async () => {
       const deps = createDeps();
-      await deps.configService.set("sidebar.process-summary", true);
+      await deps.configService.set("sidebar.process-summary", "total");
       const module = await startModule(deps);
       const asleep = makeWorkspace("b", { metadata: { hibernated: "true" } });
       await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([asleep]) });
@@ -3255,13 +3378,13 @@ describe("PresentationModule - shortcut navigation", () => {
 
     await key(module, "p");
     await flush();
-    expect(lastSnapshot(deps).sidebar.processSummary).toBe(true);
-    expect(deps.configService.getEffective()["sidebar.process-summary"]).toBe(true);
+    expect(lastSnapshot(deps).sidebar.processSummary).toBe("total");
+    expect(deps.configService.getEffective()["sidebar.process-summary"]).toBe("total");
     expect(deps.processMonitor.watching).toBe(true);
 
     await key(module, "p");
     await flush();
-    expect(lastSnapshot(deps).sidebar.processSummary).toBe(false);
+    expect(lastSnapshot(deps).sidebar.processSummary).toBe("off");
     expect(deps.processMonitor.watching).toBe(false);
   });
 

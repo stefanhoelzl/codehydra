@@ -170,6 +170,9 @@ export function connectToApiServer(
     transports: ["websocket"],
     auth: {
       workspacePath: workspacePath,
+      // The extension host this runs in: what lets CodeHydra count it (and
+      // the language servers it starts) as the workspace's.
+      pid: process.pid,
     },
     reconnection: true,
     reconnectionDelay: 1000,

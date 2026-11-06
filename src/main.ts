@@ -526,12 +526,16 @@ let openHelp: () => void = () => {};
 let presetNewWorkspaceProject: (projectRef: ProjectRef, deselecting: boolean) => void = () => {};
 // Scans the workspaces' processes: for the sidebar's process summary (the
 // presenter turns its polling on and off), for `workspace.processes`, and for
-// what hibernate and delete stop (the cleanup modules' release sweep).
+// what hibernate and delete stop (the cleanup modules' release sweep). The IDE
+// server and the API server are constructed below; both are read only once
+// scans run, after app:started.
 const processMonitorModule = createProcessMonitorModule({
   processRunner,
   dispatcher,
   logger: loggingService.createLogger("process"),
   appPid: process.pid,
+  ideServerPid: () => ideServerModule.pid(),
+  extensionHosts: () => apiServerModule.extensionHosts(),
 });
 // Windows: keeps terminal typing responsive under heavy load by raising the
 // processes a keystroke passes through.

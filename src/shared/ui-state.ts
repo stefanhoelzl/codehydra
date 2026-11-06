@@ -37,6 +37,22 @@ export const SIDEBAR_MODES = ["overlay", "docked"] as const;
 export type SidebarMode = (typeof SIDEBAR_MODES)[number];
 
 /**
+ * The sidebar's process summary (config `sidebar.process-summary`): `off`, or
+ * on with the process bar above the footer at one of three levels — `total`
+ * (one row), `breakdown` (workspaces, code server, CodeHydra) or `tree` (every
+ * process).
+ */
+export const PROCESS_SUMMARY_MODES = ["off", "total", "breakdown", "tree"] as const;
+export type ProcessSummaryMode = (typeof PROCESS_SUMMARY_MODES)[number];
+/** The process bar's levels: every mode but `off`. */
+export const PROCESS_BAR_LEVELS = ["total", "breakdown", "tree"] as const;
+export type ProcessBarLevel = (typeof PROCESS_BAR_LEVELS)[number];
+/** The process tree's height, as a fraction of the sidebar's: before any drag, and its bounds. */
+export const PROCESS_TREE_DEFAULT_HEIGHT = 0.25;
+export const PROCESS_TREE_MIN_HEIGHT = 0.1;
+export const PROCESS_TREE_MAX_HEIGHT = 0.7;
+
+/**
  * How much of a project's hibernated list the sidebar shows: `hidden` (none,
  * the resting state), `manual` (the hibernated workspaces without a wakeup
  * script) or `all` (the automated ones too). Main-owned, not persisted: the
@@ -178,12 +194,52 @@ export interface UiProcessSummary {
 
 /** CodeHydra's whole footprint: its own process tree and every workspace's processes. */
 export interface UiProcessTotals {
-  /** `workspaces` and `codehydra` together, each process once. */
+  /** `workspaces`, `codeServer` and `codehydra` together, each process once. */
   readonly all: UiProcessSummary;
   /** Every process attributed to a workspace, wherever it runs. */
   readonly workspaces: UiProcessSummary;
-  /** The rest of CodeHydra's process tree: the app, its helpers, the IDE server. */
+  /** The IDE server and what it runs, less what belongs to a workspace. */
+  readonly codeServer: UiProcessSummary;
+  /** The rest of CodeHydra's process tree: the app and its helpers. */
   readonly codehydra: UiProcessSummary;
+}
+
+/** One process in the sidebar's process tree. */
+export interface UiProcessNode {
+  readonly pid: number;
+  /** ISO 8601; with `pid`, what tells it apart from a later process reusing the pid. */
+  readonly startedAt: string | null;
+  readonly name: string;
+  readonly commandLine: string | null;
+  readonly cwd: string | null;
+  /** Ports it listens on, ascending. */
+  readonly ports: readonly number[];
+  /** The process itself and everything below it. */
+  readonly subtree: UiProcessSummary;
+  readonly children: readonly UiProcessNode[];
+}
+
+/** A workspace's processes in the tree. */
+export interface UiProcessTreeWorkspace {
+  readonly key: string;
+  readonly name: string;
+  readonly total: UiProcessSummary;
+  readonly processes: readonly UiProcessNode[];
+}
+
+/** A project's workspaces that run something, in sidebar order. */
+export interface UiProcessTreeProject {
+  readonly id: string;
+  readonly name: string;
+  readonly total: UiProcessSummary;
+  readonly workspaces: readonly UiProcessTreeWorkspace[];
+}
+
+/** Every process CodeHydra accounts for, as a tree (the process bar's `tree` level). */
+export interface UiProcessTree {
+  readonly projects: readonly UiProcessTreeProject[];
+  readonly codeServer: readonly UiProcessNode[];
+  readonly codehydra: readonly UiProcessNode[];
 }
 
 export interface UiProjectRow {
@@ -264,13 +320,25 @@ export interface UiState {
      * stays expanded while it is open.
      */
     readonly find: UiSidebarFind | null;
-    /** Whether rows show their workspace's CPU and memory (config `sidebar.process-summary`). */
-    readonly processSummary: boolean;
     /**
-     * Everything CodeHydra accounts for (the footer's summary), while
+     * Whether rows show their workspace's CPU and memory, and the process
+     * bar's level (config `sidebar.process-summary`).
+     */
+    readonly processSummary: ProcessSummaryMode;
+    /**
+     * The level the pulse button turns the summary back on at: the current
+     * one while on, the last one used while off (state `sidebar.process-level`).
+     */
+    readonly processLevel: ProcessBarLevel;
+    /** The process tree's height, a fraction of the sidebar's (state `sidebar.process-tree-height`). */
+    readonly processTreeHeight: number;
+    /**
+     * Everything CodeHydra accounts for (the process bar), while
      * `processSummary` is on and a scan has finished.
      */
     readonly processTotals?: UiProcessTotals;
+    /** Every process as a tree, while `processSummary` is `tree` and a scan has finished. */
+    readonly processTree?: UiProcessTree;
   };
   /**
    * Mounted workspace iframes: key → IDE server URL. Every workspace with a

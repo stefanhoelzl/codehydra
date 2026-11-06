@@ -139,6 +139,33 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
   // isConnected — the guard a best-effort vscode:command has to ask
   // ---------------------------------------------------------------------------
 
+  describe("extensionHosts", () => {
+    it("records the pid a sidekick names, and keeps it after it disconnects", async () => {
+      const workspace = wsPath("/test/workspace");
+      const ref = testWorkspaceRef(workspace);
+      const client = env.createClient(workspace, { pid: 4242 });
+      await waitForConnect(client);
+      await vi.waitFor(() => expect(env.apiServer.isConnected(ref)).toBe(true));
+
+      expect(env.apiServer.extensionHosts().get(ref)?.pid).toBe(4242);
+      client.disconnect();
+      await vi.waitFor(() => expect(env.apiServer.isConnected(ref)).toBe(false));
+      expect(env.apiServer.extensionHosts().get(ref)?.pid).toBe(4242);
+    });
+
+    it("records nothing for a sidekick that names no pid", async () => {
+      const workspace = wsPath("/test/workspace");
+      const client = createClient(workspace);
+      await waitForConnect(client);
+      await vi.waitFor(() =>
+        expect(env.apiServer.isConnected(testWorkspaceRef(workspace))).toBe(true)
+      );
+
+      expect(env.apiServer.extensionHosts().size).toBe(0);
+      client.disconnect();
+    });
+  });
+
   describe("isConnected", () => {
     it("tracks a workspace's socket from connect to disconnect", async () => {
       const workspace = wsPath("/test/workspace");

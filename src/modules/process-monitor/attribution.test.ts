@@ -12,8 +12,10 @@ import {
   appTreePids,
   attributeProcesses,
   buildWorkspaceProcesses,
+  codeHydraGroups,
   codeHydraTotals,
   cpuPercents,
+  killTargets,
   teardownProcesses,
 } from "./attribution";
 
@@ -305,16 +307,69 @@ describe("appTreePids", () => {
   });
 });
 
+describe("pinned processes (extension hosts)", () => {
+  it("belong to the workspace they are pinned to, and their children with them", () => {
+    const processes = [
+      proc(APP, 1, "/"),
+      proc(101, APP, "/runtime"), // IDE server
+      proc(102, 101, "/runtime"), // alpha's extension host: no env, cwd outside
+      proc(103, 102, "/runtime"), // a language server it started
+      proc(104, 101, "/runtime"), // another extension host, not pinned
+    ];
+    const owners = attributeProcesses(processes, WORKSPACES, APP, new Map([[102, ALPHA]]));
+
+    expect(owners.get(102)).toBe(ALPHA);
+    expect(owners.get(103)).toBe(ALPHA);
+    expect(owners.has(104)).toBe(false);
+  });
+
+  it("ignore a pin to a workspace that is not monitored", () => {
+    const processes = [proc(APP, 1, "/"), proc(102, APP, "/runtime")];
+    const gone = "ch::m::p::gone" as WorkspaceRef;
+    expect(attributeProcesses(processes, WORKSPACES, APP, new Map([[102, gone]])).size).toBe(0);
+  });
+});
+
+describe("codeHydraGroups", () => {
+  it("splits the app's unattributed tree into the IDE server's and the rest", () => {
+    const processes = [
+      proc(APP, 1, "/"),
+      proc(101, APP, "/runtime"), // IDE server
+      proc(102, 101, "/runtime"), // its pty host
+      proc(103, 102, "/ws/alpha"), // a terminal: alpha's
+      proc(110, APP, "/"), // the GPU process
+      proc(300, 1, "/home"), // someone else's
+    ];
+    const owners = attributeProcesses(processes, WORKSPACES, APP);
+
+    expect(codeHydraGroups(processes, owners, APP, 101)).toEqual(
+      new Map([
+        [APP, "codehydra"],
+        [101, "codeServer"],
+        [102, "codeServer"],
+        [110, "codehydra"],
+      ])
+    );
+  });
+
+  it("counts everything as CodeHydra's while no IDE server runs", () => {
+    const processes = [proc(APP, 1, "/"), proc(101, APP, "/runtime")];
+    const groups = codeHydraGroups(processes, new Map(), APP, null);
+    expect([...groups.values()]).toEqual(["codehydra", "codehydra"]);
+  });
+});
+
 describe("codeHydraTotals", () => {
-  it("counts the app's tree and every workspace's processes once, split between them", () => {
+  it("counts the app's tree and every workspace's processes once, split in three", () => {
     const processes = [
       proc(APP, 1, "/", { rssBytes: 1 }),
-      proc(101, APP, "/", { rssBytes: 2 }), // IDE server: CodeHydra itself
+      proc(101, APP, "/", { rssBytes: 2 }), // IDE server: the code server
       proc(102, APP, "/ws/alpha", { rssBytes: 4 }), // a terminal: alpha's
       proc(200, 1, "/ws/beta", { rssBytes: 8 }), // an orphan: beta's, outside the tree
       proc(300, 1, "/home", { rssBytes: 16 }), // someone else's: not counted
     ];
     const owners = attributeProcesses(processes, WORKSPACES, APP);
+    const groups = codeHydraGroups(processes, owners, APP, 101);
     const cpu = new Map([
       [APP, 1],
       [101, 2],
@@ -323,16 +378,47 @@ describe("codeHydraTotals", () => {
       [300, 16],
     ]);
 
-    expect(codeHydraTotals(processes, owners, cpu, APP)).toEqual({
+    expect(codeHydraTotals(processes, owners, groups, cpu)).toEqual({
       all: { cpuPercent: 15, rssBytes: 15, count: 4 },
       workspaces: { cpuPercent: 12, rssBytes: 12, count: 2 },
-      codehydra: { cpuPercent: 3, rssBytes: 3, count: 2 },
+      codeServer: { cpuPercent: 2, rssBytes: 2, count: 1 },
+      codehydra: { cpuPercent: 1, rssBytes: 1, count: 1 },
     });
   });
 
   it("leaves CPU null before a second scan", () => {
-    const totals = codeHydraTotals([proc(APP, 1, "/")], new Map(), null, APP);
+    const processes = [proc(APP, 1, "/")];
+    const groups = codeHydraGroups(processes, new Map(), APP, null);
+    const totals = codeHydraTotals(processes, new Map(), groups, null);
     expect(totals.all).toEqual({ cpuPercent: null, rssBytes: 1000, count: 1 });
+  });
+});
+
+describe("killTargets", () => {
+  const processes = [
+    proc(APP, 1, "/"),
+    proc(10, APP, "/ws/alpha"), // alpha's shell
+    proc(11, 10, "/ws/alpha"), // pnpm dev
+    proc(12, 11, "/ws/alpha"), // vite
+    proc(13, 11, "/", { envValue: BETA }), // started for beta
+    proc(20, APP, "/runtime"), // IDE server
+  ];
+  const owners = attributeProcesses(processes, WORKSPACES, APP);
+  const startOf = (pid: number): string => new Date(1_000 + pid).toISOString();
+
+  it("is the process and what runs below it in the same workspace", () => {
+    const targets = killTargets(processes, owners, 11, startOf(11), APP);
+    expect(targets.map((target) => target.pid).sort((a, b) => a - b)).toEqual([11, 12]);
+  });
+
+  it("is empty when the pid now names a process started at another time", () => {
+    expect(killTargets(processes, owners, 11, startOf(99), APP)).toEqual([]);
+  });
+
+  it("is empty for a process that is no workspace's, or gone", () => {
+    expect(killTargets(processes, owners, 20, startOf(20), APP)).toEqual([]);
+    expect(killTargets(processes, owners, APP, startOf(APP), APP)).toEqual([]);
+    expect(killTargets(processes, owners, 77, null, APP)).toEqual([]);
   });
 });
 

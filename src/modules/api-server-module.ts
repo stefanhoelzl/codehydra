@@ -239,6 +239,17 @@ export interface ApiServerModuleHandle {
    * registers.
    */
   onWorkspaceDisconnected(listener: (disconnect: WorkspaceDisconnect) => void): () => void;
+  /**
+   * Each workspace's extension host pid, as its sidekick last named it in its
+   * handshake, with when it connected. Kept after a disconnect.
+   */
+  extensionHosts(): ReadonlyMap<WorkspaceRef, ExtensionHost>;
+}
+
+/** A workspace's extension host: its pid, and when its sidekick connected (epoch ms). */
+export interface ExtensionHost {
+  readonly pid: number;
+  readonly connectedAt: number;
 }
 
 /** A workspace's sidekick socket dropping, and whether we are the ones who dropped it. */
@@ -274,6 +285,13 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   let io: TypedServer | null = null;
   let port: number | null = null;
   const connections = new Map<WorkspaceRef, TypedSocket>();
+  /**
+   * Each workspace's extension host, as its last sidekick named it. Kept after
+   * the socket drops — a teardown runs once the frame, and so the sidekick, is
+   * gone — and replaced by the next connection; the process monitor checks the
+   * pid still names that process.
+   */
+  const extensionHosts = new Map<WorkspaceRef, ExtensionHost>();
   const workspaceConfigs = new Map<
     WorkspaceRef,
     {
@@ -735,8 +753,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   /**
    * What a connection is allowed to do, decided entirely from its handshake.
    *
-   * Two shapes arrive here. A sidekick presents a workspace path and nothing
-   * else — unchanged, because that handshake is a published contract. `ch` and
+   * Two shapes arrive here. A sidekick presents a workspace path and, since
+   * the process monitor attributes extension hosts, optionally its pid — the
+   * path unchanged, because that handshake is a published contract. `ch` and
    * the MCP shim present a client kind and a token. The handshake says only who
    * the caller is; what a call acts on is that call's own `workspace` field.
    */
@@ -750,6 +769,8 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     readonly ownWorkspace?: string;
     /** Working directory: a shell's own workspace is the one containing it. */
     readonly cwd?: string;
+    /** A sidekick's extension host process (optional, additive to its handshake). */
+    readonly pid?: number;
   }
 
   function readHandshake(auth: unknown): Handshake | { error: string } {
@@ -765,7 +786,10 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       if (typeof workspaceRef !== "string" || workspaceRef.length === 0) {
         return { error: "invalid auth" };
       }
-      return { kind: "sidekick", ownWorkspace: workspaceRef };
+      // A sidekick older than the pid simply leaves its extension host unattributed.
+      const pid = record.pid;
+      const validPid = typeof pid === "number" && Number.isInteger(pid) && pid > 0;
+      return { kind: "sidekick", ownWorkspace: workspaceRef, ...(validPid && { pid }) };
     }
 
     if (kind !== "cli" && kind !== "mcp") {
@@ -991,6 +1015,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       }
 
       connections.set(workspaceRef, socket);
+      if (handshake.pid !== undefined) {
+        extensionHosts.set(workspaceRef, { pid: handshake.pid, connectedAt: Date.now() });
+      }
       for (const listener of connectListeners) {
         try {
           listener(workspaceRef);
@@ -1707,6 +1734,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       disconnectListeners.add(listener);
       return () => disconnectListeners.delete(listener);
     },
+    extensionHosts: () => extensionHosts,
   };
 }
 

@@ -124,6 +124,7 @@ import {
 } from "../../shared/ui-state";
 import type { Config } from "../../boundaries/platform/config";
 import { storeBoolean, storeCustom, storeEnum } from "../../boundaries/platform/store-definition";
+import { createProcessBar } from "./process-bar";
 import { buildScreenshotPath } from "../hibernation-screenshot-module";
 import {
   DialogManager,
@@ -212,11 +213,12 @@ export interface PresentationModuleDeps {
   /**
    * The process monitor. The presenter owns `sidebar.process-summary`: it turns
    * the monitor's polling on while the summary shows, puts each workspace's
-   * totals on its row and CodeHydra's whole footprint on the sidebar (footer).
+   * totals on its row and CodeHydra's whole footprint, and its process tree,
+   * on the sidebar's process bar (process-bar.ts).
    */
   readonly processMonitor: Pick<
     ProcessMonitorModule,
-    "summaries" | "totals" | "onSummaries" | "setWatching"
+    "summaries" | "totals" | "trees" | "onSummaries" | "setWatching" | "killProcess"
   >;
 }
 
@@ -515,16 +517,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     ...storeEnum(SIDEBAR_MODES),
   });
 
-  // Whether each sidebar row shows its workspace's CPU and memory. The header
-  // footer button (set-sidebar-process-summary ui:event) and Alt+X+P write it; read at
+  // The process summary: whether rows show their workspace's CPU and memory,
+  // and the process bar's level (`sidebar.process-summary`). The footer's
+  // pulse button, the bar's level buttons and Alt+X+P write it; read at
   // snapshot-build time, which also turns the process monitor's polling on or
-  // off to match — so a change from the settings dialog or `ch config` takes
-  // effect with the next push.
-  const processSummaryConfig = deps.configService.register("sidebar.process-summary", {
-    default: false,
-    description: "Show each workspace's CPU and memory use in the sidebar",
-    applies: "live",
-    ...storeBoolean(),
+  // off to match.
+  const processBar = createProcessBar({
+    configService: deps.configService,
+    stateService: deps.stateService,
+    processMonitor: deps.processMonitor,
+    logger,
+    scheduleUpdate: () => scheduleUpdate(),
   });
 
   // Read at snapshot-build time, so flipping it re-pushes
@@ -695,7 +698,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     openFind: () => setFind(true),
     toggleSidebarMode: () =>
       setSidebarMode(sidebarModeConfig.get() === "docked" ? "overlay" : "docked"),
-    toggleProcessSummary: () => setProcessSummary(!processSummaryConfig.get()),
+    toggleProcessSummary: () => processBar.toggle(),
   });
 
   /** Whether a workspace's IDE frame is in the snapshot's `frames` region. */
@@ -762,10 +765,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     // placeholder row too.
     const waitingOnUser = dialogs.needsAttentionFor(workspace.ref);
     // Hibernation killed everything in it, so a sleeping row shows no summary.
-    const processes =
-      processSummaryConfig.get() && !workspace.hibernated
-        ? deps.processMonitor.summaries().get(workspace.ref)
-        : undefined;
+    const processes = workspace.hibernated ? undefined : processBar.rowSummary(workspace.ref);
     return {
       key: workspace.ref,
       name: workspace.name,
@@ -931,11 +931,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   };
 
   function buildSnapshot(): UiState {
-    // Poll only while the summary shows. Idempotent; here so that a change of
-    // the key from anywhere (settings dialog, `ch config`) applies on the next push.
-    const processSummary = processSummaryConfig.get();
-    deps.processMonitor.setWatching(processSummary);
-    const projectRows: UiProjectRow[] = sortedProjects().map(([project, workspaces]) => ({
+    const projects = sortedProjects();
+    // Also polls only while the summary shows. Idempotent; here so that a change
+    // of the key from anywhere (settings dialog, `ch config`) applies on the next push.
+    const processFields = processBar.sidebarFields(
+      projects.map(([project, workspaces]) => ({ id: project.id, name: project.name, workspaces }))
+    );
+    const projectRows: UiProjectRow[] = projects.map(([project, workspaces]) => ({
       id: project.id,
       name: project.name,
       title: project.remoteUrl ?? project.path,
@@ -976,7 +978,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
 
     const main = buildMain();
-    const processTotals = processSummary ? deps.processMonitor.totals() : null;
     return {
       // Clamp the stored width to the shared minimum so a hand-edited
       // config.json below the floor still yields a sane snapshot; the renderer
@@ -986,8 +987,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         width: clampSidebarWidthMin(deps.sidebarWidthConfig.get()),
         mode: sidebarModeConfig.get(),
         find,
-        processSummary,
-        ...(processTotals !== null && { processTotals }),
+        ...processFields,
       },
       frames,
       main,
@@ -1235,7 +1235,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         setSidebarMode(event.mode);
         return;
       case "set-sidebar-process-summary":
-        setProcessSummary(event.enabled);
+        processBar.setMode(event.mode);
+        return;
+      case "resize-process-tree":
+        processBar.resizeTree(event.fraction);
+        return;
+      case "kill-process":
+        processBar.kill(event.pid, event.startedAt);
         return;
       case "resize-sidebar": {
         // Persist the drag result. Clamp to the shared minimum (the renderer
@@ -1418,21 +1424,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   function setSidebarMode(mode: SidebarMode): void {
     void sidebarModeConfig.set(mode).catch((error: unknown) => {
       logger.warn("Failed to persist sidebar mode", { error: getErrorMessage(error) });
-    });
-    scheduleUpdate();
-  }
-
-  /**
-   * Write `sidebar.process-summary` and re-push; the snapshot build starts or
-   * stops the monitor's polling to match. Driven by the sidebar header button
-   * (ui:event) and, as a toggle, by Alt+X+P. Like `setSidebarMode`, the next
-   * snapshot carries the new value even if persisting it fails.
-   */
-  function setProcessSummary(enabled: boolean): void {
-    void processSummaryConfig.set(enabled).catch((error: unknown) => {
-      logger.warn("Failed to persist process summary toggle", {
-        error: getErrorMessage(error),
-      });
     });
     scheduleUpdate();
   }

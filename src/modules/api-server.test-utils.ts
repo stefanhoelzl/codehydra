@@ -473,9 +473,16 @@ export async function createApiServerEnv(
     /** The module handle, for probes like `isConnected` that read live state. */
     apiServer,
 
-    createClient(workspacePath: WorkspacePath): TestClientSocket {
+    /** A sidekick of `workspacePath`; `extraAuth` adds to its handshake (its `pid`). */
+    createClient(
+      workspacePath: WorkspacePath,
+      extraAuth?: Record<string, unknown>
+    ): TestClientSocket {
       known.add(new Path(workspacePath).toString());
-      const client = createTestClient(this.port, { workspacePath });
+      const client = createTestClient(this.port, {
+        workspacePath,
+        ...(extraAuth !== undefined && { auth: { workspacePath, ...extraAuth } }),
+      });
       clients.push(client);
       return client;
     },

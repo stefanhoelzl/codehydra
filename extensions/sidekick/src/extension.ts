@@ -26,7 +26,6 @@ import { codehydraApi } from "./codehydra-api";
 import { connectToApiServer, connectionInfo, disconnectFromApiServer } from "./connection";
 import { disposeUiHandlers, registerUiHandlers } from "./ui-handlers";
 import { registerWorkspaceCommands } from "./workspace-commands";
-import { registerProcessesView } from "./processes-view";
 import type { ApiConfig, CommandRequest, TypedSocket } from "./types";
 
 /**
@@ -334,7 +333,6 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
 
   registerAgentCommands(context);
   registerWorkspaceCommands(context);
-  registerProcessesView(context);
 
   const server = resolveApiServer();
   if (server) {

@@ -54,7 +54,7 @@ Default `overlay` · `presentation-module.ts`. `overlay` (collapsed strip, expan
 
 #### `sidebar.process-summary`
 
-Default `false` · `presentation-module.ts`. Whether each sidebar row shows its workspace's CPU and memory (`UiWorkspaceRow.processes`; none on hibernated rows). While on, the process monitor (`process-monitor/process-monitor-module.ts`) scans every 3 s; off, it scans only for `ch ws processes` and the sidekick's Processes view. Written by the footer pulse button (`set-sidebar-process-summary` ui:event) and Alt+X+P; read at every snapshot build, which starts or stops the polling to match, so a change from the settings dialog or `ch config` applies on the next push. Live.
+Default `off` · `presentation/process-bar.ts`. `off` | `total` | `breakdown` | `tree`. Anything but `off` shows each sidebar row's CPU and memory (`UiWorkspaceRow.processes`; none on hibernated rows) and the process bar above the footer at that level: CodeHydra's total (`processTotals`), plus its split into workspaces, code server and CodeHydra (`breakdown`), or every process as a tree (`tree`, `processTree` — sent only at that level). While on, the process monitor (`process-monitor/process-monitor-module.ts`) scans every 3 s; off, it scans only for `ch ws processes`, hibernate/delete and the tree's kill button. Written by the footer pulse button and the bar's level buttons (`set-sidebar-process-summary` ui:event) and Alt+X+P; read at every snapshot build, which starts or stops the polling to match, so a change from the settings dialog or `ch config` applies on the next push. Was a boolean: `true`/`false` (config.json, env, CLI) still read as `total`/`off` until the next write. Live.
 
 #### `silent`
 
@@ -191,6 +191,14 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 #### `sidebar.collapsed-projects`
 
 `presentation-module.ts`. Refs of the projects whose sidebar card is collapsed to its header (a click on the header bar, or Alt+X, C). Default `[]`. A ref stays listed after its project closes, so the choice survives a reopen. Keyboard navigation (Alt+X arrows and digits) skips the workspaces of a collapsed project. Replaces `sidebar.hidden-hibernated-projects` (hibernated workspaces are now folded away by default and shown by the project's moon button or Alt+X, T — not persisted), which is dropped without migration: an old value is logged and skipped.
+
+#### `sidebar.process-level`
+
+`presentation/process-bar.ts`. `total` | `breakdown` | `tree`, default `total`. The process bar's last level: written whenever `sidebar.process-summary` is set to a level, read when the pulse button or Alt+X, P turns the summary back on (`UiState.sidebar.processLevel`).
+
+#### `sidebar.process-tree-height`
+
+`presentation/process-bar.ts`. The process tree's height as a fraction of the sidebar's, `0.1`–`0.7`, default `0.25`. Written on release of a drag on the tree's top edge (`resize-process-tree` ui:event, clamped); a double-click there resets it.
 
 #### `api.port`
 
