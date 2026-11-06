@@ -44,6 +44,27 @@ Every clean exit (`stop`, or the app quit from its own UI) saves `./app-data` as
 - **Start from scratch** with `start --fresh -- --agent=claude`: config goes in as app flags, and a set agent skips onboarding.
 - `snapshot show <name>` prints the metadata (HEAD, app flags, the snapshot it came from) and every appctrl command that built the state. app-review reads these to reuse a snapshot from development.
 
+## Remote: on an ssh-runner (macOS, Windows)
+
+For a macOS- or Windows-only bug, run the whole of appctrl on a runner from skill `ssh-runner` (profiles `macos` and `windows` in `.ssh-runner.yml`). The CLI, daemon and app all run there, and each command goes through `exec`: about 5 s per command.
+
+```bash
+R=~/.claude/skills/ssh-runner/ssh-runner.ts
+ID=$(node $R start --profile macos | tail -1)            # or --profile windows
+node $R sync $ID ./ :                                   # after every change
+node $R exec $ID 'pnpm -s build && pnpm -s appctrl start --fresh -- --agent=claude'
+node $R exec $ID 'pnpm -s appctrl dom -t ui'            # text output comes back as is
+node $R exec $ID 'pnpm -s appctrl screenshot -t ui'     # prints a path on the runner…
+node $R sync $ID :app-data/screenshots/ ./app-data/remote/<profile>/screenshots/   # …so pull, then Read
+node $R stop $ID
+```
+
+- The runner's `app-data` is excluded from sync, so pushes keep it, but it is gone at `stop`. Prepare state and snapshots within one session.
+- `start --fresh` wipes `app-data`: create the seed repo after it (`$PWD/app-data/seed/…` on the runner), never before. On Windows, pass it to `dialog` as `"$(cygpath -w "$S")"`.
+- A fresh runner shows the first-run "Setting up CodeHydra" screen after `start`: `wait-for -t ui 'role=button[name="Open project folder"]'` before the first click.
+- "Headless" is Linux-only. On macOS the app opens a real window on the runner's desktop, which is harmless and unseen; on Windows it runs in the ssh session, which has no desktop, and still renders and screenshots.
+- The agent inside the app is logged out; its terminal stops at Claude's first-run screen. That is enough for UI bugs.
+
 ## Must-know
 
 - `@vscode-elements` components have shadow DOM: CSS selectors cannot reach inside. Use `role=button[name="Create"]` / `text=Create` selectors from `dom`; type into a focused field rather than `type --selector`.

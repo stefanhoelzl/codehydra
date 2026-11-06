@@ -41,6 +41,7 @@ import type { AddressInfo } from "node:net";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { createRequire } from "node:module";
 import { formatLogScope } from "../src/boundaries/platform/log-scope";
 import { errorCode, getErrorMessage } from "../src/shared/error-utils";
 import {
@@ -54,8 +55,16 @@ import type { LogScope } from "../src/boundaries/platform/logging-types";
 /** Repo root — this file lives in <root>/scripts/. */
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** The Electron binary used for unpackaged (dev) launches. */
-export const DEV_ELECTRON = join(REPO_ROOT, "node_modules/electron/dist/electron");
+/**
+ * The Electron binary used for unpackaged (dev) launches. The `electron` package
+ * resolves it per platform (Electron.app/Contents/MacOS/Electron, electron.exe).
+ */
+export const DEV_ELECTRON = ((): string => {
+  const resolved: unknown = createRequire(import.meta.url)("electron");
+  if (typeof resolved !== "string")
+    throw new Error("The electron package did not resolve to a path");
+  return resolved;
+})();
 
 /**
  * Flags the driver prepends to every launch it makes.
