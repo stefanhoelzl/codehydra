@@ -267,8 +267,8 @@ empty and has no session table"), so a shared file breaks the 1.x lane as soon a
 has run on a fresh machine.
 
 They and the `claude` project then run the remaining specs against that warm root,
-flipping agent with `--agent=` (CLI beats config.json, and `wasConfigured()` is now true so
-the wizard stays away). `workers: 1`, `retries: 0`.
+flipping agent with `--agent=` (CLI beats config.json, and a set agent keeps the wizard
+away). `workers: 1`, `retries: 0`.
 
 **Gotchas the specs encode:**
 

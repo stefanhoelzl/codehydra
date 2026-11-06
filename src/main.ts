@@ -1034,7 +1034,7 @@ const errorReportModule = createErrorReportModule({
 dispatcher.registerOperation(new AppShutdownOperation());
 dispatcher.registerOperation(new AppResumeOperation());
 dispatcher.registerOperation(
-  new AppStartOperation(agentConfig, () => configService.wasConfigured())
+  new AppStartOperation(agentConfig, () => configService.getSource("agent"))
 );
 dispatcher.registerOperation(new AppReadyOperation(agentConfig));
 dispatcher.registerOperation(new PollTickOperation());

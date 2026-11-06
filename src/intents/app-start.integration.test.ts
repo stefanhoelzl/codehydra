@@ -62,6 +62,7 @@ import type { ConfigAgentType } from "../shared/api/types";
 import type { BinaryType, RequiredScript, ShowUIHookResult } from "./app-start";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
+import type { ConfigSource } from "../boundaries/platform/config";
 import { testPath } from "../shared/test-fixtures";
 
 /** Permissive schemas for the stub setup operation (app:setup dispatched during checks). */
@@ -243,7 +244,7 @@ function createTestSetup(
 ): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(new AppStartOperation(createMockAgentAccessor(), () => true));
+  dispatcher.registerOperation(new AppStartOperation(createMockAgentAccessor(), () => "user"));
 
   const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
   for (const m of allModules) dispatcher.registerModule(m);
@@ -548,18 +549,20 @@ describe("AppStart Operation", () => {
       options?: {
         setupStub?: Operation<typeof setupStubSchemas>;
         configuredAgent?: ConfigAgentType | null;
+        /** Where a non-null configuredAgent came from; defaults to config.json ("user"). */
+        agentSource?: Exclude<ConfigSource, "default">;
       }
     ): { dispatcher: Dispatcher } {
       const dispatcher = createMockDispatcher();
 
-      // A null configuredAgent models a first run (config.json absent →
-      // agent-selection onboarding), now driven by wasConfigured() rather than a
-      // null agent value; the stored agent itself is always a valid agent.
+      // A null configuredAgent models an agent set nowhere (source "default" →
+      // agent-selection onboarding); the stored agent itself is always a valid agent.
       const configured = options?.configuredAgent;
-      const wasConfigured = configured !== null;
+      const source: ConfigSource =
+        configured === null ? "default" : (options?.agentSource ?? "user");
       const agent: ConfigAgentType = configured && configured !== null ? configured : "opencode";
       dispatcher.registerOperation(
-        new AppStartOperation(createMockAgentAccessor(agent), () => wasConfigured)
+        new AppStartOperation(createMockAgentAccessor(agent), () => source)
       );
       if (options?.setupStub) {
         dispatcher.registerOperation(options.setupStub);
@@ -693,6 +696,38 @@ describe("AppStart Operation", () => {
       expect(saved).toEqual(["claude"]);
       expect(state.ideServerStarted).toBe(true);
     });
+
+    it.each(["cli", "env"] as const)(
+      "an agent set only via %s skips agent selection and saves nothing (#7c)",
+      async (agentSource) => {
+        // Regression: onboarding used to be gated on config.json existing, so a fresh
+        // app-data launched with `--agent=claude` (or CH_AGENT) still showed the picker.
+        const state = createTestState();
+        const setupStub = createSetupStub(state);
+        const seenAgents: (ConfigAgentType | null)[] = [];
+        const saved: ConfigAgentType[] = [];
+        const { dispatcher } = createCheckTestSetup(
+          [
+            createConfigCheckModule("claude"),
+            createAgentSelectionModule("opencode", state, saved),
+            createAgentBinaryModule("claude", "claude", seenAgents),
+            createExtensionCheckModule({}),
+            createIdeServerModule(state),
+            createMcpModule(state),
+            createDataModule(state),
+            createViewModule(state),
+          ],
+          { setupStub, configuredAgent: "claude", agentSource }
+        );
+
+        await dispatcher.dispatch(appStartIntent());
+
+        expect(state.executionOrder).not.toContain("agent-selection");
+        expect(saved).toEqual([]);
+        expect(seenAgents).toEqual(["claude"]);
+        expect(state.ideServerStarted).toBe(true);
+      }
+    );
 
     it("setup needed -- missing binaries triggers app:setup (#8)", async () => {
       const state = createTestState();

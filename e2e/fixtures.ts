@@ -32,10 +32,9 @@ import {
 
 export interface LaunchAppOptions {
   /**
-   * Passed as `--agent=`. CLI beats config.json (config.ts precedence), and because
-   * config.json exists on a warm root, `wasConfigured()` is true and the wizard is
-   * skipped. Omit on a cold root — there the flag is ignored for onboarding and the
-   * picker appears regardless.
+   * Passed as `--agent=`. CLI beats config.json (config.ts precedence), and an agent
+   * set anywhere (config.json, env or this flag) skips the wizard. Omit it, on a root
+   * whose config.json has no agent, to get the picker.
    */
   agent?: Agent;
   /**

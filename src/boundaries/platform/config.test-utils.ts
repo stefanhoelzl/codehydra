@@ -21,11 +21,6 @@ export interface CreateMockConfigOptions {
    * the mock doesn't track.
    */
   overrides?: Record<string, unknown> | undefined;
-  /**
-   * Value returned by wasConfigured(). Defaults to true (a configured install);
-   * set false to simulate a first run (drives agent-selection onboarding).
-   */
-  wasConfigured?: boolean | undefined;
 }
 
 /**
@@ -60,7 +55,6 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
     getSource: (key: string): ConfigSource =>
       store.get(key) === defaultsByKey.get(key) ? "default" : "user",
     getDefault: (key: string) => defaultsByKey.get(key),
-    wasConfigured: () => options?.wasConfigured ?? true,
     getRedactedOverrides: () => ({ ...overrides }),
     getHelpText: () => "",
   };

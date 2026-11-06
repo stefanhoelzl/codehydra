@@ -1194,25 +1194,22 @@ describe("Config — CLI @file references", () => {
 });
 
 // =============================================================================
-// Settings-support surface: getSource / wasConfigured / getDefinitions
+// Settings-support surface: getSource / getDefinitions
 // =============================================================================
 
 describe("Config — settings support", () => {
-  it("wasConfigured() is false on a genuine first run (no config.json)", () => {
-    const svc = createService();
-    svc.load();
-    expect(svc.wasConfigured()).toBe(false);
-  });
-
-  it("wasConfigured() is true when config.json exists", () => {
+  it("getSource() reports user for a config.json value equal to the default", () => {
+    // Agent-selection onboarding relies on this: "agent": "claude" (the default)
+    // in config.json still counts as chosen.
     const svc = createService({
       fileEntries: {
         "/app": directory(),
-        "/app/config.json": file("{}"),
+        "/app/config.json": file(JSON.stringify({ chosen: "d" })),
       },
     });
+    svc.register("chosen", stringDef("chosen", "d"));
     svc.load();
-    expect(svc.wasConfigured()).toBe(true);
+    expect(svc.getSource("chosen")).toBe("user");
   });
 
   it("getSource() reports where the effective value came from (precedence)", () => {

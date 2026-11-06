@@ -11,7 +11,8 @@
  * 4. "migrations" - Bring data on disk in line with the configuration before
  *    anything reads it (e.g. a changed workspaces root). May ask the user on the
  *    starting screen, and may quit the app instead of returning.
- * 5. "register-agents" / "agent-selection" / "save-agent" - (first run only)
+ * 5. "register-agents" / "agent-selection" / "save-agent" - (only while `agent` is
+ *    set nowhere: not in config.json, env or CLI)
  *    Collect the selectable agents, show the picker, persist the choice.
  * 6. "check-deps" - Check binaries and extensions (collect, isolated contexts)
  * 7. "start" - Start servers, wire services, mount renderer.
@@ -62,6 +63,7 @@ import {
 import type { AgentType, BinaryType } from "./contract";
 import { toSerializedError } from "../shared/error-utils";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
+import type { ConfigSource } from "../boundaries/platform/config";
 import { INTENT_SETUP } from "./setup";
 import { INTENT_APP_READY, type AppReadyIntent } from "./app-ready";
 import { throwHookErrors } from "./lib/hook-helpers";
@@ -315,8 +317,11 @@ export class AppStartOperation implements Operation<typeof schemas> {
 
   constructor(
     private readonly agentConfig: PersistedAccessor<AgentType>,
-    /** Whether config.json existed at load; false = first run → agent selection. */
-    private readonly wasConfigured: () => boolean
+    /**
+     * Where the `agent` key's value came from. "default" = set nowhere (not in
+     * config.json, env or CLI) → agent selection.
+     */
+    private readonly agentSource: () => ConfigSource
   ) {}
 
   async execute(ctx: OperationContext<AppStartIntent, typeof schemas>): Promise<void> {
@@ -356,13 +361,12 @@ export class AppStartOperation implements Operation<typeof schemas> {
           extensionRequirements.push(...result.extensionRequirements);
       }
 
-      // On first run (no config.json yet) the agent is treated as "not chosen":
+      // An agent not set anywhere (config.json, env var, CLI flag) is "not chosen":
       // null drives the agent-selection hook points below. The `agent` config key is
-      // non-nullable (it defaults to "claude"), so file existence — not the value —
-      // is what distinguishes "never chosen" from "chose Claude".
-      const configuredAgent: AgentType | null = this.wasConfigured()
-        ? this.agentConfig.get()
-        : null;
+      // non-nullable (it defaults to "claude"), so its source — not its value — is
+      // what distinguishes "never chosen" from "chose Claude".
+      const configuredAgent: AgentType | null =
+        this.agentSource() !== "default" ? this.agentConfig.get() : null;
 
       // Hook 3: "show-ui" -- Show starting screen; learn whether a retry loop is supported.
       phase = "show-ui";
@@ -378,7 +382,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
       const { errors: migrationErrors } = await ctx.hooks.collect("migrations", hookCtx);
       throwHookErrors(migrationErrors, "app:start migrations hooks failed");
 
-      // Hook 5: agent selection (first run only) -- register-agents, agent-selection, save-agent.
+      // Hook 5: agent selection (agent set nowhere) -- register-agents, agent-selection, save-agent.
       // Runs BEFORE check-deps so the deps check knows which agent's binary to look for.
       let agent: AgentType;
       if (configuredAgent === null) {

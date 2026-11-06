@@ -40,15 +40,15 @@ import { PersistedValidationError } from "./store-definition";
 import type { FileSystemBoundary } from "./filesystem";
 import { Path } from "../../utils/path/path";
 import type { Logger } from "./logging-types";
-import { getErrorMessage, isEnoent } from "../../shared/error-utils";
+import { getErrorMessage } from "../../shared/error-utils";
 import { PersistedStore } from "./persisted-store";
 
 const BROKEN_CONFIG_FILENAME = "config.json.broken";
 
 /**
  * Agent types that can be selected by the user. Non-nullable: the default is
- * "claude". First-run onboarding is gated on whether config.json existed at load
- * (Config.wasConfigured()), not on a null agent.
+ * "claude". Agent-selection onboarding is gated on the key's source — it runs
+ * while Config.getSource("agent") is "default" — not on a null agent.
  *
  * Type-only re-export of the intent contract's `agentTypeSchema` — one definition of the
  * agent vocabulary, rather than a hand-written union per consumer.
@@ -210,12 +210,6 @@ export interface Config {
   getDefault(key: string): unknown;
 
   /**
-   * Whether config.json existed at load. false = genuine first run (no config
-   * written yet) → onboarding; true = the user has configured before.
-   */
-  wasConfigured(): boolean;
-
-  /**
    * Get the subset of effective values that differ from their defaults, with
    * each key's `redact` policy applied (`true` → "<redacted>", a function → its
    * projection).
@@ -374,7 +368,7 @@ export function parseCliArgs(argv: readonly string[]): Record<string, string> {
  * object plus any issues for load() to log.
  *
  * Behavior:
- *  - missing or unreadable file → empty object (ENOENT is the common case).
+ *  - missing or unreadable file → empty object (a missing file is the common case).
  *  - invalid JSON → move the file aside to config.json.broken (read-recovery I/O)
  *    and return a `broken-json` issue. If the rename itself fails, it throws —
  *    silently discarding would destroy a broken-but-recoverable file.
@@ -387,15 +381,12 @@ function readConfigFile(
   configPath: Path,
   syncRead: (path: string) => string,
   syncRename: (oldPath: string, newPath: string) => void
-): { data: Record<string, unknown>; issues: PersistedIssue[]; existed: boolean } {
+): { data: Record<string, unknown>; issues: PersistedIssue[] } {
   let content: string;
   try {
     content = syncRead(configPath.toNative());
-  } catch (error) {
-    // ENOENT = genuinely first run (no file). Any other read error means the file
-    // is there but unreadable — still "configured" for onboarding purposes.
-    const existed = !isEnoent(error);
-    return { data: {}, issues: [], existed };
+  } catch {
+    return { data: {}, issues: [] };
   }
 
   let parsed: unknown;
@@ -406,7 +397,6 @@ function readConfigFile(
     syncRename(configPath.toNative(), backupPath.toNative());
     return {
       data: {},
-      existed: true,
       issues: [
         {
           kind: "broken-json",
@@ -419,9 +409,9 @@ function readConfigFile(
   }
 
   if (typeof parsed !== "object" || parsed === null) {
-    return { data: {}, issues: [], existed: true };
+    return { data: {}, issues: [] };
   }
-  return { data: parsed as Record<string, unknown>, issues: [], existed: true };
+  return { data: parsed as Record<string, unknown>, issues: [] };
 }
 
 // =============================================================================
@@ -431,8 +421,6 @@ function readConfigFile(
 export class DefaultConfig implements Config {
   /** Generic typed key-value store backed by config.json. */
   private readonly store: PersistedStore;
-  /** Whether config.json existed at load. Set in load(); read by wasConfigured(). */
-  private configFileExisted = false;
 
   constructor(private readonly deps: ConfigDeps) {
     this.store = new PersistedStore({
@@ -475,7 +463,6 @@ export class DefaultConfig implements Config {
 
     // 2. config.json: read (I/O) → validate.
     const file = readConfigFile(configPath, syncRead, syncRename);
-    this.configFileExisted = file.existed;
     const fileResult = this.store.validate(file.data);
 
     // 3. env + CLI: tokenize → parse (strings → typed) → validate.
@@ -628,10 +615,6 @@ export class DefaultConfig implements Config {
 
   getDefault(key: string): unknown {
     return this.store.getDefault(key);
-  }
-
-  wasConfigured(): boolean {
-    return this.configFileExisted;
   }
 
   getRedactedOverrides(): Record<string, unknown> {
