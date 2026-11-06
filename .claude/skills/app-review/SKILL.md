@@ -33,41 +33,30 @@ pnpm -s appctrl status   # if running: pnpm -s appctrl stop
 pnpm -s build
 ```
 
-## 3. Restore, or prepare
+## 3. Pick a snapshot, or prepare
 
-`app-data/snapshot/` holds the last preparation of this worktree:
+Development with `appctrl` leaves snapshots of `app-data` behind: named ones the agent saved on purpose, and one per clean exit named by its time. Reuse one instead of preparing from scratch:
 
-| Path              | Holds                                                                                              |
-| ----------------- | -------------------------------------------------------------------------------------------------- |
-| `files/`          | `app-data` as preparation left it, seed repos included                                             |
-| `prepared-for.md` | What it was prepared for: the change and surface, the seed, app flags, the last UI steps to replay |
+```bash
+pnpm -s appctrl snapshot list          # newest first
+pnpm -s appctrl snapshot show <name>   # metadata and every appctrl command that built it
+```
 
-Read `prepared-for.md`. Compare it with the change from step 1:
+Prefer named snapshots, then the newest. Read the command log against the change from step 1:
 
-- **The seed still reaches the changed surface**: restore, then go to step 4. A later commit on the same feature usually fits; a change that moved to another surface does not.
+- **It reaches the changed surface** (it opened the projects, workspaces and dialogs the change touches): use it in step 4. A later commit on the same feature usually fits; a change that moved to another surface does not. Use the app flags from its metadata.
+- **None does**: prepare below.
 
-  ```bash
-  bash .claude/skills/app-review/snapshot.sh restore
-  ```
-
-- **It does not, or there is no snapshot**: clear, then prepare below.
-
-  ```bash
-  bash .claude/skills/app-review/snapshot.sh clear
-  ```
-
-Both overwrite whatever the worktree's `app-data` holds. Do not ask first. Everything in `app-data` counts as state except the short exclusion list in `snapshot.sh`; a new folder is saved and restored without a change there.
+Restoring or clearing overwrites whatever the worktree's `app-data` holds. Do not ask first. Snapshots are not touched.
 
 ### Prepare
 
-Skip first-run onboarding, then launch headless so no window gets in the user's way:
+Launch from an empty `app-data`, headless so no window gets in the user's way. Config goes in as app flags; a set agent skips onboarding:
 
 ```bash
-mkdir -p app-data/home app-data/seed
-echo '{"agent":"claude"}' > app-data/home/config.json   # add config keys the change needs
+pnpm -s appctrl start --fresh -- --agent=claude   # add the flags the change needs
 R="$PWD/app-data/seed/sample"
 git init -q "$R" && git -C "$R" -c user.name=review -c user.email=review@example.invalid commit -q --allow-empty -m init
-pnpm -s appctrl start   # add `-- <flag>…` if the change needs app flags; record them
 ```
 
 - **Seed only what the change needs.** One project and one workspace is the default. Seed repos go in `app-data/seed/`, never `/tmp`: the snapshot would miss them and their worktrees would break. Never open a real project.
@@ -78,21 +67,18 @@ pnpm -s appctrl start   # add `-- <flag>…` if the change needs app flags; reco
 
 When the state is right, check `logs --level warn` and `console --level error`, and put anything new in the handover. The `Unknown config key` warnings for `inspect`, `remote-debugging-port` and `no-sandbox` are expected.
 
-Then stop and snapshot. The app must be stopped: the snapshot is only consistent then.
+Then stop and save it as `review`, which replaces an older one:
 
 ```bash
-pnpm -s appctrl stop
-bash .claude/skills/app-review/snapshot.sh save
+pnpm -s appctrl stop --snapshot review
 ```
-
-Write `app-data/snapshot/prepared-for.md`: the change and surface it was prepared for, the seed, app flags, and the UI steps to replay.
 
 ## 4. Open the window
 
-Headless is a startup flag, so a running app cannot switch: this is a second launch. Projects, workspaces and agent conversations carry over. Open dialogs and an expanded sidebar do not, so replay those steps now.
+Launch headed from the snapshot, with the app flags from its metadata (`snapshot show`). Headless is a startup flag, so after preparing this is a second launch. Projects, workspaces and agent conversations carry over. Open dialogs and an expanded sidebar do not: replay the last UI steps from its command log now.
 
 ```bash
-pnpm -s appctrl start --headed   # with the flags from prepared-for.md
+pnpm -s appctrl start --headed --snapshot <name> -- <flags>…
 ```
 
 Give it about 10 seconds to reopen the project, replay the last UI steps, and screenshot to confirm it shows what the checklist describes. If you used `expand-sidebar` only to reach something, collapse it again (recipe in `appctrl guide`).
