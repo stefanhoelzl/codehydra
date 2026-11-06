@@ -9,11 +9,10 @@ idle-timeout: 30
 steps:
   - uses: ./.github/actions/setup
   - name: Install the Claude CLI
-    shell: bash
-    run: npm install -g @anthropic-ai/claude-code
+    uses: ./.github/actions/install-claude
 sync:
   delete: true
-  exclude: [.git, node_modules, out, dist, app-data, e2e/.output]
+  exclude: [.git, node_modules, out, dist, app-data, e2e/.output, native/target]
 ---
 name: windows
 runs-on: windows-2025
@@ -23,8 +22,7 @@ idle-timeout: 30
 steps:
   - uses: ./.github/actions/setup
   - name: Install the Claude CLI
-    shell: bash
-    run: npm install -g @anthropic-ai/claude-code
+    uses: ./.github/actions/install-claude
 sync:
   delete: true
-  exclude: [.git, node_modules, out, dist, app-data, e2e/.output]
+  exclude: [.git, node_modules, out, dist, app-data, e2e/.output, native/target]
