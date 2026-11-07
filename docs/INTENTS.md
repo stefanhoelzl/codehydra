@@ -1421,16 +1421,18 @@ a Rust crate built as a Node addon with napi-rs. It replaced `ps`, `lsof`, `pgre
 `taskkill`, `getconf`, `netstat`, PowerShell/WMI, `/proc` parsing and the former C# helper
 `codehydra-procs.exe`.
 
-| Export                       | Library                                                     | Used by                                                                                             |
-| ---------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `listProcessesAsync`         | [sysinfo](https://crates.io/crates/sysinfo)                 | `listProcesses`, `findListeningProcesses` (names), `findDirectoryHolders`, tree kills (descendants) |
-| `listeningSocketsAsync`      | [listeners](https://crates.io/crates/listeners)             | `findListeningPorts`, `findListeningProcesses`                                                      |
-| `restartManagerHoldersAsync` | [restart-manager](https://crates.io/crates/restart-manager) | `findDirectoryHolders` with `files` (Windows): who holds a file in the folder                       |
-| `openFilesUnderAsync`        | our own `open_files.rs` (the system handle table)           | `findDirectoryHolders` with `files` (Windows): which files                                          |
+| Export                       | Library                                                                                         | Used by                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `listProcessesAsync`         | [sysinfo](https://crates.io/crates/sysinfo), Linux `procfs.rs` (command line, cwd, environment) | `listProcesses`, `findListeningProcesses` (names), `findDirectoryHolders`, tree kills (descendants) |
+| `listeningSocketsAsync`      | [listeners](https://crates.io/crates/listeners), Linux `procfs.rs` (with `pids`)                | `findListeningPorts` (with `pids`), `findListeningProcesses`                                        |
+| `restartManagerHoldersAsync` | [restart-manager](https://crates.io/crates/restart-manager)                                     | `findDirectoryHolders` with `files` (Windows): who holds a file in the folder                       |
+| `openFilesUnderAsync`        | our own `open_files.rs` (the system handle table)                                               | `findDirectoryHolders` with `files` (Windows): which files                                          |
 
 ```
 native/src/lib.rs                  -> Exports; #![deny(unsafe_code)]
 native/src/open_files.rs           -> Windows only, the one module with `unsafe` (allowed there)
+native/src/procfs.rs               -> Linux: the /proc reads the polled scans make themselves
+native/src/once.rs                 -> What the process scan remembers per process (pid, start time, name)
 native/rust-toolchain.toml         -> Pinned Rust version (rustup installs it on first use)
 dist/bin/codehydra-native.*.node   -> pnpm build:wrappers (scripts/build-native.ts; fails without `cargo`)
 out/main/assets/bin/               -> Bundled with the other binaries; packaged as bin/
@@ -1441,6 +1443,25 @@ report is passed on as it is: Windows names keep `.exe` and working
 directories their trailing `\`, and processes the OS will not describe to us
 (other users' on macOS, protected ones on Windows) come back with little more
 than a name, and their sockets are not listed.
+
+`procfs.rs` exists because the process monitor polls every few seconds and the
+libraries read everything for every process. With `pids`, the socket scan reads
+`/proc/net/tcp{,6}` once and then only those processes' fds, where the
+listeners crate resolves every fd on the machine. The process scan reads the
+working directory and environment only from processes this one may read (not
+kernel threads, not other users' unless root), no command line from kernel
+threads, and the command line and environment once per process, where sysinfo
+re-reads every empty or unreadable one on every scan. A working directory is
+read on every scan (a process can `cd`) unless the process refused it once:
+same uid but not dumpable, or in a user namespace out of reach. On macOS and
+Windows sysinfo still reads all three, but the command line and environment
+only once per process, in a second refresh of just the new processes.
+"Once per process" is per pid, start time and name (`once.rs`): a reused pid or
+an exec reads again.
+
+`procfs.rs` is plain `std::fs`, so it compiles on every platform and lib.rs
+picks a platform with `cfg!()`: every branch builds and lints on any OS. CI
+also lints for the Windows and macOS targets and runs `cargo test`.
 
 `open_files.rs` exists because no crate lists the files a process holds open.
 It reads `NtQuerySystemInformation(SystemExtendedHandleInformation)`, keeps the

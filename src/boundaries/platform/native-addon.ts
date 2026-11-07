@@ -15,11 +15,18 @@ import type { ProcessSnapshotEntry } from "./process";
 export interface NativeAddon {
   /**
    * Every process on the machine, as sysinfo reports it. `envVar`: an
-   * environment variable to read from each one (`envValue`).
+   * environment variable to read from each one (`envValue`). On Linux the
+   * working directory and environment are read only where they can be (not
+   * kernel threads, not other users' processes unless root), and the command
+   * line and environment once per process — elsewhere too.
    */
   listProcessesAsync(envVar?: string | null): Promise<ProcessSnapshotEntry[]>;
-  /** Every listening TCP socket (IPv4 and IPv6) with the pid that owns it (listeners crate). */
-  listeningSocketsAsync(): Promise<{ pid: number; port: number }[]>;
+  /**
+   * Every listening TCP socket (IPv4 and IPv6) with the pid that owns it
+   * (listeners crate). `pids`: only theirs — on Linux read from those
+   * processes' fds alone, not from every process on the machine.
+   */
+  listeningSocketsAsync(pids?: number[] | null): Promise<{ pid: number; port: number }[]>;
   /**
    * The processes Restart Manager says hold a file under `dir` (up to 1000 of
    * its files registered). Windows only; empty elsewhere.

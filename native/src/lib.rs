@@ -8,13 +8,16 @@
 //! restart-manager (Windows file locks) — and what they report is passed on as
 //! they report it. The one exception is `open_files` (Windows): no crate lists
 //! the files a process holds open, so that module has `unsafe` of its own.
-//! Everywhere else `unsafe` is a compile error.
+//! Everywhere else `unsafe` is a compile error. On Linux, `procfs` reads the
+//! few `/proc` files the polled scans need itself, so they read only those.
 
 #![deny(unsafe_code)]
 
+mod once;
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod open_files;
+mod procfs;
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -25,6 +28,12 @@ use napi::bindgen_prelude::{AsyncTask, ToNapiValue, TypeName};
 use napi::{Env, Error, Result, Status, Task};
 use napi_derive::napi;
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, ThreadKind, UpdateKind};
+
+use crate::once::OncePerProcess;
+
+/// Linux reads the command line, working directory, environment and sockets
+/// it needs from `/proc` itself (`procfs`); elsewhere the libraries do.
+const LINUX: bool = cfg!(target_os = "linux");
 
 /// One process, as `ProcessSnapshotEntry` in `src/boundaries/platform/process.ts`.
 #[napi(object, use_nullable = true)]
@@ -46,14 +55,61 @@ pub struct NativeProcess {
     pub session_id: Option<u32>,
 }
 
-/// One `System`, kept between scans: sysinfo reads a process's command line and
-/// environment once (they are fixed after exec) and only refreshes the rest.
-fn system() -> Result<&'static Mutex<System>> {
-    static SYSTEM: OnceLock<std::result::Result<Mutex<System>, String>> = OnceLock::new();
-    SYSTEM
-        .get_or_init(|| System::new().map(Mutex::new).map_err(|e| e.to_string()))
+/// What the process scan keeps between scans.
+struct Scanner {
+    sys: System,
+    /// Linux: each process's command line and environment variable, read
+    /// once, and the working directories refused.
+    cache: procfs::ProcessCache,
+    /// Off Linux: the processes sysinfo was asked for their command line, and
+    /// for their environment. sysinfo takes an empty one for one never read,
+    /// so a process the OS will not describe to us (another user's on macOS,
+    /// a protected one on Windows) is otherwise asked again on every scan.
+    asked_cmd: OncePerProcess<()>,
+    asked_environ: OncePerProcess<()>,
+}
+
+fn scanner() -> Result<&'static Mutex<Scanner>> {
+    static SCANNER: OnceLock<std::result::Result<Mutex<Scanner>, String>> = OnceLock::new();
+    SCANNER
+        .get_or_init(|| {
+            System::new()
+                .map(|sys| {
+                    Mutex::new(Scanner {
+                        sys,
+                        cache: procfs::ProcessCache::default(),
+                        asked_cmd: OncePerProcess::default(),
+                        asked_environ: OncePerProcess::default(),
+                    })
+                })
+                .map_err(|e| e.to_string())
+        })
         .as_ref()
         .map_err(|e| Error::new(Status::GenericFailure, e.clone()))
+}
+
+/// Linux: whether this process may read `p`'s working directory and
+/// environment. Kernel threads have neither; another user's process is
+/// readable only as root. A read that cannot succeed fails anew on every
+/// scan, so it is not tried.
+fn readable(p: &sysinfo::Process, own: Option<&sysinfo::Uid>) -> bool {
+    if p.thread_kind() == Some(ThreadKind::Kernel) {
+        return false;
+    }
+    let Some(own) = own else { return true };
+    is_root(own) || (p.user_id() == Some(own) && p.effective_user_id() == Some(own))
+}
+
+/// Whether `uid` is root, who may read any process. A uid is a number only on
+/// Unix (a SID on Windows), so this is the one branch `cfg!()` cannot take.
+#[cfg(unix)]
+fn is_root(uid: &sysinfo::Uid) -> bool {
+    **uid == 0
+}
+
+#[cfg(not(unix))]
+fn is_root(_uid: &sysinfo::Uid) -> bool {
+    false
 }
 
 fn lossy(value: &OsStr) -> String {
@@ -61,7 +117,8 @@ fn lossy(value: &OsStr) -> String {
 }
 
 /// The value of `name` in a `KEY=VALUE` environment block. Windows variable
-/// names are case-insensitive; everywhere else they are not.
+/// names are case-insensitive; everywhere else they are not. Off Linux only:
+/// Linux reads it itself (`procfs`).
 fn env_lookup(environ: &[std::ffi::OsString], name: &str) -> Option<String> {
     environ.iter().find_map(|entry| {
         let entry = entry.to_string_lossy();
@@ -85,11 +142,11 @@ fn executable_name(argv0: Option<&OsStr>) -> Option<String> {
 
 /// Windows: the image name (`node.exe`). Elsewhere: argv[0]'s last segment,
 /// falling back to the OS's own name.
-fn process_name(p: &sysinfo::Process) -> String {
+fn process_name(p: &sysinfo::Process, cmd: &[String]) -> String {
     if cfg!(windows) {
         return lossy(p.name());
     }
-    executable_name(p.cmd().first().map(|a| a.as_os_str())).unwrap_or_else(|| lossy(p.name()))
+    executable_name(cmd.first().map(OsStr::new)).unwrap_or_else(|| lossy(p.name()))
 }
 
 /// sysinfo hands out the command line already split into argv; on Windows,
@@ -105,52 +162,142 @@ fn quote_arg(arg: &str) -> String {
     }
 }
 
+/// Off Linux: have sysinfo read the command line — and with `environ` the
+/// environment — of the processes it has not been asked about yet, in one
+/// refresh of just those. A refresh that does not ask keeps what sysinfo read.
+fn ask_once(scanner: &mut Scanner, environ: bool) {
+    let mut pending = Vec::new();
+    for p in scanner.sys.processes().values() {
+        let (pid, start, name) = (p.pid().as_u32(), p.start_time(), lossy(p.name()));
+        let mut new = false;
+        let asked = [
+            Some(&mut scanner.asked_cmd),
+            environ.then_some(&mut scanner.asked_environ),
+        ];
+        for asked in asked.into_iter().flatten() {
+            if asked.known(pid, start, &name).is_none() {
+                asked.remember(pid, start, &name, ());
+                new = true;
+            }
+        }
+        if new {
+            pending.push(p.pid());
+        }
+    }
+    if pending.is_empty() {
+        return;
+    }
+    let always = |ask: bool| {
+        if ask {
+            UpdateKind::Always
+        } else {
+            UpdateKind::Never
+        }
+    };
+    let kind = ProcessRefreshKind::nothing()
+        .without_tasks()
+        .with_cmd(UpdateKind::Always)
+        .with_environ(always(environ));
+    scanner
+        .sys
+        .refresh_processes_specifics(ProcessesToUpdate::Some(&pending), false, kind);
+}
+
 fn list_processes(env_var: Option<&str>) -> Result<Vec<NativeProcess>> {
-    let mut sys = system()?
+    let mut guard = scanner()?
         .lock()
         .map_err(|_| Error::new(Status::GenericFailure, "process table lock poisoned"))?;
+    let scanner = &mut *guard;
+    // The command line and environment are never part of the full refresh:
+    // sysinfo would re-read every empty one on every scan. Linux reads them
+    // below, and only from the processes that have them and can be read (the
+    // uids that decide it come from the `status` file sysinfo reads anyway);
+    // elsewhere `ask_once` has sysinfo read them once per process.
     let kind = ProcessRefreshKind::nothing()
         .without_tasks()
         .with_memory()
-        .with_cpu()
-        .with_cmd(UpdateKind::OnlyIfNotSet)
-        .with_cwd(UpdateKind::Always)
-        .with_environ(if env_var.is_some() {
-            UpdateKind::OnlyIfNotSet
-        } else {
-            UpdateKind::Never
-        });
-    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+        .with_cpu();
+    let kind = if LINUX {
+        kind.with_user(UpdateKind::Always)
+    } else {
+        kind.with_cwd(UpdateKind::Always)
+    };
+    scanner
+        .sys
+        .refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
 
-    Ok(sys
+    let alive: HashSet<u32> = scanner
+        .sys
+        .processes()
+        .keys()
+        .map(|pid| pid.as_u32())
+        .collect();
+    scanner.cache.retain(&alive);
+    scanner.asked_cmd.retain(&alive);
+    scanner.asked_environ.retain(&alive);
+    if !LINUX {
+        ask_once(scanner, env_var.is_some());
+    }
+
+    let own_uid = sysinfo::get_current_pid()
+        .ok()
+        .and_then(|pid| scanner.sys.process(pid))
+        .and_then(|p| p.effective_user_id())
+        .cloned();
+
+    Ok(scanner
+        .sys
         .processes()
         .values()
         // Kernel threads stay listed, as they always were; userland threads are
         // tasks, which `without_tasks` already skips.
         .filter(|p| p.thread_kind() != Some(ThreadKind::Userland))
         .map(|p| {
-            let cmd = p.cmd();
-            let name = process_name(p);
+            let pid = p.pid().as_u32();
+            let start = p.start_time();
+            let os_name = lossy(p.name());
+            // Linux: a kernel thread has no command line; anyone else's is
+            // readable (it is world-readable).
+            let cmd: Vec<String> = if !LINUX {
+                p.cmd().iter().map(|a| lossy(a)).collect()
+            } else if p.thread_kind() == Some(ThreadKind::Kernel) {
+                Vec::new()
+            } else {
+                scanner.cache.cmdline(pid, start, &os_name).to_vec()
+            };
+            let name = process_name(p, &cmd);
             let command_line = if cmd.is_empty() {
                 name.clone()
             } else {
                 cmd.iter()
-                    .map(|a| quote_arg(&lossy(a)))
+                    .map(|a| quote_arg(a))
                     .collect::<Vec<_>>()
                     .join(" ")
             };
-            let start = p.start_time();
+            let (cwd, env_value) = if !LINUX {
+                (
+                    // As the OS reports it: Windows keeps a trailing `\` (`C:\work\`).
+                    p.cwd().map(|c| c.to_string_lossy().into_owned()),
+                    env_var.and_then(|name| env_lookup(p.environ(), name)),
+                )
+            } else if readable(p, own_uid.as_ref()) {
+                (
+                    scanner.cache.cwd(pid, start, &os_name),
+                    env_var.and_then(|var| scanner.cache.env_value(var, pid, start, &os_name)),
+                )
+            } else {
+                (None, None)
+            };
             NativeProcess {
-                pid: p.pid().as_u32(),
+                pid,
                 ppid: p.parent().map_or(0, |pid| pid.as_u32()),
                 name,
                 command_line,
-                // As the OS reports it: Windows keeps a trailing `\` (`C:\work\`).
-                cwd: p.cwd().map(|c| c.to_string_lossy().into_owned()),
+                cwd,
                 rss_bytes: p.memory() as f64,
                 cpu_time_ms: Some(p.accumulated_cpu_time() as f64),
                 started_at: (start > 0).then_some(start as f64 * 1000.0),
-                env_value: env_var.and_then(|name| env_lookup(p.environ(), name)),
+                env_value,
                 session_id: p.session_id().map(|id| id.as_u32()),
             }
         })
@@ -164,10 +311,21 @@ pub struct NativeListener {
     pub port: u32,
 }
 
-/// Every listening TCP socket on the machine with its owner, IPv4 and IPv6
-/// alike. Sockets of processes the OS will not describe to us (other users'
-/// on macOS) are missing.
-fn listening_sockets() -> Result<Vec<NativeListener>> {
+/// Every listening TCP socket with its owner, IPv4 and IPv6 alike — with
+/// `pids`, only those the processes `pids` own. Sockets of processes the OS
+/// will not describe to us (other users' on macOS) are missing.
+fn listening_sockets(pids: Option<HashSet<u32>>) -> Result<Vec<NativeListener>> {
+    // Linux: the library resolves every fd of every process to find the
+    // owners; for a few pids, reading only theirs is a fraction of that.
+    if LINUX && let Some(pids) = &pids {
+        return Ok(procfs::listening_ports_of(pids)
+            .into_iter()
+            .map(|(pid, port)| NativeListener {
+                pid,
+                port: u32::from(port),
+            })
+            .collect());
+    }
     let all =
         listeners::get_all().map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?;
     let mut seen = HashSet::new();
@@ -175,6 +333,10 @@ fn listening_sockets() -> Result<Vec<NativeListener>> {
         .into_iter()
         .filter(|l| l.protocol == listeners::Protocol::TCP)
         .filter(|l| l.state == listeners::SocketState::Listen)
+        .filter(|l| {
+            pids.as_ref()
+                .is_none_or(|pids| pids.contains(&l.process.pid))
+        })
         .filter_map(|l| {
             let key = (l.process.pid, l.socket.port());
             seen.insert(key).then_some(NativeListener {
@@ -317,9 +479,10 @@ pub fn list_processes_async(env_var: Option<String>) -> AsyncTask<Job<Vec<Native
 }
 
 /// Every listening TCP socket on the machine, with the pid that owns it.
+/// `pids`: only the sockets these processes own.
 #[napi]
-pub fn listening_sockets_async() -> AsyncTask<Job<Vec<NativeListener>>> {
-    Job::new(listening_sockets)
+pub fn listening_sockets_async(pids: Option<Vec<u32>>) -> AsyncTask<Job<Vec<NativeListener>>> {
+    Job::new(move || listening_sockets(pids.map(|pids| pids.into_iter().collect())))
 }
 
 /// The processes Restart Manager says hold a file under `dir` (up to 1000 of

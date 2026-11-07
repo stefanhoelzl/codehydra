@@ -530,6 +530,76 @@ describe("ExecaProcessRunner", () => {
     );
 
     it(
+      "finds IPv6 listeners, and only for the asked-for pids",
+      async () => {
+        const portFile = path.join(dir, "port");
+        const script =
+          "const s=require('net').createServer().listen(0,'::1',()=>" +
+          "require('fs').writeFileSync('port',String(s.address().port)));setTimeout(()=>{},30000)";
+        const child = runner.run(process.execPath, ["-e", script], { cwd: dir });
+        children.push(child);
+        const pid = child.pid!;
+
+        let port: number | undefined;
+        for (let i = 0; i < 100 && port === undefined; i++) {
+          await delay(50);
+          const text = await readFile(portFile, "utf8").catch(() => "");
+          if (text !== "") port = Number(text);
+        }
+        // A machine without IPv6 loopback cannot listen there: nothing to check.
+        if (port === undefined || Number.isNaN(port)) return;
+
+        expect((await scanner.findListeningPorts([pid])).get(pid)).toEqual([port]);
+        // Asked about other pids only: the child's socket is not reported.
+        expect((await scanner.findListeningPorts([process.pid])).has(pid)).toBe(false);
+        // Asked about the port: every owner, whoever asks.
+        const holders = await scanner.findListeningProcesses(port);
+        expect(holders.map((holder) => holder.pid)).toContain(pid);
+      },
+      SNAPSHOT_TEST_TIMEOUT
+    );
+
+    it(
+      "keeps reporting a process's environment variable on later scans",
+      async () => {
+        // The environment is read once per process; later scans answer from that.
+        const value = `ch::test::${path.basename(dir)}::again`;
+        const child = runner.run(process.execPath, ["-e", "setTimeout(()=>{},30000)"], {
+          cwd: dir,
+          env: { ...process.env, _CH_SNAPSHOT_TEST: value },
+        });
+        children.push(child);
+        const pid = child.pid!;
+        await delay(300);
+
+        for (let scan = 0; scan < 3; scan++) {
+          const snapshot = await scanner.listProcesses({ envVar: "_CH_SNAPSHOT_TEST" });
+          const entry = snapshot?.processes.find((candidate) => candidate.pid === pid);
+          expect(entry?.envValue, `scan ${scan}`).toBe(value);
+          expect(sameDir(entry?.cwd ?? null, dir), `scan ${scan}`).toBe(true);
+        }
+      },
+      SNAPSHOT_TEST_TIMEOUT
+    );
+
+    it.skipIf(process.platform !== "linux")(
+      "reads no working directory or environment from kernel threads",
+      async () => {
+        const snapshot = await scanner.listProcesses({ envVar: "PATH" });
+        // kthreadd, the parent of every kernel thread, is pid 2 — when this
+        // pid namespace can see it (a container may not).
+        const kthreadd = snapshot?.processes.find((candidate) => candidate.pid === 2);
+        if (kthreadd === undefined || kthreadd.ppid !== 0) return;
+        expect(kthreadd.cwd).toBeNull();
+        expect(kthreadd.envValue).toBeNull();
+        // This process is readable: both are there.
+        const self = snapshot!.processes.find((candidate) => candidate.pid === process.pid);
+        expect(self?.envValue).toBe(process.env.PATH);
+      },
+      SNAPSHOT_TEST_TIMEOUT
+    );
+
+    it(
       "finds no ports for a process listening on nothing",
       async () => {
         expect((await scanner.findListeningPorts([process.pid])).has(process.pid)).toBe(false);
