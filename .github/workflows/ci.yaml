@@ -33,13 +33,19 @@ jobs:
       - run: pnpm site:check
       - run: pnpm site:build
 
-      # The native addon. Once is enough here too: its platform branches are
-      # `cfg!()` conditions, so every one of them compiles, and lints, on Linux.
-      - name: Lint the native addon
+      # The native addon. Once is enough here too: most platform branches are
+      # `cfg!()` conditions, which compile on Linux, and the `#[cfg]` ones
+      # (Windows' open_files.rs, Restart Manager) are linted for their own
+      # targets — clippy only type-checks, so no other OS's SDK is needed.
+      - name: Lint and test the native addon
         working-directory: native
         run: |
           cargo fmt --check
-          cargo clippy --release --locked -- -D warnings
+          cargo clippy --release --locked --all-targets -- -D warnings
+          rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin
+          cargo clippy --release --locked --target x86_64-pc-windows-msvc -- -D warnings
+          cargo clippy --release --locked --target aarch64-apple-darwin -- -D warnings
+          cargo test --locked
 
       - run: git diff --exit-code
 

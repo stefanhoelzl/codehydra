@@ -1057,7 +1057,9 @@ export class ExecaProcessRunner implements ProcessRunner {
     if (pids.length === 0) return new Map();
     const wanted = new Set(pids);
     const ports = new Map<number, number[]>();
-    for (const { pid, port } of await this.listeningSockets()) {
+    // The addon filters too (on Linux it then reads only these pids' fds);
+    // the check here keeps the contract whatever it returns.
+    for (const { pid, port } of await this.listeningSockets([...wanted])) {
       if (!wanted.has(pid)) continue;
       const list = ports.get(pid) ?? [];
       if (!list.includes(port)) list.push(port);
@@ -1125,15 +1127,23 @@ export class ExecaProcessRunner implements ProcessRunner {
     };
   }
 
-  /** Every listening TCP socket; empty when the addon is missing, failed or hung. */
-  private async listeningSockets(): Promise<readonly { pid: number; port: number }[]> {
+  /**
+   * Every listening TCP socket — with `pids`, only theirs; empty when the
+   * addon is missing, failed or hung.
+   */
+  private async listeningSockets(
+    pids?: number[]
+  ): Promise<readonly { pid: number; port: number }[]> {
     const native = this.options.native;
     if (native === undefined) {
       this.logger.warn("Listening socket scan unavailable: no native addon configured");
       return [];
     }
     try {
-      const sockets = await raceTimeout(native.listeningSocketsAsync(), PROCESS_SCAN_TIMEOUT_MS);
+      const sockets = await raceTimeout(
+        native.listeningSocketsAsync(pids ?? null),
+        PROCESS_SCAN_TIMEOUT_MS
+      );
       if (sockets === TIMED_OUT) {
         this.logger.warn("Listening socket scan timed out");
         return [];
