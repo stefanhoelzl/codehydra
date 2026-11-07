@@ -192,18 +192,9 @@ export interface ApiServerOptions {
 // =============================================================================
 
 /**
- * The module plus its runtime readiness probe, `isConnected`.
- *
- * It exists for callers that fire a *best-effort* vscode command and already
- * treat "not connected" as normal — terminal focus on first idle, notably.
- * Dispatching anyway works, but the intent rejects and the dispatcher logs that
- * rejection at error level, so an expected condition ends up in the log (and in
- * every bug report) looking like a fault. Asking first keeps the log honest; the
- * caller's own retry-on-next-trigger still covers it. A command is delivered to
- * one workspace's socket or not at all, so the probe is per workspace.
- *
- * Do NOT use it to pre-check a command whose failure actually matters — the
- * hook still throws, and that error is the real signal.
+ * The module plus what other modules read or send past the intent pipeline:
+ * the `isConnected` probe, best-effort `tryCommand`, output lines and
+ * connection listeners.
  */
 export interface ApiServerModuleHandle {
   readonly module: IntentModule;
@@ -211,13 +202,28 @@ export interface ApiServerModuleHandle {
    * True when this workspace has a live socket right now — the condition a
    * `vscode:command` for it actually needs.
    *
-   * Answered from the same connection map the command itself resolves against,
-   * so a true here and a delivery a moment later can still disagree: a socket
-   * can drop in between, and nothing can close that gap entirely. It closes the
-   * window that matters, which is the wide one where the workspace was never
-   * connected or is being torn down.
+   * A snapshot: a socket can drop a moment later, so a caller must not use it
+   * to decide whether a command will be delivered. Use `tryCommand` for that.
    */
   isConnected(workspaceRef: WorkspaceRef): boolean;
+  /**
+   * Send a VS Code command for a caller that treats "not delivered" as normal,
+   * e.g. terminal focus on first idle, which retries on its next trigger.
+   * Answers true when the sidekick acked success, false otherwise: not
+   * connected, disconnected, timed out, or a failed command.
+   *
+   * Not an intent, on purpose. A `vscode:command` intent awaits
+   * `workspace:resolve` before its execute hook looks the socket up. App
+   * shutdown or a workspace deletion can clear the connection in that gap, and
+   * then the intent rejects and the dispatcher logs the rejection at error
+   * level. That puts a routine ordering into the log, and into every bug report,
+   * as a fault. Checking `isConnected` before dispatching cannot close that gap.
+   * Here the socket is looked up at send time, so there is no gap to close.
+   *
+   * Do NOT use it for a command whose failure matters: dispatch
+   * `vscode:command`, whose error is the real signal.
+   */
+  tryCommand(workspaceRef: WorkspaceRef, command: string): Promise<boolean>;
   /** The bound port, or null before the server has started. */
   port(): number | null;
   /**
@@ -1724,6 +1730,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   return {
     module,
     isConnected,
+    tryCommand: async (workspaceRef, command) => (await sendCommand(workspaceRef, command)).success,
     port: () => port,
     appendOutput,
     onWorkspaceConnected: (listener) => {

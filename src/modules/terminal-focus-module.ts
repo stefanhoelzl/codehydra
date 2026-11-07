@@ -12,8 +12,9 @@
  * - workspace:switched to a workspace not yet focused whose current status is
  *   idle (covers auto-switch after delete and switch-to-already-idle cases).
  *
- * Dispatches workbench.action.terminal.focus via the sidekick, then refreshes
- * OS window focus and the in-window focus chain so keystrokes reach xterm.
+ * Sends workbench.action.terminal.focus via the sidekick (best-effort, past the
+ * intent pipeline: see ApiServerModuleHandle.tryCommand), then refreshes OS
+ * window focus and the in-window focus chain so keystrokes reach xterm.
  *
  * Hooks:
  * - vscode:modal-changed → "modal": tracks which workspaces have a modal open in
@@ -42,8 +43,6 @@ import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../intents/vscode-modal-changed";
-import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
-import type { VscodeCommandIntent } from "../intents/vscode-command";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
 import type { WorkspaceRef } from "../intents/contract";
@@ -61,8 +60,8 @@ export const MODAL_RECORDED_CAPABILITY = "modal-recorded";
 
 export interface TerminalFocusModuleDeps {
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
-  /** Whether the workspace's sidekick has a live socket (ApiServerModuleHandle.isConnected). */
-  readonly isConnected: (workspaceRef: WorkspaceRef) => boolean;
+  /** Best-effort command to the workspace's sidekick (ApiServerModuleHandle.tryCommand). */
+  readonly tryCommand: (workspaceRef: WorkspaceRef, command: string) => Promise<boolean>;
   readonly viewManager: { focus(): void };
 }
 
@@ -79,33 +78,24 @@ export function createTerminalFocusModule(deps: TerminalFocusModuleDeps): Intent
   function focusTerminal(workspaceRef: WorkspaceRef): void {
     if (focused.has(workspaceRef) || inFlight.has(workspaceRef)) return;
     if (modalOpen.has(workspaceRef)) return;
-    // Ask before dispatching. This fires on the first idle status, which can beat
-    // the workspace's extension connecting — most visibly right after a wake, or
-    // on a relaunch that rediscovers workspaces — and can also arrive after it has
-    // gone, since the switch-driven trigger awaits a status query and a deletion
-    // tears the extension host down while that is in flight. Dispatching
-    // regardless still "works" (the catch below is exactly for that), but the
-    // intent rejects and the dispatcher logs the rejection at error level, so a
-    // routine ordering shows up in the log, and in every bug report, as a fault.
-    // The retry on the next trigger is what actually focuses the terminal either way.
-    //
-    // Per workspace, not server-level: a listening server says nothing about
-    // *this* workspace, so a server-level check let exactly the torn-down case
-    // through.
-    if (!deps.isConnected(workspaceRef)) return;
-
+    // Not dispatched as a vscode:command intent. The first idle can beat the
+    // workspace's sidekick connecting, most visibly right after a wake or on a
+    // relaunch that rediscovers workspaces. It can also come after the sidekick
+    // has gone: the switch-driven trigger awaits a status query, and a deletion
+    // or app shutdown tears the connection down while that is in flight, or
+    // while the intent itself is still resolving its workspace. A rejected intent
+    // is logged at error level, so a routine ordering would show up in the log,
+    // and in every bug report, as a fault. Checking for a connection before
+    // dispatching cannot close that gap. tryCommand looks the socket up when it
+    // sends, and "not delivered" is just false. The retry on the next trigger is
+    // what actually focuses the terminal either way.
     inFlight.add(workspaceRef);
-    void deps.dispatcher
-      .dispatch<VscodeCommandIntent>({
-        type: INTENT_VSCODE_COMMAND,
-        payload: { workspaceRef, command: "workbench.action.terminal.focus" },
-      })
-      .then(() => {
+    void deps
+      .tryCommand(workspaceRef, "workbench.action.terminal.focus")
+      .then((delivered) => {
+        if (!delivered) return;
         focused.add(workspaceRef);
         deps.viewManager.focus();
-      })
-      .catch(() => {
-        /* sidekick not connected yet; will retry on next trigger */
       })
       .finally(() => {
         inFlight.delete(workspaceRef);

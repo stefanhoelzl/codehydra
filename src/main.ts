@@ -1081,7 +1081,7 @@ dispatcher.registerOperation(new VscodeCommandOperation());
 
 const terminalFocusModule = createTerminalFocusModule({
   dispatcher,
-  isConnected: (workspaceRef) => apiServerModule.isConnected(workspaceRef),
+  tryCommand: (workspaceRef, command) => apiServerModule.tryCommand(workspaceRef, command),
   viewManager,
 });
 
