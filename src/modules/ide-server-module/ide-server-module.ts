@@ -367,11 +367,13 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   /** The spawned server; null before a start, after a stop, and once a start fails. */
   let serverProcess: SpawnedProcess | null = null;
   /**
-   * Servers stop() is killing. Marked before the kill, not after: until the
-   * kill lands the process still reads as running, and a startup health check
-   * would go on fetching from a server that is being torn down.
+   * Each spawned server's startup health check, aborted by stop() before the
+   * kill, not after: until the kill lands the process still reads as running,
+   * and a health check would go on fetching from a server that is being torn
+   * down. The abort also cancels the fetch already in flight, so no connection
+   * is left open for the dying server to reset.
    */
-  const stopping = new WeakSet<SpawnedProcess>();
+  const healthChecks = new WeakMap<SpawnedProcess, AbortController>();
   /**
    * The start in flight or done, resolving to the port served. Null while
    * stopped, so the next `ensureRunning` starts afresh; a failed start clears it.
@@ -521,14 +523,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   // -------------------------------------------------------------------------
 
   async function checkHealth(port: number): Promise<boolean> {
-    if (serverProcess?.pid === undefined || stopping.has(serverProcess)) {
+    const signal = serverProcess === null ? undefined : healthChecks.get(serverProcess)?.signal;
+    if (serverProcess?.pid === undefined || signal === undefined || signal.aborted) {
       // stop() ran or is running (shutdown, or a resume restart): there is no
       // server left to become healthy, so polling on would only wait out the
       // timeout. Nor is one fetched from while it dies: on macOS, Node's fetch
       // (undici) can throw an uncaught `setTypeOfService EINVAL` from a
       // connection the dying server resets.
-      logger.warn("Health check failed: process not available");
-      throw new HealthCheckAbortError("Process stopped");
+      throw processStopped();
     }
 
     const processCheck = await serverProcess.wait(0);
@@ -550,14 +552,23 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     try {
       const response = await deps.httpClient.fetch(getIdeServer().healthUrl(port), {
         timeout: 1000,
+        // stop() aborts it: a fetch still connecting when the server dies is
+        // the one the dying server resets (the EINVAL above).
+        signal,
       });
       const healthy = response.status === 200;
       logger.debug("Health check", { status: healthy ? "ok" : "failed" });
       return healthy;
     } catch (error) {
+      if (signal.aborted) throw processStopped();
       logger.silly("Health check failed", { error: getErrorMessage(error) });
       return false;
     }
+  }
+
+  function processStopped(): HealthCheckAbortError {
+    logger.warn("Health check failed: process not available");
+    return new HealthCheckAbortError("Process stopped");
   }
 
   async function waitForServerHealthy(port: number): Promise<void> {
@@ -841,6 +852,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
         env,
       });
       serverProcess = spawned;
+      healthChecks.set(spawned, new AbortController());
 
       await waitForServerHealthy(port);
 
@@ -883,7 +895,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     const pid = proc.pid ?? 0;
 
     logger.info("Stopping", { pid });
-    stopping.add(proc);
+    healthChecks.get(proc)?.abort();
 
     try {
       const result = await proc.kill(
