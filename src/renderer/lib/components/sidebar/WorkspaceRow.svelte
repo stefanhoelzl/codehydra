@@ -23,6 +23,7 @@
   import SidebarIcon from "./SidebarIcon.svelte";
   import Highlighted from "./Highlighted.svelte";
   import NoteCard from "./NoteCard.svelte";
+  import Spinner from "./Spinner.svelte";
   import { noteIn, noteOut } from "./motion";
 
   interface Props {
@@ -131,16 +132,16 @@
     aria-current={row.active ? "true" : undefined}
   >
     {#if glyph === "busy"}
-      <span
-        class="ring busy"
+      <Spinner
+        tone="busy"
         title={busy === null ? "Agent working" : `Agent working since ${busy.since}`}
-      ></span>
+      />
     {:else if glyph === "idle"}
       <span class="dot idle" title="Agent waiting for you"></span>
     {:else if glyph === "none"}
       <span class="dot none" title="No agent running"></span>
     {:else if glyph === "pending"}
-      <span class="ring pending"></span>
+      <Spinner class="pending" />
     {:else if glyph === "failed"}
       <span class="failed-icon"><SidebarIcon name="warn" /></span>
     {:else}
@@ -422,25 +423,6 @@
   .dot.none {
     border: 1.5px solid var(--ch-sb-fg-3);
   }
-  .ring {
-    width: 13px;
-    height: 13px;
-    border-radius: 50%;
-    border: 2px solid var(--ch-sb-spin-track);
-    border-top-color: var(--ch-sb-spin-head);
-    animation: spin 0.9s linear infinite;
-    display: block;
-    box-sizing: border-box;
-  }
-  .ring.busy {
-    border-color: var(--ch-sb-busy-track);
-    border-top-color: var(--ch-sb-busy);
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
   .moon {
     color: var(--ch-sb-fg-3);
     display: grid;
@@ -485,11 +467,5 @@
   :global(.ws.ghost.active) {
     background:
       linear-gradient(var(--ch-sb-accent-soft), var(--ch-sb-accent-soft)), var(--ch-sb-s2);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .ring {
-      animation: none;
-    }
   }
 </style>

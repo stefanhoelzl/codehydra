@@ -49,6 +49,7 @@
   import NoteCard from "./sidebar/NoteCard.svelte";
   import SidebarIcon from "./sidebar/SidebarIcon.svelte";
   import RowCountItems from "./sidebar/RowCountItems.svelte";
+  import Spinner from "./sidebar/Spinner.svelte";
   import ProcessBar from "./sidebar/ProcessBar.svelte";
   import { createRowMotion, highlight, noteIn, noteOut } from "./sidebar/motion";
 
@@ -783,10 +784,10 @@
           {#each group.shown as row (row.key)}
             {@const glyph = rowGlyph(row)}
             <div class="r-ws" class:active={row.active}>
-              {#if glyph === "busy"}<span class="ring busy"></span>
+              {#if glyph === "busy"}<Spinner tone="busy" />
               {:else if glyph === "idle"}<span class="dot idle"></span>
               {:else if glyph === "none"}<span class="dot none"></span>
-              {:else if glyph === "pending"}<span class="ring pending"></span>
+              {:else if glyph === "pending"}<Spinner class="pending" />
               {:else if glyph === "failed"}<span class="failed-icon"
                   ><SidebarIcon name="warn" /></span
                 >
@@ -800,7 +801,7 @@
       {#each bottomNotes as note (note.id)}
         {@const type = note.config.type}
         <div class="rnote {type === 'spinner' ? 'info' : type}" title={note.config.title}>
-          {#if type === "spinner" || type === "question"}<span class="ring"></span>
+          {#if type === "spinner" || type === "question"}<Spinner />
           {:else}<SidebarIcon name={NOTE_RAIL_ICON[type]} />{/if}
         </div>
       {/each}
@@ -1153,24 +1154,6 @@
   .dot.none {
     border: 1.5px solid var(--ch-sb-fg-3);
   }
-  .ring {
-    width: 13px;
-    height: 13px;
-    border-radius: 50%;
-    border: 2px solid var(--ch-sb-spin-track);
-    border-top-color: var(--ch-sb-spin-head);
-    animation: spin 0.9s linear infinite;
-    display: block;
-  }
-  .ring.busy {
-    border-color: var(--ch-sb-busy-track);
-    border-top-color: var(--ch-sb-busy);
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
   .moon {
     color: var(--ch-sb-fg-3);
     display: grid;
@@ -1200,11 +1183,5 @@
     inset: 0;
     z-index: 9999;
     cursor: ew-resize;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .ring {
-      animation: none;
-    }
   }
 </style>

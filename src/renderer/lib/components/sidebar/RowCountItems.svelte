@@ -8,6 +8,7 @@
 <script lang="ts">
   import type { RowCounts } from "$lib/utils/sidebar-model.js";
   import SidebarIcon from "./SidebarIcon.svelte";
+  import Spinner from "./Spinner.svelte";
 
   interface Props {
     counts: RowCounts;
@@ -18,9 +19,8 @@
   const { counts, still = false }: Props = $props();
 </script>
 
-{#if counts.busy > 0}<i><span class="ring busy" class:still></span>{counts.busy}</i>{/if}
-{#if counts.loading > 0}<i class="loading"><span class="ring" class:still></span>{counts.loading}</i
-  >{/if}
+{#if counts.busy > 0}<i><Spinner tone="busy" small {still} />{counts.busy}</i>{/if}
+{#if counts.loading > 0}<i class="loading"><Spinner small {still} />{counts.loading}</i>{/if}
 {#if counts.idle > 0}<i><span class="dot idle"></span>{counts.idle}</i>{/if}
 {#if counts.noAgent > 0}<i class="none"><span class="dot"></span>{counts.noAgent}</i>{/if}
 {#if counts.hibernated > 0}<i class="hib"
@@ -37,33 +37,6 @@
     display: inline-flex;
     align-items: center;
     gap: 3px;
-  }
-  .ring {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    border: 1.5px solid var(--ch-sb-busy-track);
-    border-top-color: var(--ch-sb-busy);
-    animation: spin 0.9s linear infinite;
-    display: block;
-    box-sizing: border-box;
-  }
-  .loading .ring {
-    border-color: var(--ch-sb-spin-track);
-    border-top-color: var(--ch-sb-spin-head);
-  }
-  .ring.still {
-    animation: none;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .ring {
-      animation: none;
-    }
   }
   .dot {
     width: 6px;
