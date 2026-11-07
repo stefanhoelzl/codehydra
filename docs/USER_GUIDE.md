@@ -131,9 +131,8 @@ Projects are sorted by name.
   button, the **gear** (settings) and **?** (this guide). Hover any sidebar icon
   for what it does.
 - The **process summary** shows the CPU, memory and number of processes of what
-  each workspace runs, e.g. `12% · 874M · 7`: on the second line of each awake
-  row, and as a pulse icon in each project's header, with the whole project's
-  numbers on hover. A bar above the footer shows all of CodeHydra, each number
+  each workspace runs, e.g. `12% · 874M · 7`, on the second line of each awake
+  row. A bar above the footer shows all of CodeHydra, each number
   behind its icon (a chip for CPU, a memory stick, stacked layers for the
   processes): every workspace's processes plus CodeHydra's own (its window, the
   editor server and their helpers), each counted once; hover it for the split.

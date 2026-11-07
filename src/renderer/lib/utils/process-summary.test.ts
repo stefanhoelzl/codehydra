@@ -4,7 +4,6 @@ import {
   formatCpu,
   formatMemory,
   formatProcessBadge,
-  sumProcessSummaries,
 } from "./process-summary";
 
 const MIB = 1024 * 1024;
@@ -42,31 +41,5 @@ describe("process summary", () => {
     expect(describeProcessSummary({ cpuPercent: null, rssBytes: 4 * MIB, count: 1 })).toBe(
       "CPU not measured yet · 4M memory · 1 process"
     );
-  });
-});
-
-describe("sumProcessSummaries", () => {
-  it("adds up CPU, memory and count, skipping rows without a summary", () => {
-    expect(
-      sumProcessSummaries([
-        { cpuPercent: 12, rssBytes: 100, count: 3 },
-        undefined,
-        { cpuPercent: 6, rssBytes: 50, count: 1 },
-      ])
-    ).toEqual({ cpuPercent: 18, rssBytes: 150, count: 4 });
-  });
-
-  it("keeps CPU unmeasured only when none is measured, and is null with nothing", () => {
-    expect(
-      sumProcessSummaries([
-        { cpuPercent: null, rssBytes: 1, count: 1 },
-        { cpuPercent: 4, rssBytes: 1, count: 1 },
-      ])!.cpuPercent
-    ).toBe(4);
-    expect(
-      sumProcessSummaries([{ cpuPercent: null, rssBytes: 1, count: 1 }])!.cpuPercent
-    ).toBeNull();
-    expect(sumProcessSummaries([undefined])).toBeNull();
-    expect(sumProcessSummaries([])).toBeNull();
   });
 });

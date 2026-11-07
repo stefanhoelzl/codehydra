@@ -2,7 +2,7 @@
   ProjectCard.svelte
 
   One project: a header bar (letter badge, name, hibernated/automated counts
-  or the collapsed counts, the process icon, close and +) over its rows. Every row is always in
+  or the collapsed counts, close and +) over its rows. Every row is always in
   the page and folds open or closed, so collapsing, opening the hibernated list
   or entering Find animates.
 
@@ -28,7 +28,6 @@
   import SidebarIcon from "./SidebarIcon.svelte";
   import RowCountItems from "./RowCountItems.svelte";
   import Highlighted from "./Highlighted.svelte";
-  import { describeProcessSummary, sumProcessSummaries } from "$lib/utils/process-summary.js";
   import WorkspaceRow from "./WorkspaceRow.svelte";
   import type { TransitionConfig } from "svelte/transition";
   import type { RowMotion } from "./motion";
@@ -100,14 +99,6 @@
     hibernated: counts.hibernated,
     automated: counts.automated,
   });
-  // With the process summary on, the header totals its rows' CPU and memory
-  // (null otherwise), shown as an icon with the numbers as its tooltip.
-  const processTotal = $derived(
-    sumProcessSummaries(project.workspaces.map((row) => row.processes))
-  );
-  const processTip = $derived(
-    processTotal === null ? "" : `${project.name}: ${describeProcessSummary(processTotal)}`
-  );
   const hibernatedOpen = $derived(project.hibernatedView !== "hidden");
   const color = $derived(projectColor(project.colorIndex));
 
@@ -212,11 +203,6 @@
         </button>
       {/if}
     </span>
-    {#if processTotal !== null}
-      <span class="proc-icon" title={processTip} aria-label={processTip}
-        ><SidebarIcon name="pulse" /></span
-      >
-    {/if}
     <span class="spacer"></span>
     <button
       type="button"
@@ -422,12 +408,6 @@
     font-variant-numeric: tabular-nums;
     flex: none;
     padding: 0 2px;
-  }
-  .proc-icon {
-    display: grid;
-    place-items: center;
-    flex: none;
-    color: var(--ch-sb-accent);
   }
 
   .hib-group {
