@@ -15,6 +15,7 @@ import {
   INTENT_SEND_AGENT_MESSAGE,
   SEND_AGENT_MESSAGE_OPERATION_ID,
   SendAgentMessageOperation,
+  type ExpectHookInput,
   type SendAgentMessageIntent,
   type SendHookInput,
   type SendHookResult,
@@ -57,6 +58,8 @@ interface Setup {
   readonly delivered: Delivery[];
   readonly woken: WorkspaceRef[];
   readonly commands: string[];
+  /** What the operation did, in order: expect(true|false), wake, openAgent, send. */
+  readonly steps: string[];
 }
 
 function createSetup(opts: {
@@ -71,10 +74,13 @@ function createSetup(opts: {
   editorDisconnected?: boolean;
   /** Running a command in the editor fails. */
   commandError?: Error;
+  /** Waking the workspace fails. */
+  wakeError?: Error;
 }): Setup {
   const delivered: Delivery[] = [];
   const woken: WorkspaceRef[] = [];
   const commands: string[] = [];
+  const steps: string[] = [];
   const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(new SendAgentMessageOperation());
@@ -97,6 +103,8 @@ function createSetup(opts: {
     async before(intent: Intent): Promise<Intent | null> {
       if (intent.type !== INTENT_WAKE_WORKSPACE) return intent;
       woken.push((intent.payload as { workspaceRef: WorkspaceRef }).workspaceRef);
+      steps.push("wake");
+      if (opts.wakeError) throw opts.wakeError;
       return null;
     },
   });
@@ -108,9 +116,15 @@ function createSetup(opts: {
       [SEND_AGENT_MESSAGE_OPERATION_ID]: opts.noAgent
         ? {}
         : {
+            expect: {
+              handler: async (ctx: HookContext): Promise<void> => {
+                steps.push(`expect(${String((ctx as ExpectHookInput).expecting)})`);
+              },
+            },
             send: {
               handler: async (ctx: HookContext): Promise<HookOutput<SendHookResult>> => {
                 const { workspacePath, waitMs } = ctx as SendHookInput;
+                steps.push("send");
                 if (opts.sendError) throw opts.sendError;
                 if (opts.notSent !== undefined) {
                   return { result: { sent: false, reason: opts.notSent } };
@@ -137,6 +151,7 @@ function createSetup(opts: {
         execute: {
           handler: async (ctx: HookContext) => {
             commands.push((ctx.intent as VscodeCommandIntent).payload.command);
+            steps.push("openAgent");
             if (opts.commandError) throw opts.commandError;
             return { result: {} };
           },
@@ -159,7 +174,7 @@ function createSetup(opts: {
   };
   dispatcher.registerModule(editorModule);
 
-  return { dispatcher, delivered, woken, commands };
+  return { dispatcher, delivered, woken, commands, steps };
 }
 
 function sendIntent(wake: boolean): SendAgentMessageIntent {
@@ -283,6 +298,67 @@ describe("SendAgentMessage Operation", () => {
     expect(result).toEqual({
       sent: false,
       reason: expect.stringMatching(/no agent to take the message/),
+    });
+  });
+
+  describe("expecting the message", () => {
+    it("expects it before waking a hibernated workspace", async () => {
+      const setup = createSetup({ hibernated: true });
+
+      await setup.dispatcher.dispatch(sendIntent(true));
+
+      expect(setup.steps).toEqual(["expect(true)", "wake", "send"]);
+    });
+
+    it("expects it before reopening a closed agent terminal", async () => {
+      const setup = createSetup({ agentStatus: "none" });
+
+      await setup.dispatcher.dispatch(sendIntent(true));
+
+      expect(setup.steps).toEqual(["expect(true)", "openAgent", "send"]);
+    });
+
+    it("expects it for an agent still coming up", async () => {
+      const setup = createSetup({ agentStatus: "none", editorDisconnected: true });
+
+      await setup.dispatcher.dispatch(sendIntent(true));
+
+      expect(setup.steps).toEqual(["expect(true)", "send"]);
+    });
+
+    it.each([
+      ["a running agent", { agentStatus: "idle" as const }, true],
+      ["a send without wake", { agentStatus: "none" as const }, false],
+    ])("does not expect it for %s", async (_name, opts, wake) => {
+      const setup = createSetup(opts);
+
+      await setup.dispatcher.dispatch(sendIntent(wake));
+
+      expect(setup.steps).toEqual(["send"]);
+    });
+
+    it("takes it back when the wake fails", async () => {
+      const setup = createSetup({ hibernated: true, wakeError: new Error("wake failed") });
+
+      await expect(setup.dispatcher.dispatch(sendIntent(true))).rejects.toThrow("wake failed");
+
+      expect(setup.steps).toEqual(["expect(true)", "wake", "expect(false)"]);
+    });
+
+    it("takes it back when the agent does not take it", async () => {
+      const setup = createSetup({ hibernated: true, notSent: "No Claude session is running" });
+
+      await setup.dispatcher.dispatch(sendIntent(true));
+
+      expect(setup.steps).toEqual(["expect(true)", "wake", "send", "expect(false)"]);
+    });
+
+    it("takes it back when the hand-over fails", async () => {
+      const setup = createSetup({ hibernated: true, sendError: new Error("ECONNREFUSED") });
+
+      await expect(setup.dispatcher.dispatch(sendIntent(true))).rejects.toThrow("ECONNREFUSED");
+
+      expect(setup.steps).toEqual(["expect(true)", "wake", "send", "expect(false)"]);
     });
   });
 

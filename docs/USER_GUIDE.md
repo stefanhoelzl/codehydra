@@ -398,8 +398,10 @@ ch ws hibernate --wakeup 'gh pr checks 12 >/dev/null && echo "{\"action\":\"wake
 - **What it prints** — nothing, or `{"action":"keep"}`, keeps the workspace
   asleep. `{"action":"wake","message":"…"}` wakes it in place (you stay where
   you are) and sends the message, if any, to its agent as a
-  [message](#messages-to-a-running-agent) signed `CodeHydra · wakeup`. There is
-  no delete: to have a workspace deleted, wake it with a message asking its
+  [message](#messages-to-a-running-agent) signed `CodeHydra · wakeup`. Woken
+  with a message, it goes from loading straight to busy and stays busy until
+  its agent has handled the message, so it chimes once, when that is done.
+  There is no delete: to have a workspace deleted, wake it with a message asking its
   agent to delete it.
 - **Any wake clears it** — the script's own, yours, an automation's. It is
   one-shot, so a condition that is still true cannot wake the workspace again
@@ -1569,6 +1571,12 @@ ch ws agent message --wake "pick this back up"
   reopens the agent terminal, then waits up to 90 seconds for the agent to
   start — also for a workspace that is still opening or waking, whose agent
   terminal starts once its editor is up. It does not switch to the workspace.
+  An agent started this way reads **busy** from its start until its turn on
+  the message ends, never idle in between (so no chime until then). It reads
+  idle (waiting on you) instead when the message is not sent, when the agent
+  is up but does not take the message for a minute (a dialog blocks its
+  start), or when it takes the message but starts no turn on it within 30
+  seconds (it holds the message for your approval, below).
   An agent still starting in an open terminal is waited for (up to 30 seconds)
   even without `--wake`.
 - **Claude Code** in bypass-permissions mode on macOS and Linux holds a

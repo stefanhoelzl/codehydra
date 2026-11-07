@@ -237,11 +237,23 @@ describe("a message from outside, to a session that prompts for permissions", ()
       until: (r) => seen(r, "Stop"),
       permissionMode: "default",
       message,
+      afterMessageUntil: (r) => seen(r, "Stop", 2),
     });
   }, SCENARIO_TIMEOUT_MS);
 
   it("reaches the model", () => {
     expect(run.deliveredMessage).toContain(message.text);
+  });
+
+  it("starts a turn that reads busy, and ends it idle", () => {
+    // A workspace woken for a message reads busy until the agent's turn on it
+    // starts, and from then on the agent's own status tells: so that turn must
+    // read busy before its Stop, or the workspace would sit busy for 30s more.
+    const afterFirstStop = run.records.slice(
+      run.records.findIndex((record) => record.hook === "Stop") + 1
+    );
+    expect(afterFirstStop.some((record) => record.after === "busy")).toBe(true);
+    expect(run.statusAfter("Stop", 1)).toBe("idle");
   });
 
   it("names its sender in the envelope Claude parses", () => {

@@ -184,6 +184,19 @@ export interface AgentModuleProvider {
     options: AgentMessageOptions
   ): Promise<void>;
 
+  /**
+   * Record that the workspace's agent is being started for a message (`true`),
+   * or that the message is not coming after all (`false`). While a message is
+   * expected, an agent that reads idle reports busy instead: it has work it has
+   * not been handed yet. The expectation ends when the next
+   * {@link sendMessage} fails, when the agent's turn on the message starts
+   * (it reads busy on its own), or when the agent does not take it up — started
+   * but not reachable for a minute (a dialog blocks its start), or handed the
+   * message but no turn within 30 seconds (it holds the message for its user).
+   * Each of those leaves the workspace reading idle: it waits on the user.
+   */
+  expectMessage(workspaceRef: WorkspaceRef, expecting: boolean): void;
+
   // --- Events ---
 
   /** Subscribe to status changes across all workspaces */

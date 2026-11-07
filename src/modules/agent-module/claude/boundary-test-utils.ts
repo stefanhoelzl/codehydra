@@ -142,6 +142,8 @@ export interface ScenarioOptions {
    */
   readonly message?: AgentMessage;
   readonly messageWaitMs?: number;
+  /** With `message`: once it reached the model, also wait for the recording to satisfy this. */
+  readonly afterMessageUntil?: (records: readonly HookRecord[]) => boolean;
 }
 
 /** Every scenario the boundary tests drive, and the fixtures that produce it. */
@@ -674,6 +676,9 @@ async function runScenarioInner(
         .map((message: ChatMessage) => messageText(message))
         .find((content) => content.includes(text));
       await new Promise((done) => setTimeout(done, 100));
+    }
+    if (deliveredMessage !== undefined && options.afterMessageUntil !== undefined) {
+      await waitForRecording(records, options.afterMessageUntil, agent);
     }
   }
 

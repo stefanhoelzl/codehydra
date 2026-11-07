@@ -66,6 +66,7 @@ const {
     createSession = vi.fn().mockResolvedValue({ ok: true, value: { id: "session-1" } });
     sendPrompt = vi.fn().mockResolvedValue({ ok: true, value: {} });
     sendPromptAsync = vi.fn().mockResolvedValue({ ok: true, value: {} });
+    sendMessage = vi.fn().mockResolvedValue(undefined);
 
     constructor() {
       statusCallback = null;
@@ -518,6 +519,26 @@ describe("OpenCode module provider", () => {
       const noneCount = statusChanges.filter((s) => s.status === "none").length;
       // At most 1 "none" notification total (from addProvider)
       expect(noneCount).toBeLessThanOrEqual(1);
+    });
+
+    it("reads busy from TUI attach until the turn on an expected message ends", async () => {
+      const statusChanges: AggregatedAgentStatus[] = [];
+      provider.onStatusChange((_path, status) => statusChanges.push(status));
+
+      provider.expectMessage(WS_REF, true);
+      await initializeAndStart(provider, serverManager);
+      getCapturedStatusCallback()!("idle"); // the TUI attached
+      await provider.sendMessage(WS_REF, { text: "go", from: "CodeHydra · ch" }, { waitMs: 1 });
+      getCapturedStatusCallback()!("busy"); // the queued prompt runs
+      getCapturedStatusCallback()!("idle");
+
+      expect(statusChanges.map((status) => status.status)).toEqual([
+        "none",
+        "none",
+        "busy",
+        "busy",
+        "idle",
+      ]);
     });
   });
 

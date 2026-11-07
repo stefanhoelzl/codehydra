@@ -143,6 +143,7 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
     } satisfies AggregatedAgentStatus),
     getSession: vi.fn().mockReturnValue({ port: 8080, sessionId: "session-1" }),
     sendMessage: vi.fn().mockResolvedValue(undefined),
+    expectMessage: vi.fn(),
     onStatusChange: vi.fn(
       (cb: (workspaceRef: WorkspaceRef, status: AggregatedAgentStatus) => void) => {
         capturedStatusCallback = cb;
@@ -1431,6 +1432,24 @@ describe("createAgentModule", () => {
       await dispatcher.dispatch(intent);
 
       expect(mockProvider.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it.each([true, false])("passes expect(%s) on to the provider", async (expecting) => {
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
+      dispatcher.registerOperation(
+        workspaceHookOperation<undefined>(
+          SEND_AGENT_MESSAGE_OPERATION_ID,
+          INTENT_SEND_AGENT_MESSAGE,
+          "expect",
+          "claude",
+          { expecting }
+        )
+      );
+
+      await dispatcher.dispatch(intent);
+
+      expect(mockProvider.expectMessage).toHaveBeenCalledWith(TEST_WS_REF, expecting);
     });
   });
 

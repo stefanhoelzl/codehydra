@@ -172,6 +172,7 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
         restart: makeResolverHandler(deps),
       },
       [SEND_AGENT_MESSAGE_OPERATION_ID]: {
+        expect: makeResolverHandler(deps),
         send: makeResolverHandler(deps),
       },
       [AGENT_LIFECYCLE_OPERATION_ID]: {

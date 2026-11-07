@@ -582,6 +582,161 @@ describe("createClaudeModuleProvider", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Expected-message overlay
+  // ---------------------------------------------------------------------------
+
+  describe("expected message", () => {
+    const IDLE = { status: "idle", counts: { idle: 1, busy: 0 } };
+    const BUSY = { status: "busy", counts: { idle: 0, busy: 1 } };
+    const NONE = { status: "none", counts: { idle: 0, busy: 0 } };
+    const message = { text: "CI on #12 passed", from: "CodeHydra · wakeup" };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** A hibernated workspace being woken for a message: expected before its server starts. */
+    async function wokenForMessage() {
+      const provider = createInitializedProvider();
+      const statusChanges: AggregatedAgentStatus[] = [];
+      provider.onStatusChange((_wp, status) => statusChanges.push(status));
+      provider.expectMessage(WS_REF, true);
+      await serverStartedCallback()(WS_REF, 8080);
+      return { provider, statusChanges };
+    }
+
+    it("reads busy from the agent's start until its turn on the message ends", async () => {
+      const { provider, statusChanges } = await wokenForMessage();
+      expect(provider.getStatus(WS_REF)).toMatchObject(NONE);
+
+      capturedStatusCallback!("idle"); // the agent is up (WrapperStart, SessionStart)
+      expect(provider.getStatus(WS_REF)).toMatchObject(BUSY);
+
+      await provider.sendMessage(WS_REF, message, { waitMs: 90_000 });
+      capturedStatusCallback!("busy"); // its turn on the message
+      capturedStatusCallback!("idle"); // done
+
+      expect(statusChanges).toMatchObject([NONE, NONE, BUSY, BUSY, IDLE]);
+    });
+
+    it("keeps reading busy while the turn has not started yet", async () => {
+      const { provider } = await wokenForMessage();
+      capturedStatusCallback!("idle");
+      await provider.sendMessage(WS_REF, message, { waitMs: 90_000 });
+
+      vi.advanceTimersByTime(29_000);
+
+      expect(provider.getStatus(WS_REF)).toMatchObject(BUSY);
+    });
+
+    it("reads idle once the message is handed over but no turn starts in 30s", async () => {
+      const { provider, statusChanges } = await wokenForMessage();
+      capturedStatusCallback!("idle");
+      await provider.sendMessage(WS_REF, message, { waitMs: 90_000 });
+      statusChanges.length = 0;
+
+      vi.advanceTimersByTime(30_000);
+
+      expect(provider.getStatus(WS_REF)).toMatchObject(IDLE);
+      expect(statusChanges).toMatchObject([IDLE]);
+    });
+
+    it("reads idle at once when the message is not sent", async () => {
+      const { provider, statusChanges } = await wokenForMessage();
+      capturedStatusCallback!("idle");
+      vi.mocked(latestMockProvider.sendMessage).mockRejectedValueOnce(new Error("unreachable"));
+      statusChanges.length = 0;
+
+      await expect(provider.sendMessage(WS_REF, message, { waitMs: 90_000 })).rejects.toThrow(
+        "unreachable"
+      );
+
+      expect(statusChanges).toMatchObject([IDLE]);
+    });
+
+    it("reads idle when the agent is up but does not take the message for a minute", async () => {
+      // Claude waits on its folder trust dialog: the terminal is open, no session.
+      const { provider } = await wokenForMessage();
+      capturedStatusCallback!("idle");
+
+      vi.advanceTimersByTime(59_000);
+      expect(provider.getStatus(WS_REF)).toMatchObject(BUSY);
+      vi.advanceTimersByTime(1_000);
+      expect(provider.getStatus(WS_REF)).toMatchObject(IDLE);
+    });
+
+    it("does not count the minute before the agent is up", async () => {
+      const { provider } = await wokenForMessage();
+
+      vi.advanceTimersByTime(80_000); // the view loads, the terminal starts
+      capturedStatusCallback!("idle");
+
+      expect(provider.getStatus(WS_REF)).toMatchObject(BUSY);
+    });
+
+    it("leaves a turn that started before the hand-over to the agent", async () => {
+      const { provider } = await wokenForMessage();
+      capturedStatusCallback!("busy");
+      await provider.sendMessage(WS_REF, message, { waitMs: 90_000 });
+
+      capturedStatusCallback!("idle");
+
+      expect(provider.getStatus(WS_REF)).toMatchObject(IDLE);
+    });
+
+    it("reads idle when the expectation is taken back", async () => {
+      const { provider, statusChanges } = await wokenForMessage();
+      capturedStatusCallback!("idle");
+      statusChanges.length = 0;
+
+      provider.expectMessage(WS_REF, false);
+
+      expect(statusChanges).toMatchObject([IDLE]);
+    });
+
+    it("turns an agent that is already up busy right away", async () => {
+      const provider = createInitializedProvider();
+      await serverStartedCallback()(WS_REF, 8080);
+      capturedStatusCallback!("idle");
+
+      provider.expectMessage(WS_REF, true);
+
+      expect(provider.getStatus(WS_REF)).toMatchObject(BUSY);
+    });
+
+    it("yields to an open modal", async () => {
+      const { provider } = await wokenForMessage();
+      capturedStatusCallback!("idle");
+
+      provider.setModalOpen(WS_REF, "editor", true);
+
+      expect(provider.getStatus(WS_REF)).toMatchObject(IDLE);
+    });
+
+    it("clearWorkspaceTracking drops it", async () => {
+      const { provider } = await wokenForMessage();
+      capturedStatusCallback!("idle");
+
+      provider.clearWorkspaceTracking(WS_REF);
+
+      expect(provider.getStatus(WS_REF)).toMatchObject(IDLE);
+    });
+
+    it("leaves a send nobody expected alone", async () => {
+      const provider = createInitializedProvider();
+      await serverStartedCallback()(WS_REF, 8080);
+      capturedStatusCallback!("idle");
+
+      await provider.sendMessage(WS_REF, message, { waitMs: 0 });
+
+      expect(provider.getStatus(WS_REF)).toMatchObject(IDLE);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Query methods
   // ---------------------------------------------------------------------------
 
