@@ -235,6 +235,12 @@ interface AgentProvider {
   forwarded (`claude/inbox-message.ts` has the wire format). OpenCode queues it with
   `promptAsync` once the TUI is attached. The `agent:send-message` intent (`agent.message`
   in the registry) drives it, and waking or reopening the agent terminal first is its job.
+  Before it starts an agent for a message, its `expect` hook tells the module provider
+  (`expectMessage`), whose core overlays the status: an agent reading idle reports busy
+  until its turn on the message starts. The overlay ends on a failed send, on a busy edge
+  after the hand-over, or when the agent does not take it up — 60s up without taking the
+  message, 30s after the hand-over without a turn (`module-provider.ts`). Both providers
+  share it; no provider code knows about it.
 
 ---
 

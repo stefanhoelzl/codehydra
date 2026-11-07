@@ -8,7 +8,10 @@
  * Steps:
  * 1. Dispatch workspace:resolve — validates workspacePath; yields its metadata
  *    and whether a teardown owns it
- * 2. With `wake`: bring the agent up first —
+ * 2. With `wake`: bring the agent up first. Before it starts, the "expect"
+ *    hook tells the agent module a message is coming, so the workspace reads
+ *    busy from the agent's start until the agent has taken the message up,
+ *    rather than idle for a moment (which chimes) —
  *    - hibernated → dispatch workspace:wake (in the background, no switch)
  *    - awake, agent terminal closed (agent status "none") → run the sidekick's
  *      `codehydra.openAgent` if the "editor" hook says the workspace's editor
@@ -17,7 +20,9 @@
  *      terminal once it does, so there is nothing to run, only to wait for
  *    and let the send wait for the agent to become reachable. Without `wake`, a
  *    hibernated workspace fails fast and the send never waits.
- * 3. "send" hook — the workspace's agent module hands the message over
+ * 3. "send" hook — the workspace's agent module hands the message over. A
+ *    wake that failed, or a send no agent took, takes the expectation back
+ *    through "expect" with `expecting: false`.
  *
  * Resolves `{ sent: true }` once the agent has taken the message ("sent", not
  * "read"), and `{ sent: false, reason }` when there is no agent to take it —
@@ -89,6 +94,23 @@ const sendEnrichmentSchema = z.object({
   waitMs: z.number().int().nonnegative(),
 });
 
+/** Operation-added enrichment for the "expect" hook point (beyond the base HookContext). */
+const expectEnrichmentSchema = z.object({
+  ...workspaceTargetShape,
+  /**
+   * true: the agent is about to be started for this message, so the workspace
+   * reads busy until the agent has taken it up. false: the message is not
+   * coming after all (the start or the send failed).
+   */
+  expecting: z.boolean(),
+});
+
+/** Runtime whole-context validation schema for "expect". */
+export const expectHookInputSchema = hookCtxSchema(
+  sendAgentMessagePayloadSchema,
+  expectEnrichmentSchema.shape
+);
+
 /** Per-handler result contract for the "editor" hook point. */
 export const editorHookResultSchema = z
   .object({
@@ -118,6 +140,7 @@ export const schemas = {
   payload: sendAgentMessagePayloadSchema,
   result: sendAgentMessageResultSchema,
   hooks: {
+    expect: { input: expectHookInputSchema, result: z.object({}).readonly() },
     editor: { input: editorHookInputSchema, result: editorHookResultSchema },
     send: { input: sendHookInputSchema, result: sendHookResultSchema },
   },
@@ -131,6 +154,9 @@ export type SendAgentMessagePayload = z.infer<typeof sendAgentMessagePayloadSche
 export type SendAgentMessageIntent = IntentOf<typeof schemas>;
 export type SendAgentMessageResult = z.infer<typeof sendAgentMessageResultSchema>;
 export type SendHookResult = z.infer<typeof sendHookResultSchema>;
+
+/** Whole input context for "expect" handlers: base envelope + inferred enrichment. */
+export type ExpectHookInput = HookContext & z.infer<typeof expectEnrichmentSchema>;
 
 /** Whole input context for "send" handlers: base envelope + inferred enrichment. */
 export type SendHookInput = HookContext & z.infer<typeof sendEnrichmentSchema>;
@@ -159,6 +185,19 @@ export class SendAgentMessageOperation implements Operation<typeof schemas> {
       };
     }
 
+    // Whether the agent module was told a message is coming (see "expect").
+    let expecting = false;
+    const expect = async (value: boolean): Promise<void> => {
+      expecting = value;
+      const { errors } = await ctx.hooks.collect("expect", {
+        intent: ctx.intent,
+        workspaceRef,
+        workspacePath: resolved.workspacePath,
+        expecting: value,
+      });
+      throwHookErrors(errors, "send-agent-message expect hooks failed");
+    };
+
     const hibernated = resolved.metadata[HIBERNATED_METADATA_KEY] === "true";
     let waitMs = 0;
     if (hibernated) {
@@ -168,10 +207,16 @@ export class SendAgentMessageOperation implements Operation<typeof schemas> {
           reason: "The workspace is hibernated, so it has no running agent. Wake it first.",
         };
       }
-      await ctx.dispatch<WakeWorkspaceIntent>({
-        type: INTENT_WAKE_WORKSPACE,
-        payload: { workspaceRef, stealFocus: false, source: "mcp" },
-      });
+      await expect(true);
+      try {
+        await ctx.dispatch<WakeWorkspaceIntent>({
+          type: INTENT_WAKE_WORKSPACE,
+          payload: { workspaceRef, stealFocus: false, source: "mcp" },
+        });
+      } catch (error) {
+        await expect(false);
+        throw error;
+      }
       waitMs = AGENT_READY_TIMEOUT_MS;
     } else if (payload.wake) {
       const status = await ctx.dispatch<GetWorkspaceStatusIntent>({
@@ -179,6 +224,7 @@ export class SendAgentMessageOperation implements Operation<typeof schemas> {
         payload: { workspaceRef },
       });
       if (status.agent.type === "none") {
+        await expect(true);
         // An editor that is not connected yet is still coming up (a workspace
         // just woken or opened); its sidekick starts the agent terminal as it
         // connects, so the command would only fail — just wait.
@@ -212,9 +258,13 @@ export class SendAgentMessageOperation implements Operation<typeof schemas> {
       waitMs,
     };
     const { results, errors } = await ctx.hooks.collect("send", hookCtx);
+    const sent = errors.length === 0 && results.some((result) => result.sent === true);
+    // The agent module settles its expectation itself once its send has run;
+    // this covers a send that no handler of it took up.
+    if (expecting && !sent) await expect(false);
     throwHookErrors(errors, "send-agent-message send hooks failed");
 
-    if (results.some((result) => result.sent === true)) return { sent: true };
+    if (sent) return { sent: true };
     const reason = results.find((result) => result.reason !== undefined)?.reason;
     return { sent: false, reason: reason ?? "The workspace has no agent to take the message." };
   }

@@ -497,6 +497,12 @@ export function createAgentModule(
       },
 
       [SEND_AGENT_MESSAGE_OPERATION_ID]: {
+        expect: {
+          requires: { agent: provider.type },
+          handler: async (ctx): Promise<void> => {
+            provider.expectMessage(ctx.workspaceRef, ctx.expecting);
+          },
+        },
         send: {
           requires: { agent: provider.type },
           handler: async (ctx): Promise<HookOutput<SendHookResult>> => {

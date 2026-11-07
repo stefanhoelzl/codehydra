@@ -46,6 +46,20 @@ import { createNoneStatus, convertToAggregatedStatus, stampStatusChange } from "
 import { AgentUnreachableError } from "./types";
 import type { ModalSource } from "../../intents/vscode-modal-changed";
 
+/**
+ * How long an agent started for a message may report a status of its own
+ * without taking the message before the workspace stops reading busy: past
+ * this, something blocks its start on the user (Claude's folder trust dialog).
+ */
+export const EXPECTED_STARTUP_TIMEOUT_MS = 60_000;
+
+/**
+ * How long an agent handed the message it was started for may take to start
+ * its turn on it before the workspace stops reading busy: past this, it holds
+ * the message for its user (Claude does, for a sender it cannot verify).
+ */
+export const EXPECTED_TURN_TIMEOUT_MS = 30_000;
+
 // =============================================================================
 // Spec Interface
 // =============================================================================
@@ -209,6 +223,17 @@ export function createAgentModuleProvider<P extends AgentProvider>(
    */
   const modalOpen = new Map<WorkspaceRef, Set<ModalSource>>();
 
+  /**
+   * Workspaces whose agent is being started for a message (see `expectMessage`).
+   * Overlaid on `statusCache`: an agent that reads idle reports busy while its
+   * message is still to come — `delivery` until the send hands it over, `turn`
+   * until the agent's turn on it starts. `timer` ends a wait that takes too long.
+   */
+  const expected = new Map<
+    WorkspaceRef,
+    { phase: "delivery" | "turn"; timer: ReturnType<typeof setTimeout> | undefined }
+  >();
+
   /** Tracks pending handleServerStarted() promises for startWorkspace(). */
   const serverStartedPromises = new Map<WorkspaceRef, Promise<void>>();
 
@@ -241,11 +266,65 @@ export function createAgentModuleProvider<P extends AgentProvider>(
   /**
    * The status the rest of the app sees: the agent's own, unless a modal is open,
    * which parks the workspace on the user — idle even when the agent is still
-   * working or has no session.
+   * working or has no session — or a message is expected, which turns an idle
+   * agent busy: it has work it has not been handed yet.
    */
   function unstampedStatus(workspaceRef: WorkspaceRef): AggregatedAgentStatus {
     if (modalOpen.has(workspaceRef)) return convertToAggregatedStatus("idle");
-    return statusCache.get(workspaceRef) ?? createNoneStatus();
+    const status = statusCache.get(workspaceRef) ?? createNoneStatus();
+    if (expected.has(workspaceRef) && status.status === "idle") {
+      return convertToAggregatedStatus("busy");
+    }
+    return status;
+  }
+
+  // ===========================================================================
+  // Expected messages
+  // ===========================================================================
+
+  /** End a workspace's expectation, without reporting the status it leaves. */
+  function forgetExpectation(workspaceRef: WorkspaceRef): boolean {
+    const expectation = expected.get(workspaceRef);
+    if (expectation === undefined) return false;
+    clearTimeout(expectation.timer);
+    expected.delete(workspaceRef);
+    return true;
+  }
+
+  /** End a workspace's expectation and report the status it leaves (idle, usually). */
+  function dropExpectation(workspaceRef: WorkspaceRef, reason: string): void {
+    if (!forgetExpectation(workspaceRef)) return;
+    logger.scoped({ workspace: workspaceRef }).debug("No longer expecting a message", { reason });
+    notifyStatusChange(workspaceRef, effectiveStatus(workspaceRef));
+  }
+
+  /**
+   * Waiting for delivery, the agent is up but not taking the message: arm the
+   * startup timer once it reports a status of its own.
+   */
+  function armStartupTimer(workspaceRef: WorkspaceRef): void {
+    const expectation = expected.get(workspaceRef);
+    if (expectation?.phase !== "delivery" || expectation.timer !== undefined) return;
+    if ((statusCache.get(workspaceRef)?.status ?? "none") === "none") return;
+    expectation.timer = setTimeout(
+      () => dropExpectation(workspaceRef, "agent not reachable"),
+      EXPECTED_STARTUP_TIMEOUT_MS
+    );
+  }
+
+  /** The message was handed over: expect the agent's turn on it. */
+  function expectTurn(workspaceRef: WorkspaceRef): void {
+    const expectation = expected.get(workspaceRef);
+    if (expectation === undefined) return;
+    if (statusCache.get(workspaceRef)?.status === "busy") {
+      dropExpectation(workspaceRef, "turn started");
+      return;
+    }
+    clearTimeout(expectation.timer);
+    expected.set(workspaceRef, {
+      phase: "turn",
+      timer: setTimeout(() => dropExpectation(workspaceRef, "no turn"), EXPECTED_TURN_TIMEOUT_MS),
+    });
   }
 
   /**
@@ -271,6 +350,12 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     if (hasChanged) {
       statusCache.set(workspaceRef, status);
+      // The agent's turn on the expected message has started: from here its
+      // own status tells (and its end reads idle, the one chime).
+      if (expected.get(workspaceRef)?.phase === "turn" && status.status === "busy") {
+        forgetExpectation(workspaceRef);
+      }
+      armStartupTimer(workspaceRef);
       // While parked, the agent's changes are recorded but not reported: the
       // workspace keeps reading idle until the modal closes.
       if (!modalOpen.has(workspaceRef)) {
@@ -455,6 +540,7 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       statusCache.clear();
       stamped.clear();
       modalOpen.clear();
+      for (const workspaceRef of [...expected.keys()]) forgetExpectation(workspaceRef);
       statusChangeListeners.clear();
       spec.onDispose?.();
     },
@@ -526,16 +612,34 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       message: AgentMessage,
       options: AgentMessageOptions
     ): Promise<void> {
-      // A provider that is still being registered (the server just started)
-      // is the one the message is for.
-      await serverStartedPromises.get(workspaceRef);
-      const provider = providers.get(workspaceRef);
-      if (provider === undefined) {
-        throw new AgentUnreachableError(
-          `No ${spec.displayName} agent is running in this workspace.`
-        );
+      try {
+        // A provider that is still being registered (the server just started)
+        // is the one the message is for.
+        await serverStartedPromises.get(workspaceRef);
+        const provider = providers.get(workspaceRef);
+        if (provider === undefined) {
+          throw new AgentUnreachableError(
+            `No ${spec.displayName} agent is running in this workspace.`
+          );
+        }
+        await provider.sendMessage(message, options);
+      } catch (error) {
+        // The message it was started for is not coming: it waits on the user.
+        dropExpectation(workspaceRef, "not sent");
+        throw error;
       }
-      await provider.sendMessage(message, options);
+      expectTurn(workspaceRef);
+    },
+
+    expectMessage(workspaceRef: WorkspaceRef, expecting: boolean): void {
+      if (!expecting) {
+        dropExpectation(workspaceRef, "taken back");
+        return;
+      }
+      forgetExpectation(workspaceRef);
+      expected.set(workspaceRef, { phase: "delivery", timer: undefined });
+      armStartupTimer(workspaceRef);
+      notifyStatusChange(workspaceRef, effectiveStatus(workspaceRef));
     },
 
     // --- Events ---
@@ -552,6 +656,7 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       // but that report resolves the agent from metadata that teardown may
       // already have removed, so it can land in another agent's module.
       modalOpen.delete(workspaceRef);
+      forgetExpectation(workspaceRef);
       stamped.delete(workspaceRef);
       spec.clearWorkspaceTracking?.(workspaceRef);
     },
