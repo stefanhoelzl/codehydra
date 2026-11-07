@@ -16,5 +16,6 @@ export function createMockPlatformInfo(overrides?: Partial<PlatformInfo>): Platf
     posix: overrides?.posix ?? (overrides?.platform ?? "linux") !== "win32",
     arch: (overrides?.arch as SupportedArch) ?? "x64",
     homeDir: overrides?.homeDir ?? "/home/test",
+    cpuCount: overrides?.cpuCount ?? 4,
   };
 }

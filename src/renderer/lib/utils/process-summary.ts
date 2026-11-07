@@ -9,9 +9,14 @@ const KIB = 1024;
 const MIB = KIB * 1024;
 const GIB = MIB * 1024;
 
-/** CPU as a whole percent of one core; `–` before it could be measured. */
+/**
+ * CPU as a whole percent of the machine, at most `100%`: `<1%` for a load too
+ * small to round up, `0%` only when idle; `–` before it could be measured.
+ */
 export function formatCpu(cpuPercent: number | null): string {
-  return cpuPercent === null ? "–%" : `${Math.round(cpuPercent)}%`;
+  if (cpuPercent === null) return "–%";
+  if (cpuPercent > 0 && cpuPercent < 1) return "<1%";
+  return `${Math.round(Math.min(100, Math.max(0, cpuPercent)))}%`;
 }
 
 /** Memory in the largest unit under 1024: `512K`, `874M`, `1.2G` (one decimal below 10). */

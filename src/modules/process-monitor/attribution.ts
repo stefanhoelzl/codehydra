@@ -338,13 +338,16 @@ export function killTargets(
 }
 
 /**
- * pid → percent of one core used since `previous` was taken. Null when there
- * is no previous scan to compare with; a process absent from it counts from 0,
- * which slightly understates one that started mid-interval.
+ * pid → percent of the whole machine (`cpuCount` logical CPUs, 100 = all of
+ * them busy) used since `previous` was taken, capped at 100 against sampling
+ * jitter. Null when there is no previous scan to compare with; a process
+ * absent from it counts from 0, which slightly understates one that started
+ * mid-interval.
  */
 export function cpuPercents(
   current: ProcessSnapshot,
-  previous: ProcessSnapshot | null
+  previous: ProcessSnapshot | null,
+  cpuCount: number
 ): Map<number, number> | null {
   if (previous === null) return null;
   const interval = current.takenAt - previous.takenAt;
@@ -353,22 +356,23 @@ export function cpuPercents(
   for (const entry of previous.processes) {
     if (entry.cpuTimeMs !== null) before.set(identity(entry), entry.cpuTimeMs);
   }
+  const capacity = interval * Math.max(1, cpuCount);
   const result = new Map<number, number>();
   for (const entry of current.processes) {
     if (entry.cpuTimeMs === null) continue;
     const used = entry.cpuTimeMs - (before.get(identity(entry)) ?? 0);
-    result.set(entry.pid, Math.max(0, (used / interval) * 100));
+    result.set(entry.pid, Math.min(100, Math.max(0, (used / capacity) * 100)));
   }
   return result;
 }
 
-/** Sum totals; CPU stays null only when none of them has a reading. */
+/** Sum totals, CPU capped at 100; it stays null only when none of them has a reading. */
 function addTotals(a: ProcessTotals, b: ProcessTotals): ProcessTotals {
   return {
     cpuPercent:
       a.cpuPercent === null && b.cpuPercent === null
         ? null
-        : (a.cpuPercent ?? 0) + (b.cpuPercent ?? 0),
+        : Math.min(100, (a.cpuPercent ?? 0) + (b.cpuPercent ?? 0)),
     rssBytes: a.rssBytes + b.rssBytes,
     count: a.count + b.count,
   };

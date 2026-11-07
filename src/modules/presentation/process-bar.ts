@@ -207,13 +207,13 @@ export function createProcessBar(deps: ProcessBarDeps): ProcessBar {
   };
 }
 
-/** Sum two totals; CPU stays null only when neither has a reading. */
+/** Sum two totals, CPU capped at 100; it stays null only when neither has a reading. */
 function addSummaries(a: UiProcessSummary, b: UiProcessSummary): UiProcessSummary {
   return {
     cpuPercent:
       a.cpuPercent === null && b.cpuPercent === null
         ? null
-        : (a.cpuPercent ?? 0) + (b.cpuPercent ?? 0),
+        : Math.min(100, (a.cpuPercent ?? 0) + (b.cpuPercent ?? 0)),
     rssBytes: a.rssBytes + b.rssBytes,
     count: a.count + b.count,
   };

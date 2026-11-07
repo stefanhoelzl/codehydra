@@ -91,6 +91,8 @@ export interface ProcessMonitorModuleDeps {
   readonly logger: Logger;
   /** CodeHydra's own pid: attribution never inherits through it. */
   readonly appPid: number;
+  /** Logical CPUs on the machine: CPU is percent of all of them. */
+  readonly cpuCount: number;
   /** The IDE server's pid while it runs: the root of the code server's processes. */
   readonly ideServerPid?: () => number | null;
   /**
@@ -244,7 +246,7 @@ export function createProcessMonitorModule(deps: ProcessMonitorModuleDeps): Proc
       deps.appPid,
       deps.ideServerPid?.() ?? null
     );
-    const cpu = cpuPercents(current, baseline);
+    const cpu = cpuPercents(current, baseline, deps.cpuCount);
     const ports = await deps.processRunner.findListeningPorts([...owners.keys(), ...groups.keys()]);
     const scan: Scan = {
       snapshot: current,

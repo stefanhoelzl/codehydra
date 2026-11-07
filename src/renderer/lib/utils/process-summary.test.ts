@@ -10,10 +10,20 @@ const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
 
 describe("formatCpu", () => {
-  it("rounds to a whole percent of one core, past 100 for several cores", () => {
+  it("rounds to a whole percent of the machine", () => {
     expect(formatCpu(12.4)).toBe("12%");
-    expect(formatCpu(0.2)).toBe("0%");
-    expect(formatCpu(250.6)).toBe("251%");
+    expect(formatCpu(1)).toBe("1%");
+    expect(formatCpu(99.6)).toBe("100%");
+  });
+
+  it("reads <1% for a load too small to round up, 0% only when idle", () => {
+    expect(formatCpu(0.2)).toBe("<1%");
+    expect(formatCpu(0.9)).toBe("<1%");
+    expect(formatCpu(0)).toBe("0%");
+  });
+
+  it("never reads more than 100%", () => {
+    expect(formatCpu(250.6)).toBe("100%");
   });
 
   it("shows a dash before the second scan could measure it", () => {

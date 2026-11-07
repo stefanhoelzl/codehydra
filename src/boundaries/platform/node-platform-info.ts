@@ -1,6 +1,6 @@
 /**
  * Node.js implementation of PlatformInfo.
- * Uses process.platform, process.arch, and os.homedir() for platform detection.
+ * Uses process.platform, process.arch, os.homedir() and os.cpus() for platform detection.
  */
 
 import os from "node:os";
@@ -26,6 +26,7 @@ export class NodePlatformInfo implements PlatformInfo {
   readonly posix: boolean;
   readonly arch: SupportedArch;
   readonly homeDir: string;
+  readonly cpuCount: number;
 
   constructor() {
     // Cache at construction time for consistency
@@ -33,5 +34,7 @@ export class NodePlatformInfo implements PlatformInfo {
     this.posix = this.platform !== "win32";
     this.arch = mapArchitecture(process.arch);
     this.homeDir = os.homedir();
+    // os.cpus() is empty where the CPU list is unreadable (e.g. no /proc).
+    this.cpuCount = Math.max(1, os.cpus().length || os.availableParallelism());
   }
 }

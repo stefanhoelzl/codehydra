@@ -78,6 +78,7 @@ function createSetup(
     dispatcher: { dispatch } as never,
     logger: SILENT_LOGGER,
     appPid: APP_PID,
+    cpuCount: 2,
     ideServerPid: () => options.ideServerPid ?? null,
     extensionHosts: () => options.extensionHosts ?? new Map(),
     timing: { pollIntervalMs: POLL_MS, primeDelayMs: 500 },
@@ -148,14 +149,15 @@ describe("process monitor: workspace.processes", () => {
     expect(result).toMatchObject({ total: { count: 0 }, processes: [] });
   });
 
-  it("measures CPU against the priming scan", async () => {
+  it("measures CPU against the priming scan, as percent of the whole machine", async () => {
     const setup = createSetup();
     setup.setMachine([proc(10, 2, "/ws/alpha")]);
     const pending = setup.monitor.list(ALPHA);
-    // The priming scan saw 0 ms; the real one, 500 ms later, sees 250 ms.
+    // The priming scan saw 0 ms; the real one, 500 ms later, sees 250 ms: half
+    // of one core, a quarter of the machine's two.
     setup.setMachine([proc(10, 2, "/ws/alpha", 250)]);
     const result = await settle(pending);
-    expect(result!.processes[0]!.cpuPercent).toBe(50);
+    expect(result!.processes[0]!.cpuPercent).toBe(25);
   });
 
   it("reuses a scan from a moment ago and shares one in flight", async () => {
