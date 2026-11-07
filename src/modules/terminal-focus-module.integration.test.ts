@@ -6,8 +6,9 @@
  * real VscodeModalChangedOperation. A fake agent module stands in for the
  * provider: on a modal edge it re-reports the workspace's status without
  * awaiting it — "idle" while a modal is open, the agent's own status after —
- * the way the real provider does. vscode:command is a minimal operation whose
- * answer each test controls.
+ * the way the real provider does. The sidekick command is a fake tryCommand
+ * whose answer each test controls; a vscode:command operation is registered
+ * only to show the module never dispatches one.
  */
 
 import { describe, it, expect } from "vitest";
@@ -61,26 +62,17 @@ type Permissive = ReturnType<typeof permissive>;
 interface CommandCall {
   readonly workspaceRef: string;
   readonly command: string;
-  settle(ok: boolean): void;
+  settle(delivered: boolean): void;
 }
 
-/** vscode:command that records each call and answers when the test settles it. */
-function createCommandOperation(calls: CommandCall[]): Operation<Permissive> {
+/** vscode:command that only counts: the module must send past the intent pipeline. */
+function createCommandOperation(intents: { count: number }): Operation<Permissive> {
   return {
     id: "vscode-command",
     schemas: permissive(INTENT_VSCODE_COMMAND),
-    execute(ctx): Promise<unknown> {
-      const { workspaceRef, command } = ctx.intent.payload as {
-        workspaceRef: string;
-        command: string;
-      };
-      return new Promise((resolve, reject) => {
-        calls.push({
-          workspaceRef,
-          command,
-          settle: (ok) => (ok ? resolve(undefined) : reject(new Error("Command timed out"))),
-        });
-      });
+    async execute(): Promise<unknown> {
+      intents.count++;
+      return undefined;
     },
   };
 }
@@ -126,6 +118,8 @@ const switchOperation: Operation<Permissive> = {
 interface Setup {
   readonly dispatcher: Dispatcher;
   readonly calls: CommandCall[];
+  /** vscode:command intents dispatched; a rejected one is logged at error level. */
+  readonly intents: { count: number };
   readonly state: {
     active: WorkspaceRef;
     connected: boolean;
@@ -137,13 +131,14 @@ interface Setup {
 function setup(): Setup {
   const dispatcher = createMockDispatcher();
   const calls: CommandCall[] = [];
+  const intents = { count: 0 };
   const state: Setup["state"] = { active: WS, connected: true, agent: idle, viewFocus: 0 };
 
   dispatcher.registerOperation(new ResolveWorkspaceOperation());
   dispatcher.registerOperation(new ResolveProjectOperation());
   dispatcher.registerOperation(new UpdateAgentStatusOperation());
   dispatcher.registerOperation(new VscodeModalChangedOperation());
-  dispatcher.registerOperation(createCommandOperation(calls));
+  dispatcher.registerOperation(createCommandOperation(intents));
   dispatcher.registerOperation(createStatusOperation(() => state.agent.status));
   dispatcher.registerOperation(switchOperation);
   dispatcher.registerOperation(createDeleteEventOperation());
@@ -196,13 +191,17 @@ function setup(): Setup {
   dispatcher.registerModule(
     createTerminalFocusModule({
       dispatcher,
-      isConnected: () => state.connected,
+      // A sidekick that is not connected answers false at once, as the real one does.
+      tryCommand: (workspaceRef, command) =>
+        state.connected
+          ? new Promise((resolve) => calls.push({ workspaceRef, command, settle: resolve }))
+          : Promise.resolve(false),
       viewManager: { focus: () => state.viewFocus++ },
     })
   );
   dispatcher.registerModule(agent);
 
-  return { dispatcher, calls, state };
+  return { dispatcher, calls, intents, state };
 }
 
 /** Let unawaited dispatches and their event handlers run. */
@@ -233,8 +232,8 @@ async function switchTo(s: Setup, path: WorkspaceRef): Promise<void> {
   await settle();
 }
 
-async function answer(s: Setup, ok: boolean): Promise<void> {
-  s.calls.at(-1)!.settle(ok);
+async function answer(s: Setup, delivered: boolean): Promise<void> {
+  s.calls.at(-1)!.settle(delivered);
   await settle();
 }
 
@@ -281,6 +280,29 @@ describe("TerminalFocusModule", () => {
 
     await report(s, WS, idle);
     expect(s.calls).toHaveLength(2);
+  });
+
+  it("never dispatches a vscode:command intent, so a sidekick gone mid-send logs no failure", async () => {
+    const s = setup();
+
+    // Sent while connected, and the connection is gone by the time it is
+    // answered: app shutdown or a deletion clearing it mid-flight.
+    await report(s, WS, idle);
+    s.state.connected = false;
+    await answer(s, false);
+    expect(s.state.viewFocus).toBe(0);
+
+    // Not connected at all when it is sent.
+    await report(s, WS, idle);
+    expect(s.state.viewFocus).toBe(0);
+
+    // It still focuses once the sidekick is back.
+    s.state.connected = true;
+    await report(s, WS, idle);
+    await answer(s, true);
+    expect(s.state.viewFocus).toBe(1);
+
+    expect(s.intents.count).toBe(0);
   });
 
   it("ignores the idle a modal forces, and focuses once it closes on an idle agent", async () => {

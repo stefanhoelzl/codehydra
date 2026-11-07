@@ -135,10 +135,6 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // isConnected — the guard a best-effort vscode:command has to ask
-  // ---------------------------------------------------------------------------
-
   describe("extensionHosts", () => {
     it("records the pid a sidekick names, and keeps it after it disconnects", async () => {
       const workspace = wsPath("/test/workspace");
@@ -166,6 +162,10 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // isConnected — whether a workspace's sidekick has a live socket
+  // ---------------------------------------------------------------------------
+
   describe("isConnected", () => {
     it("tracks a workspace's socket from connect to disconnect", async () => {
       const workspace = wsPath("/test/workspace");
@@ -178,14 +178,13 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await waitForConnect(client);
       expect(env.apiServer.isConnected(testWorkspaceRef(workspace))).toBe(true);
 
-      // And after the extension host goes away — the case that produced
-      // "[dispatcher] failed vscode:command … Workspace not connected" in the
-      // log, because the old guard only asked whether the server was up.
+      // And after the extension host goes away.
       //
       // Polled, not asserted outright: the client learns of its own disconnect
-      // before the server does, so the map is briefly stale. That is inherent —
-      // a socket can drop between the check and the send no matter what — and it
-      // is why the caller keeps its catch. What must hold is that it converges.
+      // before the server does, so the map is briefly stale. That is inherent:
+      // a socket can drop between a check and a send no matter what, which is why
+      // a best-effort sender uses tryCommand rather than this. What must hold is
+      // that it converges.
       client.disconnect();
       await waitForDisconnect(client);
       await expect
@@ -370,6 +369,57 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       // Should time out at COMMAND_TIMEOUT_MS (10s default)
       expect(elapsed).toBeGreaterThanOrEqual(10000 - TIMING_TOLERANCE_MS);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // tryCommand — the best-effort send terminal focus uses
+  // ---------------------------------------------------------------------------
+
+  describe("tryCommand", () => {
+    it("answers true when the sidekick acks the command", async () => {
+      const workspace = wsPath("/test/workspace");
+      const client = createClient(workspace);
+      await waitForConnect(client);
+      const handler = createMockCommandHandler();
+      client.on("command", handler);
+
+      await expect(
+        env.apiServer.tryCommand(testWorkspaceRef(workspace), "workbench.action.terminal.focus")
+      ).resolves.toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it("answers false when the sidekick acks a failure", async () => {
+      const workspace = wsPath("/test/workspace");
+      const client = createClient(workspace);
+      await waitForConnect(client);
+      client.on(
+        "command",
+        createMockCommandHandler({ defaultResult: { success: false, error: "Command failed" } })
+      );
+
+      await expect(env.apiServer.tryCommand(testWorkspaceRef(workspace), "x")).resolves.toBe(false);
+    });
+
+    it("answers false for a workspace that never connected", async () => {
+      await expect(
+        env.apiServer.tryCommand(testWorkspaceRef(wsPath("/test/other")), "x")
+      ).resolves.toBe(false);
+    });
+
+    it("answers false, without throwing, once shutdown has dropped the connection", async () => {
+      // The race that logged "[dispatcher] failed vscode:command … Workspace not
+      // connected" at quit: the connection was cleared while a focus command was
+      // still on its way to the send.
+      const workspace = wsPath("/test/workspace");
+      const client = createClient(workspace);
+      await waitForConnect(client);
+      client.on("command", createMockCommandHandler());
+
+      await env.testDispatcher.dispatch({ type: "app:shutdown", payload: {} } as Intent);
+
+      await expect(env.apiServer.tryCommand(testWorkspaceRef(workspace), "x")).resolves.toBe(false);
     });
   });
 
