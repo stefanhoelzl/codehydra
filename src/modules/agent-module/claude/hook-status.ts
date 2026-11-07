@@ -18,6 +18,7 @@ import {
   getStatusChangeForHook,
   isOptedOutShell,
   isOptedOutSubagent,
+  isOptedOutWorkflow,
   taskKeepsBusy,
   type ClaudeCodeBridgePayload,
   type ClaudeCodeHookName,
@@ -83,7 +84,7 @@ export const INITIAL_HOOK_FLAGS: HookFlags = {
 export interface BackgroundOwners {
   /** Agent ids of the background sub-agents launched with a `[bg]` description. */
   readonly optedOutAgents: ReadonlySet<string>;
-  /** Task ids of the background shells those sub-agents started, still running. */
+  /** Task ids of the background shells those sub-agents (or workflow agents) started, still running. */
   readonly optedOutShells: ReadonlySet<string>;
 }
 
@@ -102,6 +103,8 @@ export const INITIAL_BACKGROUND_OWNERS: BackgroundOwners = {
  *   PostToolUse arrive late (each hook is a process of its own).
  * - A `[bg]` sub-agent's PostToolUse for a `Bash` call in the background
  *   answers the shell's `backgroundTaskId`, its id in background_tasks.
+ * - So does a workflow agent's, and its shell is opted out whatever the
+ *   workflow: see {@link isWorkflowAgentShell}.
  * - The main agent's Stop lists every running shell, so a shell it does not
  *   list has exited and is forgotten. Sub-agent ids are kept for the session:
  *   a `[bg]` sub-agent waiting on its shell resumes when it exits, and may start
@@ -135,7 +138,7 @@ export function trackBackgroundOwners(
     const launchedShell = response?.backgroundTaskId;
     if (
       payload.agent_id !== undefined &&
-      optedOutAgents.has(payload.agent_id) &&
+      (optedOutAgents.has(payload.agent_id) || isWorkflowAgentShell(payload, response)) &&
       typeof launchedShell === "string"
     ) {
       optedOutShells = new Set([...optedOutShells, launchedShell]);
@@ -148,6 +151,26 @@ export function trackBackgroundOwners(
   return optedOutAgents === owners.optedOutAgents && optedOutShells === owners.optedOutShells
     ? owners
     : { optedOutAgents, optedOutShells };
+}
+
+/**
+ * A background shell a workflow's agent launched, bound to end with that agent.
+ *
+ * Its hooks name no workflow (only the late SubagentStop's transcript path
+ * does), so a shell cannot be traced to a `[bg]` workflow — and need not be: a
+ * shell launched with `backgroundEndsWithFinalResponse` dies with its agent
+ * (checked on 2.1.319), so it only runs while its workflow does, and the
+ * workflow alone decides (`taskKeepsBusy`). Opting every such shell out leaves
+ * an unmarked workflow busy and lets a `[bg]` one go idle with its shells.
+ * Without the flag the shell could outlive the workflow, so it keeps busy.
+ */
+function isWorkflowAgentShell(
+  payload: ClaudeCodeBridgePayload,
+  response: Record<string, unknown> | undefined
+): boolean {
+  return (
+    payload.agent_type === "workflow-subagent" && response?.backgroundEndsWithFinalResponse === true
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -379,12 +402,13 @@ export function deriveStatus(
   // no Stop fires while it runs and the workspace stays busy from the tool.
 
   // Background tasks: the Stop payload carries background_tasks — the live list
-  // of still-running background work (shells and background sub-agents).
-  // taskKeepsBusy() decides which keep the workspace busy: sub-agents do unless
-  // their description starts with `[bg]`; shells do by default, unless invoked
+  // of still-running background work (shells, background sub-agents and
+  // workflows). taskKeepsBusy() decides which keep the workspace busy:
+  // sub-agents and workflows do unless their description starts with `[bg]`
+  // (a workflow's is its script's `meta.description`); shells do by default, unless invoked
   // through the `ch-bg` wrapper (its marker in the command opts the shell out)
   // or started by a `[bg]` sub-agent (input.optedOutShells).
-  // When none qualifies but `[bg]` sub-agents or their shells run on, the
+  // When none qualifies but `[bg]` sub-agents, workflows or shells run on, the
   // workspace goes idle and sub-agent hooks are ignored until the main agent's
   // next turn — a `[bg]` sub-agent resumes when its shell exits
   // (idleBesideBackgroundAgents). When any qualifies, the idle
@@ -412,12 +436,17 @@ export function deriveStatus(
     const wasParked = awaitingUserInputResolution;
     awaitingUserInputResolution = false;
     busyForBackgroundTasks = busyTasks.length > 0;
-    // Idle with `[bg]` sub-agents or their shells still at work (a Stop held
-    // back by compaction does not go idle, so it does not count).
+    // Idle with `[bg]` sub-agents, workflows or their shells still at work (a
+    // Stop held back by compaction does not go idle, so it does not count).
     idleBesideBackgroundAgents =
       busyTasks.length === 0 &&
       !ignoreNextSessionStart &&
-      tasks.some((task) => isOptedOutSubagent(task) || isOptedOutShell(task, input.optedOutShells));
+      tasks.some(
+        (task) =>
+          isOptedOutSubagent(task) ||
+          isOptedOutWorkflow(task) ||
+          isOptedOutShell(task, input.optedOutShells)
+      );
     if (busyTasks.length > 0) {
       status = wasParked ? "busy" : null;
       suppressed.push({

@@ -156,7 +156,9 @@ export type ScenarioName =
   | "bgsubagentshell"
   | "maxtokens"
   | "suggestionfork"
-  | "message";
+  | "message"
+  | "workflow"
+  | "bgworkflowshell";
 
 /** The prompt every scenario sends. Content is irrelevant — fixtures match on the system prompt. */
 const PROMPT = "do the thing";
@@ -215,6 +217,9 @@ const NAMING_FIXTURE = {
  * prefix answered the parent as though it were the sub-agent.
  */
 const SUBAGENT_SYSTEM_PROMPT = "You are an agent for Claude Code";
+
+/** How a workflow agent's system prompt opens (checked on 2.1.319). */
+const WORKFLOW_AGENT_SYSTEM_PROMPT = "You are a subagent spawned by a workflow";
 
 /** The text of a message, whichever shape it arrived in. */
 function messageText(message: ChatMessage | undefined): string {
@@ -338,6 +343,36 @@ function bashCall(command: string, description: string, background: boolean) {
   };
 }
 
+/** The main agent's `Workflow` call: one agent, in one phase. */
+function workflowCall(description: string) {
+  const meta = { name: "probe", description, phases: [{ title: "Work" }] };
+  return {
+    reasoning: "Running a workflow.",
+    toolCalls: [
+      {
+        id: "call_workflow",
+        name: "Workflow",
+        arguments: JSON.stringify({
+          script: [
+            `export const meta = ${JSON.stringify(meta)}`,
+            "phase('Work')",
+            "await agent('do the work', { label: 'worker', phase: 'Work' })",
+            "return {}",
+          ].join("\n"),
+        }),
+      },
+    ],
+  };
+}
+
+/** A workflow agent's request, after it has answered `turn` times. */
+function isWorkflowAgentTurn(req: ChatCompletionRequest, turn: number): boolean {
+  return (
+    systemText(req).includes(WORKFLOW_AGENT_SYSTEM_PROMPT) &&
+    req.messages.filter((message: ChatMessage) => message.role === "assistant").length === turn
+  );
+}
+
 /**
  * Install the fixtures for one scenario. The earliest match wins, so order
  * decides which fixture ANSWERS a request — but not which fixtures are
@@ -401,6 +436,44 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
     });
   }
 
+  if (scenario === "workflow") {
+    // The workflow's one agent (agent_type "workflow-subagent") sleeps first,
+    // so the workflow is still running when the main turn ends: a `Workflow`
+    // call always launches in the background and returns at once.
+    mock.addFixture({
+      match: { systemMessage: WORKFLOW_AGENT_SYSTEM_PROMPT, hasToolResult: false },
+      response: bashCall("sleep 5", "workflow agent's work", false),
+    });
+    mock.addFixture({
+      match: { systemMessage: WORKFLOW_AGENT_SYSTEM_PROMPT },
+      response: { content: "Workflow agent done." },
+    });
+  }
+
+  if (scenario === "bgworkflowshell") {
+    // The main agent's Stop must land while the `[bg]` workflow's agent has its
+    // background shell running. The agent starts the shell, then stays alive in
+    // a foreground sleep (its shell dies with it: backgroundEndsWithFinalResponse);
+    // the main agent holds its turn open in a shorter foreground sleep, so its
+    // Stop lists the workflow and the shell together.
+    mock.addFixture({
+      match: { predicate: (req) => isWorkflowAgentTurn(req, 0) },
+      response: bashCall("sleep 20", "workflow agent's shell", true),
+    });
+    mock.addFixture({
+      match: { predicate: (req) => isWorkflowAgentTurn(req, 1) },
+      response: bashCall("sleep 6", "workflow agent's work", false),
+    });
+    mock.addFixture({
+      match: { systemMessage: WORKFLOW_AGENT_SYSTEM_PROMPT },
+      response: { content: "Workflow agent done." },
+    });
+    mock.addFixture({
+      match: { predicate: (req) => req.messages.at(-1)?.tool_call_id === "call_workflow" },
+      response: bashCall("sleep 3", "main agent's wait", false),
+    });
+  }
+
   if (scenario === "suggestionfork") {
     // The fork first: it carries the parent's system prompt and history, so any
     // fixture below would answer it as though it were the agent.
@@ -428,6 +501,21 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
   mock.addFixture({ match: { hasToolResult: true }, response: { content: "Done." } });
 
   switch (scenario) {
+    case "workflow":
+    case "bgworkflowshell":
+      // Only the opening turn runs a workflow: the wake-up Claude sends when it
+      // finishes carries no tool result, and must not start another.
+      mock.addFixture({
+        match: { predicate: (req) => !isFirstAgentTurn(req) },
+        response: { content: "Done." },
+      });
+      mock.addFixture({
+        match: { predicate: isFirstAgentTurn },
+        response: workflowCall(
+          scenario === "bgworkflowshell" ? "[bg] probe workflow" : "probe workflow"
+        ),
+      });
+      break;
     case "plain":
     case "message":
       mock.addFixture({ match: {}, response: { content: "Nothing to do." } });
