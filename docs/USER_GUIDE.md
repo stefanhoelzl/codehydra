@@ -547,7 +547,9 @@ started by one that belongs: a `pnpm dev` brings its whole tree along, even
 after it changes directory. A workspace's editor extension host — which runs
 its extensions and their language servers — belongs to it too, once
 CodeHydra's own extension in it has connected.
-CPU is percent of one core over the last few seconds (`200%` is two cores).
+CPU is percent of the whole machine over the last few seconds, from `0%` to
+`100%` (every core busy): on 16 cores, a build keeping two of them busy reads
+`13%`. A load too small to round up reads `<1%`.
 
 There are two ways to look:
 

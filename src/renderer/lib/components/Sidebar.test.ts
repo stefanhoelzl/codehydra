@@ -863,14 +863,14 @@ describe("Sidebar", () => {
 
     describe("process bar", () => {
       const totals: UiProcessTotals = {
-        all: { cpuPercent: 150, rssBytes: 2048 * MIB, count: 40 },
-        workspaces: { cpuPercent: 130, rssBytes: 1536 * MIB, count: 26 },
+        all: { cpuPercent: 60, rssBytes: 2048 * MIB, count: 40 },
+        workspaces: { cpuPercent: 40, rssBytes: 1536 * MIB, count: 26 },
         codeServer: { cpuPercent: 15, rssBytes: 384 * MIB, count: 10 },
         codehydra: { cpuPercent: 5, rssBytes: 128 * MIB, count: 4 },
       };
       const split = [
-        "All of CodeHydra: 150% CPU · 2.0G memory · 40 processes",
-        "Workspaces: 130% CPU · 1.5G memory · 26 processes",
+        "All of CodeHydra: 60% CPU · 2.0G memory · 40 processes",
+        "Workspaces: 40% CPU · 1.5G memory · 26 processes",
         "Code server: 15% CPU · 384M memory · 10 processes",
         "CodeHydra itself: 5% CPU · 128M memory · 4 processes",
       ].join("\n");
@@ -898,7 +898,7 @@ describe("Sidebar", () => {
         rerender({ processSummary: "total", projects: withProcesses() });
         expect(bar(container).classList.contains("open")).toBe(true);
         expect(bar(container).hasAttribute("inert")).toBe(false);
-        expect(parts(container)).toEqual(["cpu:150%", "memory:2.0G", "count:40"]);
+        expect(parts(container)).toEqual(["cpu:60%", "memory:2.0G", "count:40"]);
         expect(badge(container).getAttribute("title")).toBe(split);
         expect(badge(container).getAttribute("aria-label")).toBe(split);
       });
@@ -970,7 +970,7 @@ describe("Sidebar", () => {
           ].join(" ")
         );
         expect(rows).toEqual([
-          "Workspaces 130% 1.5G 26",
+          "Workspaces 40% 1.5G 26",
           "Code server 15% 384M 10",
           "CodeHydra 5% 128M 4",
         ]);

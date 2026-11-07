@@ -25,8 +25,8 @@ export function processEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "or when it was started by one that is, even after it changed directory — so a dev " +
       "server started from a workspace terminal is listed with its whole tree. Includes the " +
       "workspace's agent and terminal shells. processes holds the tree's roots; each has its " +
-      "children and subtree totals. cpuPercent is percent of one core over the last few " +
-      "seconds (null when it could not be measured); rssBytes is resident memory; ports are " +
+      "children and subtree totals. cpuPercent is percent of the whole machine (all " +
+      "logical CPUs, 0-100) over the last few seconds (null when it could not be measured); rssBytes is resident memory; ports are " +
       "the TCP ports it listens on. Read-only: nothing here stops a process.",
     input: z.object(targetFields),
     requiresWorkspace: true,

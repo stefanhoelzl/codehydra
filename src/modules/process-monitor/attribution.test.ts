@@ -180,26 +180,44 @@ describe("cpuPercents", () => {
     processes,
   });
 
-  it("is percent of one core between two snapshots", () => {
+  it("is percent of one core between two snapshots on a one-CPU machine", () => {
     const before = snapshot(0, [proc(10, 1, null, { cpuTimeMs: 1000 })]);
     const after = snapshot(2000, [proc(10, 1, null, { cpuTimeMs: 1500 })]);
-    expect(cpuPercents(after, before)?.get(10)).toBe(25);
+    expect(cpuPercents(after, before, 1)?.get(10)).toBe(25);
+  });
+
+  it("is percent of the whole machine: 14 busy cores of 16 read 87.5", () => {
+    const before = snapshot(0, [proc(10, 1, null, { cpuTimeMs: 0 })]);
+    const after = snapshot(1000, [proc(10, 1, null, { cpuTimeMs: 14_000 })]);
+    expect(cpuPercents(after, before, 16)?.get(10)).toBe(87.5);
+  });
+
+  it("caps a process at 100 against sampling jitter", () => {
+    const before = snapshot(0, [proc(10, 1, null, { cpuTimeMs: 0 })]);
+    const after = snapshot(1000, [proc(10, 1, null, { cpuTimeMs: 4100 })]);
+    expect(cpuPercents(after, before, 4)?.get(10)).toBe(100);
+  });
+
+  it("treats a CPU count below 1 as one CPU", () => {
+    const before = snapshot(0, [proc(10, 1, null, { cpuTimeMs: 0 })]);
+    const after = snapshot(1000, [proc(10, 1, null, { cpuTimeMs: 500 })]);
+    expect(cpuPercents(after, before, 0)?.get(10)).toBe(50);
   });
 
   it("is null with nothing to compare against", () => {
-    expect(cpuPercents(snapshot(0, [proc(10, 1, null)]), null)).toBeNull();
+    expect(cpuPercents(snapshot(0, [proc(10, 1, null)]), null, 1)).toBeNull();
   });
 
   it("counts a new process (or a reused pid) from zero", () => {
     const before = snapshot(0, [proc(10, 1, null, { cpuTimeMs: 5000, startedAt: 1 })]);
     const after = snapshot(1000, [proc(10, 1, null, { cpuTimeMs: 300, startedAt: 500 })]);
-    expect(cpuPercents(after, before)?.get(10)).toBe(30);
+    expect(cpuPercents(after, before, 1)?.get(10)).toBe(30);
   });
 
   it("leaves out a process whose CPU time is unreadable", () => {
     const before = snapshot(0, [proc(10, 1, null)]);
     const after = snapshot(1000, [proc(10, 1, null, { cpuTimeMs: null })]);
-    expect(cpuPercents(after, before)?.has(10)).toBe(false);
+    expect(cpuPercents(after, before, 1)?.has(10)).toBe(false);
   });
 });
 
@@ -384,6 +402,16 @@ describe("codeHydraTotals", () => {
       codeServer: { cpuPercent: 2, rssBytes: 2, count: 1 },
       codehydra: { cpuPercent: 1, rssBytes: 1, count: 1 },
     });
+  });
+
+  it("caps summed CPU at 100", () => {
+    const processes = [proc(APP, 1, "/"), proc(101, APP, "/")];
+    const groups = codeHydraGroups(processes, new Map(), APP, 101);
+    const cpu = new Map([
+      [APP, 60],
+      [101, 45],
+    ]);
+    expect(codeHydraTotals(processes, new Map(), groups, cpu).all.cpuPercent).toBe(100);
   });
 
   it("leaves CPU null before a second scan", () => {

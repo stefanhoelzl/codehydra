@@ -185,7 +185,10 @@ export interface UiWorkspaceRow {
 
 /** A workspace's processes, totalled (the sidebar's process summary). */
 export interface UiProcessSummary {
-  /** Percent of one core over the last few seconds; null until a second scan. */
+  /**
+   * Percent of the whole machine (all logical CPUs, 0–100) over the last few
+   * seconds; null until a second scan.
+   */
   readonly cpuPercent: number | null;
   /** Resident memory, in bytes. */
   readonly rssBytes: number;

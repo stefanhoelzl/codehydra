@@ -220,7 +220,10 @@ export interface Wakeups {
 
 /** CPU, memory and count over a set of processes. */
 export interface ProcessTotals {
-  /** Percent of one core over the last interval, summed; null before a second scan. */
+  /**
+   * Percent of the whole machine (0–100) over the last interval, summed and
+   * capped at 100; null before a second scan.
+   */
   readonly cpuPercent: number | null;
   readonly rssBytes: number;
   readonly count: number;
@@ -234,7 +237,7 @@ export interface WorkspaceProcess {
   readonly commandLine: string;
   /** Its working directory; null when the OS would not tell. */
   readonly cwd: string | null;
-  /** Percent of one core over the last interval; null before a second scan. */
+  /** Percent of the whole machine (0–100) over the last interval; null before a second scan. */
   readonly cpuPercent: number | null;
   readonly rssBytes: number;
   /** ISO time it started; null when unknown. */

@@ -534,6 +534,7 @@ const processMonitorModule = createProcessMonitorModule({
   dispatcher,
   logger: loggingService.createLogger("process"),
   appPid: process.pid,
+  cpuCount: platformInfo.cpuCount,
   ideServerPid: () => ideServerModule.pid(),
   extensionHosts: () => apiServerModule.extensionHosts(),
 });

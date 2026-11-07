@@ -25,4 +25,7 @@ export interface PlatformInfo {
 
   /** User's home directory */
   readonly homeDir: string;
+
+  /** Logical CPUs on the machine (at least 1): 100% CPU is all of them busy. */
+  readonly cpuCount: number;
 }
