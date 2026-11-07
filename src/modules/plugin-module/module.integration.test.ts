@@ -33,6 +33,11 @@ import {
   type MockGitClient,
 } from "../../boundaries/platform/git-client.state-mock";
 import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
+import { INTENT_OPEN_PROJECT } from "../../intents/open-project";
+import {
+  INTENT_GET_PROJECT_BASES,
+  type GetProjectBasesIntent,
+} from "../../intents/get-project-bases";
 import { remoteDirName } from "./remotes";
 import {
   registerTestInfrastructure,
@@ -68,7 +73,11 @@ import {
   type SetMetadataIntent,
 } from "../../intents/set-metadata";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import type { DialogConfig } from "../../shared/dialog-types";
+import type {
+  DialogActionEvent,
+  DialogConfig,
+  DialogDismissEvent,
+} from "../../shared/dialog-types";
 import type { NotificationConfig } from "../../shared/notification-types";
 import {
   createMockNotificationManager,
@@ -80,7 +89,7 @@ import type { RunningHook } from "../presentation/presentation-module";
 import { createPluginModule, type PluginModule } from "./module";
 import { createScripts } from "../scripts/scripts";
 import { createPollModule } from "../poll-module";
-import { PollTickOperation } from "../../intents/poll-tick";
+import { INTENT_POLL_TICK, PollTickOperation, type PollTickIntent } from "../../intents/poll-tick";
 import { z } from "zod/v4";
 import { OperationRegistry } from "../../api/registry";
 import { defineEntry } from "../../api/types";
@@ -102,6 +111,8 @@ const WORKSPACE_URL = "http://127.0.0.1:25448/?folder=/workspaces/feature-x";
 const HOME = testPath("/home");
 const LOCAL_PLUGINS = new Path(HOME, "plugins");
 const WORKSPACE_PLUGINS = new Path(WORKSPACE_PATH, ".codehydra", "plugins");
+const DEFAULT_BRANCH = "origin/main";
+const PLUGINS_FOLDER = ".codehydra/plugins";
 
 /** What the agent module contributes to the agent terminal's environment. */
 const AGENT_ENV = { _CH_WORKSPACE_PATH: WORKSPACE_PATH };
@@ -127,7 +138,14 @@ interface SetupOptions {
   /** The project refs the startup migration knows, by path. */
   readonly projectRefs?: ReadonlyMap<string, ProjectRef>;
   /** How the trust dialog answers: an action id plus unchecked plugin names. */
-  readonly trustAnswer?: { action: string; unchecked?: string[] };
+  readonly trustAnswer?: {
+    action: string;
+    unchecked?: string[];
+    dismiss?: boolean;
+    hangs?: boolean;
+  };
+  /** What the project's default branch holds at its tip. */
+  readonly defaultBranch?: { commit: string; files: Record<string, string> };
   /** Seeds `auto-workspaces` tracking entries. */
   readonly tracking?: Record<string, unknown>;
   /** Seeds `plugins.config`. */
@@ -165,6 +183,22 @@ interface TestSetup {
   readonly logged: unknown[];
   readonly config: Config;
   readonly git: MockGitClient;
+  /** The projects `project:list` answers with, once `registerProjects` is called. */
+  projects: Array<{
+    ref: ProjectRef;
+    name: string;
+    path: string;
+    defaultBaseBranch?: string;
+    workspaces: [];
+  }>;
+  /** Fetches asked for, by project. */
+  readonly fetched: unknown[];
+  /** Where the clock stands, for schedules. */
+  now: number;
+  /** Lands a commit on the default branch. */
+  moveBranch(commit: string, files: Record<string, string>): void;
+  /** One poll, as the timer dispatches it. */
+  tick(): Promise<void>;
   killedCount(): number;
   /** Start the app's automations (and stop them again when the test ends). */
   startApp(): Promise<void>;
@@ -288,7 +322,14 @@ function createTestSetup(options?: SetupOptions): TestSetup {
         onEvent: () => () => {},
         onChange: () => () => {},
         onDismiss: () => () => {},
-        nextEvent: async () => ({ dialogId: "dlg-1", actionId: trustAnswer.action, data }),
+        nextEvent: (): Promise<DialogActionEvent | DialogDismissEvent> =>
+          trustAnswer.hangs === true
+            ? new Promise(() => {})
+            : Promise.resolve(
+                trustAnswer.dismiss === true
+                  ? { dialogId: "dlg-1", kind: "dismiss" }
+                  : { dialogId: "dlg-1", actionId: trustAnswer.action, data }
+              ),
         closed: Promise.resolve(),
       };
     },
@@ -365,7 +406,21 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     },
   });
   const logged: unknown[] = [];
-  const git = createMockGitClient({ fileSystem });
+  const fetched: unknown[] = [];
+  const git = createMockGitClient({
+    fileSystem,
+    ...(options?.defaultBranch !== undefined && {
+      repositories: {
+        [PROJECT_ROOT]: {
+          revisions: { [DEFAULT_BRANCH]: options.defaultBranch.commit },
+          folders: {
+            [`${options.defaultBranch.commit}:${PLUGINS_FOLDER}`]: options.defaultBranch.files,
+          },
+        },
+      },
+    }),
+  });
+  let clock = new Date("2026-03-10T12:00:30").getTime();
   const registry = new OperationRegistry([
     // The fields an automation's create item takes here; the real ones are
     // workspace.create's (items.integration.test.ts).
@@ -380,6 +435,16 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       }),
       requiresWorkspace: false,
       handler: async () => undefined,
+    }),
+    defineEntry({
+      name: "workspace.switch",
+      kind: "command",
+      description: "test switch",
+      input: z.object({ workspace: z.string(), project: z.string().optional() }).strict(),
+      requiresWorkspace: false,
+      handler: async (_ctx, input) => {
+        logged.push(input);
+      },
     }),
     defineEntry({
       name: "log",
@@ -436,10 +501,30 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     projectRefs: async () => options?.projectRefs ?? new Map(),
     registry: () => registry,
     platform: "linux",
+    now: () => clock,
   });
   dispatcher.registerModule(module);
 
   return {
+    projects: [],
+    fetched,
+    get now() {
+      return clock;
+    },
+    set now(value: number) {
+      clock = value;
+    },
+    moveBranch: (commit, files) => {
+      const repo = git.$.repositories.get(PROJECT_ROOT) as unknown as {
+        revisions: Map<string, string>;
+        folders: Map<string, Record<string, string>>;
+      };
+      repo.revisions.set(DEFAULT_BRANCH, commit);
+      repo.folders.set(`${commit}:${PLUGINS_FOLDER}`, files);
+    },
+    tick: async () => {
+      await dispatcher.dispatch<PollTickIntent>({ type: INTENT_POLL_TICK, payload: {} });
+    },
     dispatcher,
     module,
     fileSystem,
@@ -1253,7 +1338,7 @@ describe("automations", () => {
     });
   });
 
-  it("ignores a repository plugin's automations", async () => {
+  it("does not run automations from a worktree", async () => {
     const setup = createTestSetup({
       workspace: {
         "repo.yaml": "automations:\n  a: x\n",
@@ -1523,3 +1608,715 @@ function registerListProjects(setup: TestSetup): void {
   }
   setup.dispatcher.registerOperation(new ListProjectsOp());
 }
+
+/** `project:list` answers with `setup.projects`, and fetches are recorded. */
+function registerProjects(setup: TestSetup): void {
+  const listSchemas = {
+    type: INTENT_LIST_PROJECTS,
+    payload: z.unknown(),
+    result: z.unknown(),
+  } satisfies OperationSchemas;
+  class ListOp implements Operation<typeof listSchemas> {
+    readonly id = "list-projects";
+    readonly schemas = listSchemas;
+    async execute(): Promise<unknown> {
+      return setup.projects;
+    }
+  }
+  const basesSchemas = {
+    type: INTENT_GET_PROJECT_BASES,
+    payload: z.custom<GetProjectBasesIntent["payload"]>(),
+    result: z.unknown(),
+  } satisfies OperationSchemas;
+  class BasesOp implements Operation<typeof basesSchemas> {
+    readonly id = "get-project-bases";
+    readonly schemas = basesSchemas;
+    async execute(ctx: { intent: { payload: unknown } }): Promise<unknown> {
+      setup.fetched.push(ctx.intent.payload);
+      return { bases: [] };
+    }
+  }
+  // A path is opened, which for an open project answers with that project.
+  const openSchemas = {
+    type: INTENT_OPEN_PROJECT,
+    payload: z.unknown(),
+    result: z.unknown(),
+  } satisfies OperationSchemas;
+  class OpenOp implements Operation<typeof openSchemas> {
+    readonly id = "open-project";
+    readonly schemas = openSchemas;
+    async execute(): Promise<unknown> {
+      return setup.projects[0];
+    }
+  }
+  setup.dispatcher.registerOperation(new ListOp());
+  setup.dispatcher.registerOperation(new BasesOp());
+  setup.dispatcher.registerOperation(new OpenOp());
+}
+
+const COMMIT_A = "a".repeat(40);
+const COMMIT_B = "b".repeat(40);
+const TRUST_KEY = (name: string): string => `project:${PROJECT_REF}:${name}`;
+
+const THIS_PROJECT = {
+  ref: PROJECT_REF,
+  name: "project",
+  path: PROJECT_ROOT,
+  defaultBaseBranch: DEFAULT_BRANCH,
+  workspaces: [] as [],
+};
+
+/** A project whose default branch holds these plugins, open, and trusted unless told otherwise. */
+function repositorySetup(
+  files: Record<string, string>,
+  options?: SetupOptions & { untrusted?: boolean }
+): TestSetup {
+  const setup = createTestSetup({
+    ...options,
+    defaultBranch: { commit: COMMIT_A, files },
+    pluginsEnabled:
+      options?.pluginsEnabled ??
+      (options?.untrusted === true
+        ? {}
+        : Object.fromEntries(
+            Object.keys(files).map((file) => [TRUST_KEY(file.split(/[./]/)[0]!), true])
+          )),
+  });
+  registerProjects(setup);
+  setup.projects = [THIS_PROJECT];
+  return setup;
+}
+
+const automation = (script: string): string => `automations:\n  a: ${script}\n`;
+
+describe("a repository's automations", () => {
+  it("run from the default branch, whatever a worktree holds", async () => {
+    const setup = repositorySetup(
+      { "github.yaml": automation("from-branch") },
+      {
+        workspace: { "github.yaml": automation("from-worktree") },
+        outcomes: { "from-branch": { stdout: "[]" } },
+      }
+    );
+
+    await setup.tick();
+
+    expect(setup.ran).toEqual(["from-branch"]);
+  });
+
+  it("are told their project on stdin", async () => {
+    const setup = repositorySetup(
+      { "github.yaml": automation("list") },
+      { outcomes: { list: { stdout: "[]" } } }
+    );
+
+    await setup.tick();
+
+    expect(setup.stdin[0]).toEqual({ project: PROJECT_REF, projectPath: PROJECT_ROOT });
+  });
+
+  it("find a folder plugin's files through CH_PLUGIN_DIR", async () => {
+    const setup = repositorySetup(
+      { "github/plugin.yaml": automation("list"), "github/run.sh": "echo" },
+      { outcomes: { list: { stdout: "[]" } } }
+    );
+
+    await setup.tick();
+
+    expect(setup.envs[0]!.CH_PLUGIN_DIR).toContain(COMMIT_A);
+  });
+
+  it("leave a plugin's hooks to the worktree", async () => {
+    const setup = repositorySetup(
+      { "github.yaml": hooksManifest({ "after-worktree-created": "from-branch" }) },
+      {
+        workspace: { "github.yaml": hooksManifest({ "after-worktree-created": "from-worktree" }) },
+        outcomes: { "from-worktree": { stdout: "{}" } },
+      }
+    );
+
+    await setup.tick();
+    await openWorkspace(setup);
+
+    expect(setup.ran).toEqual(["from-worktree"]);
+  });
+
+  it("follow the default branch, and drop the old copy", async () => {
+    const setup = repositorySetup(
+      { "github.yaml": automation("one") },
+      { outcomes: { one: { stdout: "[]" }, two: { stdout: "[]" } } }
+    );
+    await setup.tick();
+
+    setup.moveBranch(COMMIT_B, { "github.yaml": automation("two") });
+    await setup.tick();
+
+    expect(setup.ran).toEqual(["one", "two"]);
+    const copies = [...setup.fileSystem.$.entries.keys()].filter((key) =>
+      key.includes("project-automations")
+    );
+    expect(copies.some((key) => key.includes(COMMIT_B))).toBe(true);
+    expect(copies.some((key) => key.includes(COMMIT_A))).toBe(false);
+  });
+
+  it("run nothing from a branch without the folder, and raise no problem", async () => {
+    const setup = createTestSetup({ defaultBranch: { commit: COMMIT_A, files: {} } });
+    registerProjects(setup);
+    setup.projects = [THIS_PROJECT];
+
+    await setup.tick();
+
+    expect(setup.ran).toEqual([]);
+    expect(setup.dialogs).toEqual([]);
+    expect(setup.module.api.errors()).toEqual([]);
+  });
+
+  it("report a broken manifest on the default branch", async () => {
+    const setup = repositorySetup({ "github.yaml": "automations: [nonsense\n" });
+
+    await setup.tick();
+
+    expect(setup.ran).toEqual([]);
+    expect(setup.module.api.errors()[0]).toMatchObject({ plugin: "project:project:github" });
+  });
+
+  it("default an item to their own project, and sign what they create by name", async () => {
+    const setup = repositorySetup(
+      { "github.yaml": automation("list") },
+      {
+        outcomes: {
+          list: { stdout: JSON.stringify([{ action: "workspace.create", name: "feature-x" }]) },
+        },
+      }
+    );
+
+    await setup.tick();
+
+    expect(setup.createdEvents).toHaveLength(1);
+    expect(setup.metadataWrites).toContainEqual({
+      key: "source",
+      value: "project:project:github/a",
+    });
+  });
+
+  it("look a bare workspace name up in their own project", async () => {
+    const setup = repositorySetup(
+      { "github.yaml": automation("list") },
+      {
+        outcomes: {
+          list: {
+            stdout: JSON.stringify([
+              { action: "workspace.switch", workspace: "pr-1" },
+              { action: "workspace.switch", workspace: "other::pr-2" },
+              { action: "workspace.switch", workspace: "pr-3", project: "other" },
+            ]),
+          },
+        },
+      }
+    );
+
+    await setup.tick();
+
+    expect(setup.logged).toEqual([
+      { workspace: "pr-1", project: PROJECT_ROOT },
+      { workspace: "other::pr-2" },
+      { workspace: "pr-3", project: "other" },
+    ]);
+  });
+
+  describe("trust", () => {
+    const FILES = { "github.yaml": automation("repo-script") };
+    const OUTCOMES = { "repo-script": { stdout: "[]" }, "own-script": { stdout: "[]" } };
+
+    it("asks without holding the poll up, and only once", async () => {
+      const setup = repositorySetup(FILES, {
+        untrusted: true,
+        local: { "own.yaml": automation("own-script") },
+        outcomes: OUTCOMES,
+        trustAnswer: { action: "remember", hangs: true },
+      });
+
+      await setup.tick();
+      await setup.tick();
+
+      expect(setup.ran).toEqual(["own-script", "own-script"]);
+      expect(setup.dialogs).toHaveLength(1);
+    });
+
+    it("Remember stores the answer, which covers the plugin from then on", async () => {
+      const setup = repositorySetup(FILES, { untrusted: true, outcomes: OUTCOMES });
+
+      await setup.tick();
+      await settle();
+      await setup.tick();
+
+      expect(setup.ran).toEqual(["repo-script"]);
+      expect(setup.stateService.getEffective()["plugins.state"]).toEqual({
+        [TRUST_KEY("github")]: true,
+      });
+    });
+
+    it("Just this time lasts until restart, stored nowhere", async () => {
+      const setup = repositorySetup(FILES, {
+        untrusted: true,
+        outcomes: OUTCOMES,
+        trustAnswer: { action: "once" },
+      });
+
+      await setup.tick();
+      await settle();
+      await setup.tick();
+      await setup.tick();
+
+      expect(setup.ran).toEqual(["repo-script", "repo-script"]);
+      expect(setup.dialogs).toHaveLength(1);
+      expect(setup.stateService.getEffective()["plugins.state"]).toEqual({});
+    });
+
+    it("a dismissal means no until restart, without asking again", async () => {
+      const setup = repositorySetup(FILES, {
+        untrusted: true,
+        outcomes: OUTCOMES,
+        trustAnswer: { action: "", dismiss: true },
+      });
+
+      await setup.tick();
+      await settle();
+      await setup.tick();
+
+      expect(setup.ran).toEqual([]);
+      expect(setup.dialogs).toHaveLength(1);
+    });
+
+    it("one answer covers a plugin's hooks too", async () => {
+      const setup = repositorySetup(
+        { "github.yaml": automation("repo-script") },
+        {
+          untrusted: true,
+          workspace: { "github.yaml": hooksManifest({ "after-worktree-created": "setup" }) },
+          outcomes: { ...OUTCOMES, setup: { stdout: "{}" } },
+        }
+      );
+
+      await setup.tick();
+      await settle();
+      await openWorkspace(setup);
+
+      expect(setup.dialogs).toHaveLength(1);
+      expect(setup.ran).toEqual(["setup"]);
+    });
+
+    it("a disabled plugin does not run, and nothing is asked", async () => {
+      const setup = repositorySetup(FILES, {
+        pluginsEnabled: { [TRUST_KEY("github")]: false },
+      });
+
+      await setup.tick();
+
+      expect(setup.ran).toEqual([]);
+      expect(setup.dialogs).toEqual([]);
+    });
+  });
+
+  describe("tracking", () => {
+    const KEY = `project:${PROJECT_REF}:github/a/pr-1`;
+    const TRACKING = { [KEY]: { workspaceName: "pr-1", createdAt: "2026-01-01T00:00:00.000Z" } };
+    const tracked = (setup: TestSetup): string[] =>
+      Object.keys(setup.stateService.getEffective()["auto-workspaces"] as object);
+
+    it("stands while the project is closed", async () => {
+      const setup = repositorySetup({ "github.yaml": automation("x") }, { tracking: TRACKING });
+      setup.projects = [];
+
+      await setup.tick();
+
+      expect(tracked(setup)).toEqual([KEY]);
+    });
+
+    it("stands while the plugin's question is unanswered", async () => {
+      const setup = repositorySetup(
+        { "github.yaml": automation("x") },
+        { tracking: TRACKING, untrusted: true, trustAnswer: { action: "", hangs: true } }
+      );
+
+      await setup.tick();
+
+      expect(tracked(setup)).toEqual([KEY]);
+    });
+
+    it("goes when the automation is removed from an open project", async () => {
+      const setup = repositorySetup(
+        { "github.yaml": automation("x") },
+        { tracking: TRACKING, outcomes: { x: { stdout: "[]" } } }
+      );
+      setup.moveBranch(COMMIT_B, { "other.yaml": "hooks: {}\n" });
+
+      await setup.tick();
+
+      expect(tracked(setup)).toEqual([]);
+    });
+  });
+
+  describe("two open projects sharing a name", () => {
+    const OTHER_ROOT = projPath("/elsewhere/project");
+    const OTHER_REF = projectRefFor(OTHER_ROOT);
+
+    function twoProjects(): TestSetup {
+      const files = { "github.yaml": automation("list") };
+      const setup = repositorySetup(files, {
+        outcomes: { list: { exitCode: 1 } },
+        pluginsEnabled: {
+          [TRUST_KEY("github")]: true,
+          [`project:${OTHER_REF}:github`]: true,
+        },
+      });
+      const repo = setup.git.$.repositories.get(PROJECT_ROOT)!;
+      (setup.git.$ as unknown as { addRepository(path: string, r: unknown): void }).addRepository(
+        OTHER_ROOT,
+        repo
+      );
+      setup.projects = [THIS_PROJECT, { ...THIS_PROJECT, ref: OTHER_REF, path: OTHER_ROOT }];
+      return setup;
+    }
+
+    it("run and fail apart", async () => {
+      const setup = twoProjects();
+
+      await setup.tick();
+
+      expect(setup.ran).toEqual(["list", "list"]);
+      expect(setup.module.api.errors()).toHaveLength(2);
+    });
+
+    it("refuse being enabled by a name that could mean either", async () => {
+      const setup = twoProjects();
+
+      await expect(
+        setup.module.api.setState({ workspace: null }, "project:project:github", "disabled")
+      ).rejects.toMatchObject({ category: "usage" });
+    });
+  });
+
+  describe("ch plugin", () => {
+    it("lists them with no workspace, and can answer for them", async () => {
+      const setup = repositorySetup({ "github.yaml": automation("x") }, { untrusted: true });
+
+      const [row] = await setup.module.api.list({ workspace: null });
+      expect(row).toMatchObject({
+        id: "project:project:github",
+        state: "ask",
+        project: PROJECT_REF,
+        status: `default branch ${COMMIT_A.slice(0, 7)}`,
+      });
+
+      await setup.module.api.setState({ workspace: null }, "project:project:github", "enabled");
+
+      expect(setup.stateService.getEffective()["plugins.state"]).toEqual({
+        [TRUST_KEY("github")]: true,
+      });
+    });
+
+    it("shows one row for a plugin in both the worktree and the default branch", async () => {
+      const setup = repositorySetup(
+        { "github.yaml": automation("x") },
+        { workspace: { "github.yaml": hooksManifest({ "after-worktree-created": "y" }) } }
+      );
+
+      const rows = await setup.module.api.list({
+        workspace: {
+          workspacePath: WORKSPACE_PATH,
+          projectRef: PROJECT_REF,
+          projectPath: PROJECT_ROOT,
+        },
+      });
+
+      expect(rows.filter((row) => row.id === "project:project:github")).toHaveLength(1);
+    });
+
+    it("update fetches the open projects", async () => {
+      const setup = repositorySetup({});
+
+      await setup.module.api.update();
+
+      expect(setup.fetched).toEqual([{ projectRef: PROJECT_REF, refresh: true, wait: true }]);
+    });
+
+    it("the app's start fetches them too", async () => {
+      const setup = repositorySetup({});
+
+      await setup.module.events![EVENT_APP_STARTED]!.handler({
+        type: EVENT_APP_STARTED,
+        payload: {},
+      });
+      await settle();
+
+      expect(setup.fetched).toEqual([{ projectRef: PROJECT_REF, refresh: true }]);
+    });
+  });
+});
+
+describe("schedule", () => {
+  const scheduled = (expression: string, script = "list"): string =>
+    `automations:\n  a:\n    schedule: "${expression}"\n    script: ${script}\n`;
+  const OK = { list: { stdout: "[]" } };
+
+  it("does not run at startup", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled("0 3 * * *") }, outcomes: OK });
+
+    await setup.tick();
+
+    expect(setup.ran).toEqual([]);
+  });
+
+  it("runs at the first poll after a time it names, then waits for the next", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled("0 13 * * *") }, outcomes: OK });
+    setup.now = new Date("2026-03-10T12:59:00").getTime();
+    await setup.tick();
+
+    setup.now = new Date("2026-03-10T12:59:59").getTime();
+    await setup.tick();
+    expect(setup.ran).toEqual([]);
+
+    setup.now = new Date("2026-03-10T13:00:20").getTime();
+    await setup.tick();
+    expect(setup.ran).toEqual(["list"]);
+
+    setup.now = new Date("2026-03-10T13:01:20").getTime();
+    await setup.tick();
+    expect(setup.ran).toEqual(["list"]);
+
+    setup.now = new Date("2026-03-11T13:00:10").getTime();
+    await setup.tick();
+    expect(setup.ran).toEqual(["list", "list"]);
+  });
+
+  it("gives one run for several times passing between polls", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled("* * * * *") }, outcomes: OK });
+    await setup.tick();
+
+    setup.now += 10 * 60_000;
+    await setup.tick();
+    await setup.tick();
+
+    expect(setup.ran).toEqual(["list"]);
+  });
+
+  it("leaves an automation without one running every poll", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": automation("list") }, outcomes: OK });
+
+    await setup.tick();
+    await setup.tick();
+
+    expect(setup.ran).toEqual(["list", "list"]);
+  });
+
+  it("starts afresh after being disabled, not making up for the time", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled("* * * * *") }, outcomes: OK });
+    await setup.tick();
+
+    await setup.module.api.setState({ workspace: null }, "local:default:n", "disabled");
+    await setup.tick();
+    setup.now += 10 * 60_000;
+    await setup.module.api.setState({ workspace: null }, "local:default:n", "enabled");
+    await setup.tick();
+
+    expect(setup.ran).toEqual([]);
+  });
+
+  it("keeps a failing automation's card between its runs", async () => {
+    const setup = createTestSetup({
+      local: { "n.yaml": scheduled("* * * * *") },
+      outcomes: { list: { exitCode: 1 } },
+    });
+    await setup.startApp();
+
+    setup.now += 2 * 60_000;
+    await setup.tick();
+    expect(setup.module.api.errors()).toHaveLength(1);
+
+    await setup.tick();
+    expect(setup.module.api.errors()).toHaveLength(1);
+    expect(setup.cards.notifications.every((card) => !card.closed)).toBe(true);
+  });
+
+  it("reports an invalid one as a problem", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled("0 * * * * *") } });
+
+    await setup.tick();
+
+    expect(setup.ran).toEqual([]);
+    expect(setup.module.api.errors()[0]?.message).toContain("5 fields");
+  });
+});
+
+describe("ch automation", () => {
+  const NOWHERE = { workspace: null };
+  const IN_WORKSPACE = {
+    workspace: {
+      workspacePath: WORKSPACE_PATH,
+      projectRef: PROJECT_REF,
+      projectPath: PROJECT_ROOT,
+    },
+  };
+  const request = { name: "reviews", script: "list", repo: false };
+  const contentOf = (setup: TestSetup, path: Path): unknown => {
+    const entry = setup.fileSystem.$.entries.get(path.toString());
+    return entry?.type === "file" ? String(entry.content) : undefined;
+  };
+
+  it("add writes a manifest to the user's folder, which then runs", async () => {
+    const setup = createTestSetup({ outcomes: { list: { stdout: "[]" } } });
+
+    const added = await setup.module.api.addAutomation(NOWHERE, request);
+    await setup.tick();
+
+    expect(added).toMatchObject({
+      plugin: "local:default:reviews",
+      takesEffect: "at the next poll",
+    });
+    expect(setup.ran).toEqual(["list"]);
+  });
+
+  it("add writes the shell it is told", async () => {
+    const setup = createTestSetup();
+
+    await setup.module.api.addAutomation(NOWHERE, { ...request, shell: "powershell" });
+
+    expect(contentOf(setup, new Path(LOCAL_PLUGINS, "reviews.yaml"))).toContain("powershell");
+  });
+
+  it("add writes a schedule", async () => {
+    const setup = createTestSetup();
+
+    await setup.module.api.addAutomation(NOWHERE, { ...request, schedule: "0 3 * * *" });
+
+    const rows = await setup.module.api.automations();
+    expect(rows).toEqual([
+      expect.objectContaining({
+        automation: "local:default:reviews/reviews",
+        schedule: "0 3 * * *",
+        state: "enabled",
+        nextRun: expect.any(String),
+      }),
+    ]);
+  });
+
+  it("add refuses an invalid schedule, writing nothing", async () => {
+    const setup = createTestSetup();
+
+    await expect(
+      setup.module.api.addAutomation(NOWHERE, { ...request, schedule: "soon" })
+    ).rejects.toMatchObject({ category: "usage" });
+
+    expect(contentOf(setup, new Path(LOCAL_PLUGINS, "reviews.yaml"))).toBeUndefined();
+  });
+
+  it("add refuses a name the folder already has", async () => {
+    const setup = createTestSetup({ local: { "reviews.yaml": automation("x") } });
+
+    await expect(setup.module.api.addAutomation(NOWHERE, request)).rejects.toMatchObject({
+      category: "conflict",
+    });
+  });
+
+  it("add --repo writes to the worktree, running nothing until merged", async () => {
+    const setup = repositorySetup({}, { outcomes: {} });
+
+    const added = await setup.module.api.addAutomation(IN_WORKSPACE, { ...request, repo: true });
+    await setup.tick();
+
+    expect(added).toMatchObject({ plugin: "project:project:reviews" });
+    expect(added.takesEffect).toContain("merged");
+    expect(contentOf(setup, new Path(WORKSPACE_PLUGINS, "reviews.yaml"))).toContain("list");
+    expect(setup.ran).toEqual([]);
+  });
+
+  it("add --repo needs a workspace", async () => {
+    const setup = createTestSetup();
+
+    await expect(
+      setup.module.api.addAutomation(NOWHERE, { ...request, repo: true })
+    ).rejects.toMatchObject({ category: "no-workspace" });
+  });
+
+  it("remove deletes the file add wrote", async () => {
+    const setup = createTestSetup();
+    await setup.module.api.addAutomation(NOWHERE, request);
+
+    await setup.module.api.removeAutomation(NOWHERE, "reviews", false);
+
+    expect(contentOf(setup, new Path(LOCAL_PLUGINS, "reviews.yaml"))).toBeUndefined();
+    expect(await setup.module.api.automations()).toEqual([]);
+  });
+
+  it("remove --repo deletes from the worktree", async () => {
+    const setup = createTestSetup({
+      workspace: { "reviews.yaml": "automations:\n  reviews: x\n" },
+    });
+
+    const removed = await setup.module.api.removeAutomation(IN_WORKSPACE, "reviews", true);
+
+    expect(removed.takesEffect).toContain("merged");
+    expect(removed.takesEffect).not.toContain("trusted");
+
+    expect(contentOf(setup, new Path(WORKSPACE_PLUGINS, "reviews.yaml"))).toBeUndefined();
+  });
+
+  it.each([
+    ["hooks beside it", "automations:\n  reviews: x\nhooks:\n  on-workspace-opened: y\n"],
+    ["a second automation", "automations:\n  reviews: x\n  more: y\n"],
+    ["settings", "automations:\n  reviews: x\nconfig:\n  token: {type: string}\n"],
+    ["a platform", "platform: linux\nautomations:\n  reviews: x\n"],
+    ["a second document", "automations:\n  reviews: x\n---\nshell: cmd\n"],
+    ["an invalid manifest", "automations: [\n"],
+  ])("remove refuses a file with %s", async (_what, text) => {
+    const setup = createTestSetup({ local: { "reviews.yaml": text } });
+
+    await expect(
+      setup.module.api.removeAutomation(NOWHERE, "reviews", false)
+    ).rejects.toMatchObject({ category: "usage" });
+
+    expect(contentOf(setup, new Path(LOCAL_PLUGINS, "reviews.yaml"))).toBe(text);
+  });
+
+  it("remove refuses a folder plugin", async () => {
+    const setup = createTestSetup({
+      local: { "reviews/plugin.yaml": "automations:\n  reviews: x\n" },
+    });
+
+    await expect(
+      setup.module.api.removeAutomation(NOWHERE, "reviews", false)
+    ).rejects.toMatchObject({ category: "usage" });
+  });
+
+  it("remove points at another source's automation", async () => {
+    const setup = createTestSetup({
+      sources: `work:\n  path: ${testPath("/work").toString()}\n`,
+      folders: { [testPath("/work").toString()]: { "tools.yaml": "automations:\n  reviews: x\n" } },
+    });
+
+    await expect(
+      setup.module.api.removeAutomation(NOWHERE, "reviews", false)
+    ).rejects.toMatchObject({ category: "usage", message: expect.stringContaining("tools.yaml") });
+  });
+
+  it("remove says when there is no such automation", async () => {
+    const setup = createTestSetup();
+
+    await expect(setup.module.api.removeAutomation(NOWHERE, "nope", false)).rejects.toMatchObject({
+      category: "not-found",
+    });
+  });
+
+  it("list shows a project's automations from its default branch", async () => {
+    const setup = repositorySetup({ "github.yaml": automation("x") }, { untrusted: true });
+
+    expect(await setup.module.api.automations()).toEqual([
+      expect.objectContaining({
+        automation: "project:project:github/a",
+        project: PROJECT_REF,
+        state: "ask",
+      }),
+    ]);
+  });
+});

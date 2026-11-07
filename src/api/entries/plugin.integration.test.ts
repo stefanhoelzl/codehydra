@@ -22,6 +22,7 @@ import type {
   PluginListing,
   PluginScope,
   PluginSourceListing,
+  NewAutomationRequest,
   Plugins,
   PluginState,
 } from "./deps";
@@ -101,6 +102,8 @@ function setup() {
     ref: "main",
     status: "9f1e2c3, fetched just now",
   };
+  const newAutomations: NewAutomationRequest[] = [];
+  const removedAutomations: Array<[string, boolean]> = [];
   const plugins: Plugins = {
     list: async (scope) => {
       scopes.push(scope);
@@ -109,6 +112,36 @@ function setup() {
         listing("remote:acme:deploy", "enabled", ["linux"]),
         ...(scope.workspace === null ? [] : [listing("project:app:setup", "ask", ["linux"])]),
       ];
+    },
+    automations: async () => [
+      {
+        automation: "local:default:github/reviews",
+        plugin: "local:default:github",
+        state: "enabled",
+        schedule: "0 3 * * *",
+        nextRun: "2026-03-11T03:00:00.000Z",
+        path: "/plugins/github.yaml",
+      },
+    ],
+    addAutomation: async (scope, request) => {
+      scopes.push(scope);
+      newAutomations.push(request);
+      return {
+        automation: request.name,
+        plugin: `local:default:${request.name}`,
+        path: `/plugins/${request.name}.yaml`,
+        takesEffect: "at the next poll",
+      };
+    },
+    removeAutomation: async (scope, name, repo) => {
+      scopes.push(scope);
+      removedAutomations.push([name, repo]);
+      return {
+        automation: name,
+        plugin: `local:default:${name}`,
+        path: `/plugins/${name}.yaml`,
+        takesEffect: "at the next poll",
+      };
     },
     setState: async (_scope, id, state) => {
       if (id === "local:default:nope") {
@@ -172,7 +205,7 @@ function setup() {
   );
   const call = (name: Parameters<typeof registry.get>[0], ctx: OperationContext, input = {}) =>
     registry.invoke(registry.get(name), ctx, input);
-  return { call, scopes, states, added, updated };
+  return { call, scopes, states, added, updated, newAutomations, removedAutomations };
 }
 
 const inWorkspace: OperationContext = {
@@ -370,5 +403,52 @@ describe("plugin.add / plugin.remove / plugin.update", () => {
 
     expect(updated).toEqual(["acme", undefined]);
     expect(rows).toEqual([acmeRow]);
+  });
+});
+
+describe("automation.list / automation.add / automation.remove", () => {
+  it("lists a row per automation, in strings", async () => {
+    const { call } = setup();
+
+    expect(await call("automation.list", outside, {})).toEqual([
+      {
+        automation: "local:default:github/reviews",
+        state: "enabled",
+        schedule: "0 3 * * *",
+        next: "2026-03-11T03:00:00.000Z",
+        path: "/plugins/github.yaml",
+      },
+    ]);
+  });
+
+  it("adds to the user's folder, with nothing naming a workspace", async () => {
+    const { call, newAutomations, scopes } = setup();
+
+    const row = await call("automation.add", outside, {
+      name: "reviews",
+      script: "gh pr list",
+      schedule: "0 3 * * *",
+      shell: "bash",
+    });
+
+    expect(newAutomations).toEqual([
+      { name: "reviews", script: "gh pr list", schedule: "0 3 * * *", shell: "bash", repo: false },
+    ]);
+    expect(scopes).toEqual([{ workspace: null }]);
+    expect(row).toMatchObject({ takesEffect: "at the next poll" });
+  });
+
+  it("refuses a name that would not make a file name or a key", async () => {
+    const { call } = setup();
+
+    await expect(call("automation.add", outside, { name: "../up", script: "x" })).rejects.toThrow();
+  });
+
+  it("removes what is named, saying whether from the repository", async () => {
+    const { call, removedAutomations } = setup();
+
+    await call("automation.remove", outside, { name: "reviews" });
+
+    expect(removedAutomations).toEqual([["reviews", false]]);
   });
 });

@@ -39,7 +39,7 @@ import { Path } from "../../utils/path/path";
  * environment are enabled — the argument checks stay on for every other
  * category.
  */
-function gitEnvironment(): {
+function gitEnvironment(additions: Readonly<Record<string, string>> = {}): {
   env: Record<string, string>;
   allowEnvironment: readonly string[];
   unsafe: NonNullable<SimpleGitOptions["unsafe"]>;
@@ -48,6 +48,7 @@ function gitEnvironment(): {
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && key !== "GIT_OPTIONAL_LOCKS") env[key] = value;
   }
+  Object.assign(env, additions);
   const unsafe = Object.fromEntries(
     vulnerabilityCheck([], env).map((vulnerability) => [vulnerability.category, true])
   );
@@ -111,8 +112,8 @@ export class SimpleGitClient implements IGitClient {
    * Create a simple-git instance for a given path.
    * Accepts Path and converts to native format for simple-git.
    */
-  private getGit(basePath: Path): SimpleGit {
-    const { env, ...guard } = gitEnvironment();
+  private getGit(basePath: Path, additions?: Readonly<Record<string, string>>): SimpleGit {
+    const { env, ...guard } = gitEnvironment(additions);
     const options: Partial<SimpleGitOptions> = {
       ...guard,
       baseDir: basePath.toNative(),
@@ -297,6 +298,55 @@ export class SimpleGitClient implements IGitClient {
       await git.raw(["worktree", "add", "--detach", worktreePath.toNative(), commit]);
     }, `Failed to add worktree at ${worktreePath.toString()}`);
     this.logger.scoped({ path: worktreePath.toString() }).debug("AddDetachedWorktree", { commit });
+  }
+
+  async exportFolder(
+    repoPath: Path,
+    commit: string,
+    folder: string,
+    destination: Path,
+    indexFile: Path
+  ): Promise<boolean> {
+    const tree = await this.folderTree(repoPath, commit, folder);
+    if (tree === null) return false;
+    await this.wrapGitOperation(async () => {
+      // An index of its own, so the repository's is never touched, and a work
+      // tree of its own, which a bare repository does not otherwise have.
+      const git = this.getGit(repoPath, {
+        GIT_INDEX_FILE: indexFile.toNative(),
+        GIT_WORK_TREE: destination.toNative(),
+      });
+      await git.raw(["read-tree", tree]);
+      await git.raw(["checkout-index", "--all", "--force"]);
+    }, `Failed to export ${folder} of ${commit}`);
+    this.logger.scoped({ path: destination.toString() }).debug("ExportFolder", { commit, folder });
+    return true;
+  }
+
+  /** The tree a commit holds at a path; null when the path is absent or not a folder. */
+  private async folderTree(repoPath: Path, commit: string, folder: string): Promise<string | null> {
+    const git = this.getGit(repoPath);
+    let id: string;
+    try {
+      id = (
+        await git.raw([
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          "--end-of-options",
+          `${commit}^{commit}:${folder}`,
+        ])
+      ).trim();
+    } catch {
+      // --verify --quiet exits 1 for a revision that names nothing: no such folder.
+      return null;
+    }
+    if (id === "") return null;
+    const kind = await this.wrapGitOperation(
+      () => git.raw(["cat-file", "-t", id]),
+      `Failed to read ${folder} of ${commit}`
+    );
+    return kind.trim() === "tree" ? id : null;
   }
 
   async removeWorktree(repoPath: Path, worktreePath: Path): Promise<void> {

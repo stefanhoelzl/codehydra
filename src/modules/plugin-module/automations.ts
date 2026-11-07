@@ -2,8 +2,9 @@
  * Automations — a plugin script run every poll cycle, whose printed items each
  * run an action.
  *
- * An automation is a local plugin's `automations.<name>: <script>`; its identity
- * is `<plugin>/<name>`. The script prints a JSON array of items, each naming its
+ * An automation is a plugin's `automations.<name>`; its identity is
+ * `<plugin>/<name>` (with the project's ref for a repository's, whose project
+ * name another open project may share). The script prints a JSON array of items, each naming its
  * `action` and carrying that action's input (items.ts). The plugin module
  * supplies the automations, runs the scripts and validates the items; this file
  * decides what they mean.
@@ -152,6 +153,13 @@ export interface AutomationSource {
   readonly plugin: string;
   /** The automation's name within its plugin. */
   readonly name: string;
+  /**
+   * How a person reads it, in the `source` metadata and a message's signature,
+   * when that is not its `id`: a repository's is identified by its project's ref.
+   */
+  readonly label?: string;
+  /** A repository's automation: its project's path, what an item without a project means. */
+  readonly project?: string;
 }
 
 /** A create item, turned into what creating or matching a workspace needs. */
@@ -182,6 +190,12 @@ export interface AutomationsDeps<S extends AutomationSource> {
   readonly enabled: () => boolean;
   /** Every automation that may run now; read at the start of each cycle. */
   readonly sources: () => Promise<readonly S[]>;
+  /**
+   * Whether a tracking entry of an automation not among `sources` stands anyway,
+   * because it may only be away: its project closed, its plugin not answered for.
+   * Read right after `sources`. Default: none does.
+   */
+  readonly keepsTracking?: (key: string) => boolean;
   /** Validate one printed item. Throws a message naming the action and field. */
   readonly parseItem: (raw: unknown) => AutomationItem;
   /** Run a non-create action with a rendered input. Throws on failure. */
@@ -221,19 +235,34 @@ function flattenMetadata(metadata: CreateItem["metadata"]): Record<string, strin
 }
 
 /**
+ * An action's input, with a bare workspace name looked up in the automation's
+ * own project. `<project>::<name>` and a full ref already say where they are.
+ */
+function scopedToProject(
+  input: Record<string, unknown>,
+  ownProject: string | undefined
+): Record<string, unknown> {
+  const { workspace, project } = input;
+  if (ownProject === undefined || project !== undefined) return input;
+  if (typeof workspace !== "string" || workspace.includes("::")) return input;
+  return { ...input, project: ownProject };
+}
+
+/**
  * Turn a create item into a workspace definition. Throws a message for a
  * combination the item's schema cannot express (no project, an agent option
  * without an agent) — the same checks `ch ws create` makes.
  */
-function definitionOf(item: CreateItem): WorkspaceDefinition {
-  if (item.project === undefined) {
+function definitionOf(item: CreateItem, ownProject: string | undefined): WorkspaceDefinition {
+  const project = item.project ?? ownProject;
+  if (project === undefined) {
     throw new Error("an automation has no project of its own: name one in project");
   }
   const agent = buildAgentSpec(item);
   return {
     name: item.name,
     key: item.key ?? item.name,
-    project: item.project,
+    project,
     focus: item.stealFocus,
     metadata: flattenMetadata(item.metadata),
     ...(item.base !== undefined && { base: item.base }),
@@ -397,7 +426,7 @@ export function createAutomations<S extends AutomationSource>(
     key: string
   ): Promise<void> {
     const allMetadata: Record<string, string> = {
-      [METADATA_SOURCE_KEY]: source.id,
+      [METADATA_SOURCE_KEY]: source.label ?? source.id,
       ...definition.metadata,
     };
     for (const [metaKey, value] of Object.entries(allMetadata)) {
@@ -592,7 +621,7 @@ export function createAutomations<S extends AutomationSource>(
           payload: {
             workspaceRef,
             text: definition.prompt,
-            from: `CodeHydra · automation ${source.id}`,
+            from: `CodeHydra · automation ${source.label ?? source.id}`,
             wake: true,
           },
         });
@@ -655,7 +684,7 @@ export function createAutomations<S extends AutomationSource>(
 
       if (item.action !== CREATE_ACTION) {
         try {
-          await deps.invokeAction(item.action, item.input);
+          await deps.invokeAction(item.action, scopedToProject(item.input, source.project));
         } catch (error) {
           report(index, `${item.action}: ${getErrorMessage(error)}`);
         }
@@ -665,7 +694,7 @@ export function createAutomations<S extends AutomationSource>(
       const create = item.input as unknown as CreateItem;
       let definition: WorkspaceDefinition;
       try {
-        definition = definitionOf(create);
+        definition = definitionOf(create, source.project);
       } catch (error) {
         report(index, `${CREATE_ACTION}: ${getErrorMessage(error)}`);
         continue;
@@ -745,6 +774,7 @@ export function createAutomations<S extends AutomationSource>(
     // or its plugin disabled or broken).
     let changed = false;
     for (const key of Object.keys(entries)) {
+      if (deps.keepsTracking?.(key) === true) continue;
       if (!sources.some((source) => key.startsWith(`${source.id}/`))) {
         delete entries[key];
         changed = true;

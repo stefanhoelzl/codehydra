@@ -244,6 +244,9 @@ describe("registry contents", () => {
       // standing anywhere — including outside every worktree.
       expect(global).toEqual([
         "agent.message",
+        "automation.add",
+        "automation.list",
+        "automation.remove",
         "config.get",
         "config.list",
         "config.reset",

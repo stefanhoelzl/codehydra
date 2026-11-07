@@ -715,7 +715,7 @@ plugin can contribute:
 | `~/.codehydra/plugins/` (Windows: `%USERPROFILE%\.codehydra\plugins\`) | yours            | every project | hooks and automations | right away (enabled)               |
 | another folder, listed in [`plugins.config`](#plugin-sources)          | yours            | every project | hooks and automations | right away (enabled)               |
 | a git repository, listed in [`plugins.config`](#plugin-sources)        | yours            | every project | hooks and automations | right away (enabled)               |
-| `.codehydra/plugins/` in a worktree                                    | the repository's | that worktree | hooks only            | once trusted (see [Trust](#trust)) |
+| `.codehydra/plugins/` in a repository                                  | the repository's | that project  | hooks and automations | once trusted (see [Trust](#trust)) |
 
 In each, a plugin is **one YAML file**, `<name>.yaml`, or **a folder**
 holding `plugin.yaml` and whatever files its scripts use. The file or folder
@@ -735,14 +735,19 @@ A plugin is named `<type>:<entry>:<name>`, after where it comes from:
 
 A repository's plugins take its project's name, its folder's name. Two open
 projects can share one; inside a workspace, `project:<name>:<plugin>` means
-that workspace's project.
+that workspace's project, and elsewhere `ch plugin enable|disable` asks you to
+say which with `--workspace`.
 
-A repository's plugins are read from the **worktree**, so they must be
-committed on the branch the worktree checks out. They run as they are in the
-worktree at that moment, uncommitted edits included — so an agent in the
-workspace can change what `before-worktree-deleted` does. A repository's plugin
-cannot run automations: an `automations:` section there is ignored (a warning
-is logged).
+A repository's plugin is laid out like any other, and one file can hold both
+hooks and automations, but the two are read from different copies of it:
+
+- **Hooks** are read from the **worktree**, so they must be committed on the
+  branch the worktree checks out. They run as they are in the worktree at that
+  moment, uncommitted edits included — so an agent in the workspace can change
+  what `before-worktree-deleted` does.
+- **Automations** are read from the project's **default branch**, the one new
+  workspaces fork from (see [Repository automations](#repository-automations)).
+  An `automations:` section in a worktree does nothing until it is merged there.
 
 Plugins are read each time they would run, so an edit takes effect the next
 time without a restart.
@@ -796,7 +801,9 @@ can find on its own. Its plugins are read from a checkout of the commit its
 `ref` names:
 
 - It is **fetched when CodeHydra starts** (in the background), when the entry
-  is added or its `ref` changes, and when you run `ch plugin update`. Never
+  is added or its `ref` changes, and when you run `ch plugin update` (which,
+  without a name, also fetches your open projects, for their
+  [automations](#repository-automations)). Never
   otherwise: plugins do not change under you mid-session. A commit `ref` is
   never fetched again once it is there.
 - A fetch that lands a new commit checks it out beside the old one and
@@ -888,7 +895,8 @@ the way GitHub Actions runs a `run:` step for its shell:
     [settings](#plugin-settings) — never another plugin's, nor any
     `CH_CONFIG_*` in CodeHydra's own environment.
 - **Working directory**: the worktree for a hook; the plugin's folder (or the
-  plugins folder, for a one-file plugin) for an automation. From a worktree,
+  plugins folder, for a one-file plugin) for an automation; the project's folder
+  for a repository's automation, so `gh` and `git` find the repository. From a worktree,
   `ch` acts on that workspace without being told which (`ch ws title`, …).
 - **Timeout**: none for a hook (see [Canceling a hook](#canceling-a-hook)); an
   automation's script is killed after `poll.timeout` seconds (default 30).
@@ -1266,6 +1274,13 @@ every plugin of the repository not yet answered for, each with a checkbox
 - The question is asked whatever triggered the hook — the UI, `ch ws delete`,
   an automation. An unchecked or disabled `before-worktree-deleted` lets the
   deletion proceed without that gate.
+- One answer covers all a plugin contributes, hooks and automations alike. A
+  plugin you enabled for its hooks also runs any automations it has on the
+  default branch, then or added later, without asking again.
+- A repository's automations are asked about too, and never make a poll wait:
+  they are skipped until you answer. For them **Just this time** lasts until
+  CodeHydra restarts, and closing the question or unchecking a plugin means no
+  until then.
 - A repository with no plugins is never asked anything.
 - Change an answer with `ch plugin enable|disable project:<project>:<name>`.
   Your own plugins — local folders and git repositories you listed — are never
@@ -1278,9 +1293,10 @@ every plugin of the repository not yet answered for, each with a checkbox
 
 ### Automations
 
-An automation is a script your plugin — in `~/.codehydra/plugins/`, another
-folder or a git repository — runs every poll cycle. Like a hook, its value is
-the script itself:
+An automation is a script a plugin — in `~/.codehydra/plugins/`, another folder,
+a git repository or [a repository's own](#repository-automations) — runs every
+poll cycle, or [on a schedule](#schedules). Like a hook, its value is the script
+itself:
 
 ```yaml
 automations:
@@ -1324,19 +1340,102 @@ missing field, a value of the wrong type or a field the action does not know
 position, the action and the field. The run is then logged as failed, and the
 run log holds the whole output.
 
+#### Schedules
+
+An automation normally runs every poll. To run it less often, give it a
+`schedule` — a standard 5-field cron expression (minute, hour, day of month,
+month, day of week) in this machine's local time:
+
+```yaml
+automations:
+  nightly:
+    schedule: "0 3 * * *"
+    script: ./nightly.sh
+  reviews: ./reviews.sh # no schedule: every poll
+```
+
+- It runs at the first poll after a time the schedule names, so `0 3 * * *` runs
+  within about a minute after 03:00 at the default `poll.interval`.
+- A schedule can only make an automation run less often than `poll.interval`.
+  Several times passing between two polls give one run, so `* * * * *` simply
+  means every poll, whatever `poll.interval` is.
+- An automation with a schedule does not run when CodeHydra starts, and times
+  missed while it was closed — or while the plugin was disabled — are not made
+  up for: if 03:00 passes with the app closed, the next run is at 03:00 the next
+  day. Without a schedule, it runs at the first poll as usual.
+- A 6-field expression (with seconds), an alias like `@daily` or anything else
+  that is not 5 valid fields makes the manifest invalid; `ch plugin errors` says
+  why.
+
+#### Repository automations
+
+A repository can ship automations in its `.codehydra/plugins/`, in the same
+format as any other plugin. They run while the project is open, once
+[trusted](#trust), from what is **committed on the project's default branch** —
+the branch new workspaces fork from. CodeHydra keeps its own copy of that folder
+under `<data directory>/plugins/project-automations/`, so there is one version
+per project, whatever the worktrees hold.
+
+- **A change takes effect once merged and fetched.** Each poll follows the
+  branch as this machine knows it. CodeHydra fetches a project when it starts,
+  on `ch plugin update`, when the new-workspace form opens, when an automation
+  creates a workspace, on workspace status and when deleting a workspace. A
+  script already running finishes from the copy it started in. To try a script
+  before merging it, run it by hand in a workspace.
+- **Its own project by default.** A `workspace.create` item without `project`
+  creates in this project, and a bare `workspace` name is looked up in this
+  project only. Name another with `project` or `<project>::<name>`. This is a
+  convenience, not a limit: a trusted script can do anything you can.
+- **What the script gets:** it runs in the project's folder, and `{project,
+projectPath}` on stdin instead of `{}`. A folder plugin finds its files through
+  `CH_PLUGIN_DIR`, which points at CodeHydra's copy; a one-file plugin has no
+  files of its own beside it, so a path in its script is relative to the project.
+- **Closing a project** stops its automations, and what they track is kept: a
+  workspace you deleted by hand is not recreated when the project reopens.
+  Removing an automation from the default branch, or disabling its plugin, while
+  the project is open forgets what it tracked, as for any automation.
+- **Settings** come from the project's entry in
+  [`plugins.config`](#plugin-sources), the same values its hooks get.
+
+#### Adding and removing automations
+
+```sh
+ch automation add reviews --script 'gh pr list …' [--schedule "0 3 * * *"] [--shell bash] [--repo]
+ch automation remove reviews [--repo]
+ch automation list   # each automation: state, schedule, next scheduled time, path
+```
+
+MCP has the same as `automation_add`, `automation_remove` and `automation_list`.
+
+- **Without `--repo`**, `add` writes `~/.codehydra/plugins/reviews.yaml`, which
+  runs from the next poll without asking.
+- **With `--repo`**, it writes `.codehydra/plugins/reviews.yaml` in your worktree
+  (or `--workspace`'s) and leaves it uncommitted: CodeHydra never commits for
+  you. It runs once you have merged it to the default branch and trusted it.
+  Outside a workspace, `--repo` is refused.
+- `--script` is the script's own text, stored as written. No file is copied, so
+  a file it names must be there when it runs.
+- `add` refuses a name the folder already has, and an invalid schedule.
+- `remove` deletes `<name>.yaml` only if that is all the file holds. A file with
+  anything more — hooks, settings, another automation, a `platform` — a folder
+  plugin, or an automation from another source is refused, with its path, for you
+  to edit by hand. It never deletes a workspace.
+- `list` shows what can run: a repository's automation appears once it is on the
+  default branch.
+
 #### Creating workspaces
 
 A `workspace.create` item takes `ch ws create`'s fields:
 
-| Field                                           | Meaning                                                                                                   |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `project`                                       | Required. An open project's name, a local path, or a git URL (or `org/repo`) — opened or cloned if needed |
-| `name`                                          | Required. Workspace name **and git branch** — must be a valid branch name, so prefer `pr-7` to a title    |
-| `base`                                          | Branch to fork from (default: the project's default branch). Only when creating                           |
-| `tracking`                                      | Existing remote branch to check out with upstream set, e.g. `origin/feature-x`, instead of forking `base` |
-| `prompt`                                        | Sent to the new workspace's agent — or, for an event that matches, as a message                           |
-| `agent`, `model`, `permissionMode`, `agentName` | The agent: `claude` or `opencode`, `provider/model`, a Claude permission mode, a named agent              |
-| `stealFocus`                                    | `true` switches to the workspace (default `false`)                                                        |
+| Field                                           | Meaning                                                                                                                                                            |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `project`                                       | An open project's name, a local path, or a git URL (or `org/repo`) — opened or cloned if needed. Required, except in [a repository's own](#repository-automations) |
+| `name`                                          | Required. Workspace name **and git branch** — must be a valid branch name, so prefer `pr-7` to a title                                                             |
+| `base`                                          | Branch to fork from (default: the project's default branch). Only when creating                                                                                    |
+| `tracking`                                      | Existing remote branch to check out with upstream set, e.g. `origin/feature-x`, instead of forking `base`                                                          |
+| `prompt`                                        | Sent to the new workspace's agent — or, for an event that matches, as a message                                                                                    |
+| `agent`, `model`, `permissionMode`, `agentName` | The agent: `claude` or `opencode`, `provider/model`, a Claude permission mode, a named agent                                                                       |
+| `stealFocus`                                    | `true` switches to the workspace (default `false`)                                                                                                                 |
 
 and three that only automations have:
 

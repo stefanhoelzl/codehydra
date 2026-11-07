@@ -30,6 +30,7 @@ import { parseAllDocuments } from "yaml";
 import { ALL_ENTRIES } from "./hook-map";
 import { SHELL_NAMES, type ShellName } from "../scripts/shells";
 import { settingsSchema, type Setting } from "./plugin-config";
+import { scheduleProblem } from "./schedule";
 import { describeIssue } from "./util";
 
 // =============================================================================
@@ -82,12 +83,27 @@ const automationsSchema = z
     z.string().regex(AUTOMATION_NAME, {
       error: "automation names use letters, digits, - and _ (and start with a letter or digit)",
     }),
-    scriptSchema.describe(
-      "Run every poll cycle. Prints a JSON array of items, each naming its action " +
-        "(`ch plugin schema --items`)."
-    )
+    z.union([
+      scriptSchema.describe(
+        "Run every poll cycle. Prints a JSON array of items, each naming its action " +
+          "(`ch plugin schema --items`)."
+      ),
+      z
+        .object({
+          script: scriptSchema.describe(
+            "Prints a JSON array of items, each naming its action (`ch plugin schema --items`)."
+          ),
+          schedule: z
+            .string()
+            .describe(
+              "When to run: a 5-field cron expression (minute hour day-of-month month " +
+                "day-of-week) in local time, at the first poll after each time it names."
+            ),
+        })
+        .strict(),
+    ])
   )
-  .describe("Scripts run every poll cycle, whose printed items each run an action.");
+  .describe("Scripts run on a timer, whose printed items each run an action.");
 
 const platformListSchema = z.union([
   z.enum(PLUGIN_PLATFORMS),
@@ -120,6 +136,8 @@ export type HookEntryName = (typeof ALL_ENTRIES)[number]["name"];
 export interface AutomationSpec {
   readonly name: string;
   readonly script: string;
+  /** A cron expression (schedule.ts); absent: every poll. */
+  readonly schedule?: string;
 }
 
 export interface PluginDocument {
@@ -186,10 +204,14 @@ export function parseManifest(text: string): PluginDocument[] {
           (entry): entry is [string, string] => typeof entry[1] === "string"
         )
       ),
-      automations: Object.entries(value.automations ?? {}).map(([name, script]) => ({
-        name,
-        script,
-      })),
+      automations: Object.entries(value.automations ?? {}).map(([name, automation]) => {
+        if (typeof automation === "string") return { name, script: automation };
+        const problem = scheduleProblem(automation.schedule);
+        if (problem !== undefined) {
+          throw new ManifestError(`document ${index}: automations.${name}.schedule: ${problem}`);
+        }
+        return { name, script: automation.script, schedule: automation.schedule };
+      }),
       settings: value.config ?? {},
     });
   }
