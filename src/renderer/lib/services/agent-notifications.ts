@@ -71,62 +71,80 @@ export class AgentNotificationService {
   }
 }
 
-// Audio context singleton
-let audioContext: AudioContext | null = null;
+/** Triad chime: A5 -> C#6 -> E6 (A major triad) - fuller, musical resolution. */
+const CHIME_TONES = [
+  { frequency: 880, start: 0, end: 0.15 },
+  { frequency: 1109, start: 0.1, end: 0.25 },
+  { frequency: 1319, start: 0.2, end: 0.4 },
+] as const;
 
-function getAudioContext(): AudioContext {
-  if (!audioContext) {
-    audioContext = new AudioContext();
-  }
-  return audioContext;
-}
+/** Extra wall-clock time after the last tone ends, so it is not cut off by the suspend. */
+const CHIME_RELEASE_MS = 50;
+
+/** Wall-clock wait before suspending: the last tone's end plus the release margin. */
+export const CHIME_DURATION_MS =
+  Math.max(...CHIME_TONES.map((tone) => tone.end)) * 1000 + CHIME_RELEASE_MS;
 
 /**
- * Play a chime sound using Web Audio API.
- * Triad chime: A5 -> C#6 -> E6 (A major triad) - fuller, musical resolution
+ * Plays the chime and owns the `AudioContext` it plays on.
+ *
+ * The context runs only while a chime plays: it is resumed before the tones and
+ * suspended after them. A running context keeps Chromium's audio output stream
+ * and `AudioOutputDevice` thread busy for as long as it lives, even in silence.
+ *
+ * Chimes never overlap: one requested while another plays (including its
+ * resume and suspend) is dropped, since it would sound the same.
+ */
+export class ChimeSound {
+  private context: AudioContext | null = null;
+  private playing = false;
+
+  constructor(private readonly createContext: () => AudioContext = () => new AudioContext()) {}
+
+  play(): void {
+    if (this.playing) return;
+    this.playing = true;
+    void this.run()
+      .catch(() => {
+        // Audio not supported or blocked - silently ignore
+        // No logging to avoid console noise in production
+      })
+      .finally(() => {
+        this.playing = false;
+      });
+  }
+
+  private async run(): Promise<void> {
+    this.context ??= this.createContext();
+    const ctx = this.context;
+    if (ctx.state !== "running") await ctx.resume();
+
+    const now = ctx.currentTime;
+    for (const tone of CHIME_TONES) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = tone.frequency;
+      osc.type = "sine";
+      gain.gain.setValueAtTime(0.25, now + tone.start);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + tone.end);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + tone.start);
+      osc.stop(now + tone.end);
+    }
+
+    // Wall clock, not the last oscillator's `onended`: that never fires if the
+    // context fails to run, which would leave `playing` stuck.
+    await new Promise<void>((resolve) => setTimeout(resolve, CHIME_DURATION_MS));
+    await ctx.suspend();
+  }
+}
+
+const defaultChime = new ChimeSound();
+
+/**
+ * Play the chime on the shared {@link ChimeSound}; dropped if one is already playing.
  */
 export function playChimeSound(): void {
-  try {
-    const ctx = getAudioContext();
-    const now = ctx.currentTime;
-
-    // First tone: A5 (880Hz)
-    const osc1 = ctx.createOscillator();
-    const gain1 = ctx.createGain();
-    osc1.frequency.value = 880;
-    osc1.type = "sine";
-    gain1.gain.setValueAtTime(0.25, now);
-    gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
-    osc1.connect(gain1);
-    gain1.connect(ctx.destination);
-    osc1.start(now);
-    osc1.stop(now + 0.15);
-
-    // Second tone: C#6 (1109Hz)
-    const osc2 = ctx.createOscillator();
-    const gain2 = ctx.createGain();
-    osc2.frequency.value = 1109;
-    osc2.type = "sine";
-    gain2.gain.setValueAtTime(0.25, now + 0.1);
-    gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
-    osc2.connect(gain2);
-    gain2.connect(ctx.destination);
-    osc2.start(now + 0.1);
-    osc2.stop(now + 0.25);
-
-    // Third tone: E6 (1319Hz)
-    const osc3 = ctx.createOscillator();
-    const gain3 = ctx.createGain();
-    osc3.frequency.value = 1319;
-    osc3.type = "sine";
-    gain3.gain.setValueAtTime(0.25, now + 0.2);
-    gain3.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
-    osc3.connect(gain3);
-    gain3.connect(ctx.destination);
-    osc3.start(now + 0.2);
-    osc3.stop(now + 0.4);
-  } catch {
-    // Audio not supported or blocked - silently ignore
-    // No logging to avoid console noise in production
-  }
+  defaultChime.play();
 }
