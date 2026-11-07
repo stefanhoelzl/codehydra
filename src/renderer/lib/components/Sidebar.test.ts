@@ -848,21 +848,17 @@ describe("Sidebar", () => {
       expect(rowStats(container, key)).toBe("10% · 100M · 2");
     });
 
-    it("gives every project with a total a pulse icon, its numbers on hover, collapsed or expanded", () => {
-      const { container, rerender } = setup({ projects: sampleProjects() });
-      expect(container.querySelector(".proc-icon")).toBeNull();
-
-      rerender({ processSummary: "total", projects: [...withProcesses(), asleep()] });
+    it("leaves the project header without a process icon or numbers, collapsed or expanded", () => {
+      const { container } = setup({
+        processSummary: "total",
+        projects: [...withProcesses(), asleep()],
+      });
       // infra is collapsed and has three awake rows; website is expanded.
-      expect(card(container, "infra").querySelector(".proc-icon")?.getAttribute("title")).toBe(
-        "infra: 30% CPU · 300M memory · 6 processes"
-      );
-      expect(card(container, "website").querySelector(".proc-icon")?.getAttribute("title")).toBe(
-        "website: 30% CPU · 300M memory · 6 processes"
-      );
-      expect(card(container, "asleep").querySelector(".proc-icon")).toBeNull();
-      // The numbers themselves are never in the header.
-      expect(card(container, "infra").querySelector(".proj-h")?.textContent).not.toContain("300M");
+      for (const name of ["infra", "website", "asleep"]) {
+        const header = card(container, name).querySelector(".proj-h")!;
+        expect(header.querySelector('[title*="processes"]')).toBeNull();
+        expect(header.textContent).not.toContain("300M");
+      }
     });
 
     describe("process bar", () => {

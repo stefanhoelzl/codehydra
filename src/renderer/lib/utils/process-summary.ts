@@ -78,22 +78,3 @@ export function describeProcessNode(node: UiProcessNode): string {
     describeProcessSummary(node.subtree),
   ].join("\n");
 }
-
-/**
- * The summaries added up: a collapsed project's. Null when none of them has one (the summary is off, or every row
- * is hibernated). CPU stays null only when none has a reading yet.
- */
-export function sumProcessSummaries(
-  summaries: readonly (UiProcessSummary | undefined)[]
-): UiProcessSummary | null {
-  const present = summaries.filter((summary): summary is UiProcessSummary => summary !== undefined);
-  if (present.length === 0) return null;
-  const cpus = present.flatMap((summary) =>
-    summary.cpuPercent === null ? [] : [summary.cpuPercent]
-  );
-  return {
-    cpuPercent: cpus.length === 0 ? null : cpus.reduce((a, b) => a + b, 0),
-    rssBytes: present.reduce((total, summary) => total + summary.rssBytes, 0),
-    count: present.reduce((total, summary) => total + summary.count, 0),
-  };
-}
