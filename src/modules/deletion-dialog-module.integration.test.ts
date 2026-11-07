@@ -613,6 +613,10 @@ describe("DeletionDialogModule - remove confirm", () => {
     readonly dispatched: { type: string; payload?: unknown }[];
     /** Run the confirm hook (parks until the dialog answers). */
     confirm(): Promise<ConfirmHookResult>;
+    /** The dispatcher the module dispatches through, to hold a single dispatch. */
+    readonly dispatcherMock: {
+      dispatch: (intent: { type: string; payload?: unknown }) => Promise<unknown>;
+    };
   }
 
   function createConfirmSetup(): ConfirmSetup {
@@ -685,6 +689,7 @@ describe("DeletionDialogModule - remove confirm", () => {
       resolveBases: () => resolveBasesFn(),
       dispatched,
       confirm,
+      dispatcherMock: dispatcher,
     };
   }
 
@@ -781,6 +786,8 @@ describe("DeletionDialogModule - remove confirm", () => {
     const handle = setup.dialogManager.lastHandle!;
 
     handle.emitAction("remove", { "keep-branch": "true" });
+    setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
+    setup.resolveMetadata({});
 
     await expect(pending).resolves.toEqual({ keepBranch: true });
     expect(handle.closed).toBe(true);
@@ -858,10 +865,10 @@ describe("DeletionDialogModule - remove confirm", () => {
     const setup = createConfirmSetup();
     const pending = setup.confirm();
     setup.dialogManager.lastHandle!.emitAction("remove", { "keep-branch": "false" });
-    await pending;
 
     setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
     setup.resolveMetadata({});
+    await pending;
     await settle();
 
     expect(setup.dispatched.map((intent) => intent.type)).not.toContain(INTENT_GET_PROJECT_BASES);
@@ -873,14 +880,89 @@ describe("DeletionDialogModule - remove confirm", () => {
     const handle = setup.dialogManager.lastHandle!;
 
     handle.emitAction("remove", { "keep-branch": "false" });
-    await pending;
+    await settle();
     const configCount = handle.configs.length;
 
     setup.resolveStatus({ isDirty: true, unmergedCommits: 1 });
     setup.resolveMetadata({});
+    await pending;
     // Give the background task a chance to (incorrectly) update.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle();
 
     expect(handle.configs.length).toBe(configCount);
+  });
+
+  // The status read runs git inside the worktree; the deletion's release sweep
+  // kills every process there, so a removal confirmed faster than git (one
+  // click on Windows) killed the read and logged its failure as an error.
+  describe("a Remove answered before the status read landed", () => {
+    it("closes the dialog at once but holds the deletion until the read settles", async () => {
+      const setup = createConfirmSetup();
+      let settled = false;
+      const pending = setup.confirm().then((result) => {
+        settled = true;
+        return result;
+      });
+      const handle = setup.dialogManager.lastHandle!;
+
+      handle.emitAction("remove", { "keep-branch": "false" });
+      await settle();
+      expect(handle.closed).toBe(true);
+      expect(settled).toBe(false);
+
+      setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
+      setup.resolveMetadata({});
+      await expect(pending).resolves.toEqual({ keepBranch: false });
+    });
+
+    it("goes ahead once a failing read has failed", async () => {
+      const setup = createConfirmSetup();
+      const pending = setup.confirm();
+
+      setup.dialogManager.lastHandle!.emitAction("remove", { "keep-branch": "true" });
+      setup.rejectStatus(new Error("git broke"));
+
+      await expect(pending).resolves.toEqual({ keepBranch: true });
+    });
+
+    it("waits for the re-read after the fetch, too", async () => {
+      const setup = createConfirmSetup();
+      const pending = setup.confirm();
+      const handle = setup.dialogManager.lastHandle!;
+      setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
+      setup.resolveMetadata({});
+      await settle();
+
+      // The re-read dispatches the same (resolved) status promise, so hold it
+      // with a fresh one to see the answer wait on it.
+      let resolveReread!: (status: unknown) => void;
+      const dispatch = vi.mocked(setup.dispatcherMock.dispatch);
+      dispatch.mockImplementationOnce((intent) => {
+        setup.dispatched.push(intent);
+        return new Promise((resolve) => (resolveReread = resolve));
+      });
+      setup.resolveBases();
+      await settle();
+      expect(statusReads(setup)).toHaveLength(2);
+
+      let settled = false;
+      void pending.then(() => (settled = true));
+      handle.emitAction("remove", { "keep-branch": "false" });
+      await settle();
+      expect(handle.closed).toBe(true);
+      expect(settled).toBe(false);
+
+      resolveReread({ isDirty: false, unmergedCommits: 0 });
+      await expect(pending).resolves.toEqual({ keepBranch: false });
+    });
+
+    it("Cancel does not wait for it", async () => {
+      const setup = createConfirmSetup();
+      const pending = setup.confirm();
+
+      setup.dialogManager.lastHandle!.emitAction("cancel");
+
+      await expect(pending).resolves.toEqual({ canceled: true });
+    });
   });
 });
