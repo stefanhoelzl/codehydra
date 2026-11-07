@@ -6,12 +6,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Mock } from "vitest";
 import {
   AgentNotificationService,
+  CHIME_DURATION_MS,
+  ChimeSound,
   createChimePlayer,
-  playChimeSound,
   type ChimePlayer,
 } from "./agent-notifications";
 
-// Mock AudioContext
+// Behavioral AudioContext mock: tracks state and the oscillators started on it.
 class MockOscillator {
   frequency = { value: 0 };
   type = "sine";
@@ -30,14 +31,30 @@ class MockGainNode {
 }
 
 class MockAudioContext {
+  state: AudioContextState = "running";
   currentTime = 0;
   destination = {};
-  createOscillator() {
-    return new MockOscillator();
+  oscillators: MockOscillator[] = [];
+  resume = vi.fn(async () => {
+    this.state = "running";
+  });
+  suspend = vi.fn(async () => {
+    this.state = "suspended";
+  });
+  createOscillator(): MockOscillator {
+    const osc = new MockOscillator();
+    this.oscillators.push(osc);
+    return osc;
   }
-  createGain() {
+  createGain(): MockGainNode {
     return new MockGainNode();
   }
+}
+
+function chimeWithMock(): { chime: ChimeSound; ctx: MockAudioContext; factory: Mock } {
+  const ctx = new MockAudioContext();
+  const factory = vi.fn(() => ctx as unknown as AudioContext);
+  return { chime: new ChimeSound(factory), ctx, factory };
 }
 
 describe("AgentNotificationService", () => {
@@ -48,11 +65,9 @@ describe("AgentNotificationService", () => {
     // Inject mock chime player for testability
     mockPlayChime = vi.fn<ChimePlayer>();
     service = new AgentNotificationService(mockPlayChime);
-    vi.stubGlobal("AudioContext", MockAudioContext);
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -160,31 +175,79 @@ describe("AgentNotificationService", () => {
   });
 });
 
-describe("playChimeSound", () => {
+describe("ChimeSound", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
   afterEach(() => {
-    vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
-  it("creates audio context and plays tones", () => {
-    vi.stubGlobal("AudioContext", MockAudioContext);
-    // Should not throw
-    expect(() => playChimeSound()).not.toThrow();
+  it("plays the three tones and suspends the context once the chime ends", async () => {
+    const { chime, ctx } = chimeWithMock();
+
+    chime.play();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ctx.oscillators.map((o) => o.frequency.value)).toEqual([880, 1109, 1319]);
+    expect(ctx.suspend).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(CHIME_DURATION_MS);
+    expect(ctx.suspend).toHaveBeenCalledTimes(1);
+    expect(ctx.state).toBe("suspended");
   });
 
-  it("handles AudioContext creation failure gracefully", () => {
-    vi.stubGlobal("AudioContext", function () {
+  it("drops a chime requested while one is playing", async () => {
+    const { chime, ctx } = chimeWithMock();
+
+    chime.play();
+    await vi.advanceTimersByTimeAsync(100);
+    chime.play();
+    await vi.advanceTimersByTimeAsync(CHIME_DURATION_MS);
+
+    expect(ctx.oscillators).toHaveLength(3);
+    expect(ctx.suspend).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes the same context for the next chime", async () => {
+    const { chime, ctx, factory } = chimeWithMock();
+
+    chime.play();
+    await vi.advanceTimersByTimeAsync(CHIME_DURATION_MS);
+    chime.play();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(ctx.resume).toHaveBeenCalledTimes(1);
+    expect(ctx.oscillators).toHaveLength(6);
+  });
+
+  it("stays quiet when the context cannot be created, and retries on the next chime", async () => {
+    const factory = vi.fn((): AudioContext => {
       throw new Error("Not supported");
     });
+    const chime = new ChimeSound(factory);
 
-    // Should not throw even if AudioContext fails
-    expect(() => playChimeSound()).not.toThrow();
+    expect(() => chime.play()).not.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
+    chime.play();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(factory).toHaveBeenCalledTimes(2);
   });
 
-  it("handles missing AudioContext gracefully", () => {
-    vi.stubGlobal("AudioContext", undefined);
+  it("can chime again after resume fails", async () => {
+    const { chime, ctx } = chimeWithMock();
+    ctx.state = "suspended";
+    ctx.resume.mockRejectedValueOnce(new Error("blocked"));
 
-    // Should not throw even if AudioContext is undefined
-    expect(() => playChimeSound()).not.toThrow();
+    chime.play();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ctx.oscillators).toHaveLength(0);
+
+    chime.play();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ctx.oscillators).toHaveLength(3);
   });
 });
 
