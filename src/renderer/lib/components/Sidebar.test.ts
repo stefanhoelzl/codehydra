@@ -98,9 +98,7 @@ describe("Sidebar", () => {
     it("shows no alarm clock and no “your turn”", () => {
       const { container } = setup({ projects: sampleProjects() });
       expect(container.textContent).not.toMatch(/⏰|your turn/i);
-      expect(row(container, "codehydra/hibernation-age").querySelector(".meta")?.textContent).toBe(
-        ""
-      );
+      expect(row(container, "codehydra/hibernation-age").querySelector(".meta")).toBeNull();
     });
 
     it("uses the moon for hibernate and offers only remove on a hibernated row", () => {
@@ -811,6 +809,17 @@ describe("Sidebar", () => {
       expect(row(container, "codehydra/hibernation-age").getAttribute("title")).toBe(
         "10% CPU · 100M memory · 2 processes"
       );
+    });
+
+    it("keeps the row's meta on the first line, so every summary ends at the row's right edge", () => {
+      // jsdom has no layout: the structure is what makes the summaries line up.
+      // A meta beside the two lines took its width off a busy row's second line.
+      const { container } = setup({ processSummary: "total", projects: withProcesses() });
+      const busy = row(container, "codehydra/redesign-sidebar");
+      expect(busy.querySelector(".txt > .head > .meta")?.textContent).toBe("working");
+      expect(busy.querySelector(".txt > .sub > .proc")).not.toBeNull();
+      expect(busy.querySelector(":scope > .meta, :scope > .enter")).toBeNull();
+      expect(row(container, "codehydra/hibernation-age").querySelector(".meta")).toBeNull();
     });
 
     it("gives an awake row without title or tags a second line only for the summary", () => {
