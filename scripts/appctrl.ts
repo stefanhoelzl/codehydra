@@ -501,8 +501,15 @@ export async function expandSidebarOn(ui: Page): Promise<void> {
   // Re-sent until it takes: an enter that lands while a dialog or the shortcut
   // overlay holds the UI is not eligible to expand, and a synthetic enter
   // brings no mousemove to arm it again.
-  const deadline = Date.now() + 15_000;
-  for (;;) {
+  //
+  // The budget is a count of enters, not a wall-clock deadline. The evaluate's
+  // timeout bounds only finding the element, not the round trip, and on an
+  // overloaded machine (a workspace's IDE and agent starting) that round trip
+  // has taken 15s. A deadline then ran out while the one enter was still in
+  // flight, and its 1s check was the only one it got, though the enter had
+  // taken. Counted, every enter gets its check, however slow the app answers.
+  const ENTERS = 15;
+  for (let enter = 1; ; enter++) {
     try {
       // A real MouseEvent, at the window's left edge, as a pointer arriving.
       await nav.evaluate(
@@ -513,7 +520,9 @@ export async function expandSidebarOn(ui: Page): Promise<void> {
       await expanded.waitFor({ state: "attached", timeout: 1_000 });
       break;
     } catch (error) {
-      if (Date.now() >= deadline) throw new Error("the sidebar never expanded", { cause: error });
+      if (enter >= ENTERS) {
+        throw new Error(`the sidebar never expanded (${ENTERS} enters)`, { cause: error });
+      }
     }
   }
 
