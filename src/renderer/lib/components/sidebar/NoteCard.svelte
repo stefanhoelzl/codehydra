@@ -11,6 +11,8 @@
   import type { UiNotification } from "@shared/ui-state";
   import type { NotificationButton } from "@shared/notification-types";
   import SidebarIcon, { type SidebarIconName } from "./SidebarIcon.svelte";
+  import Spinner from "./Spinner.svelte";
+  import { spinClock } from "./spin-clock.js";
 
   interface Props {
     note: UiNotification;
@@ -70,7 +72,7 @@
   <div class="nh">
     <span class="nicon">
       {#if config.type === "spinner"}
-        <span class="ring"></span>
+        <Spinner />
       {:else}
         <SidebarIcon name={ICONS[tone as keyof typeof ICONS]} />
       {/if}
@@ -94,7 +96,7 @@
       {#if config.progress !== undefined}
         <div class="nprog">
           {#if config.progress === true}
-            <div class="bar indet"><i></i></div>
+            <div class="bar indet"><i use:spinClock></i></div>
           {:else}
             <div class="bar"><i style:width={`${Math.round(config.progress * 100)}%`}></i></div>
             <span class="pct">{Math.round(config.progress * 100)}%</span>
@@ -260,9 +262,10 @@
     border-radius: 2px;
     transition: width 0.15s linear;
   }
+  /* Stepped on the spinners' clock (spin-clock.ts): ~4 frames a second, not one per vsync. */
   .bar.indet > i {
     width: 35%;
-    animation: indet 1.2s ease-in-out infinite;
+    animation: indet 2s steps(8) infinite;
   }
   @keyframes indet {
     from {
@@ -331,22 +334,6 @@
     width: 12px;
     height: 12px;
   }
-  .ring {
-    width: 13px;
-    height: 13px;
-    border-radius: 50%;
-    border: 2px solid var(--ch-sb-spin-track);
-    border-top-color: var(--ch-sb-spin-head);
-    animation: spin 0.9s linear infinite;
-    display: block;
-    box-sizing: border-box;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
   /* inside a workspace row */
   .note.in-row {
     padding: 6px 26px 7px 8px;
@@ -372,7 +359,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .ring,
     .bar.indet > i {
       animation: none;
     }
