@@ -3,8 +3,9 @@
 
   One workspace in a project card: status glyph, title (or name), branch and
   tags on the second line, with the process summary on the workspace's CPU and
-  memory at that line's end, a short meta text at the row's end (the hibernation
-  age or how long the agent has been working), its questions as cards, and hover actions. Clicks are
+  memory at that line's end, a short meta text at the first line's end (the
+  hibernation age, how long the agent has been working, or the Alt+X shortcut),
+  its questions as cards, and hover actions. Clicks are
   reported to the sidebar, which owns what they do.
 -->
 <script lang="ts">
@@ -147,7 +148,20 @@
     {/if}
   </button>
   <div class="txt">
-    <span class="title"><Highlighted text={label} {query} /></span>
+    <!-- The meta sits on the first line only, so every row's second line (and
+         its process summary) runs to the row's right edge. -->
+    <span class="head">
+      <span class="title"><Highlighted text={label} {query} /></span>
+      {#if shortcut !== null}
+        <span class="meta"><kbd>{shortcut}</kbd></span>
+      {:else if meta !== ""}
+        <span
+          class="meta"
+          title={age === null ? undefined : `Hibernated ${age.relative} (${age.date})`}>{meta}</span
+        >
+      {/if}
+      <span class="enter"><kbd>↵</kbd></span>
+    </span>
     {#if pendingText !== null}
       <span class="sub" title={row.status === "open-failed" ? row.openError : undefined}>
         <span class="sub-main">{pendingText}</span>
@@ -174,14 +188,6 @@
       </span>
     {/if}
   </div>
-  {#if shortcut !== null}
-    <span class="meta"><kbd>{shortcut}</kbd></span>
-  {:else}
-    <span class="meta" title={age === null ? undefined : `Hibernated ${age.relative} (${age.date})`}
-      >{meta}</span
-    >
-  {/if}
-  <span class="enter"><kbd>↵</kbd></span>
   {#if questions.length > 0}
     <div class="wnotes">
       {#each questions as note (note.id)}
@@ -255,6 +261,7 @@
   }
   .enter {
     display: none;
+    flex: none;
   }
   .ws.sel .enter {
     display: block;
@@ -280,7 +287,14 @@
     flex-direction: column;
     gap: 2px;
   }
+  .head {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
   .title {
+    flex: 1;
+    min-width: 0;
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
@@ -321,6 +335,7 @@
     text-overflow: ellipsis;
   }
   .meta {
+    flex: none;
     font-size: 11px;
     color: var(--ch-sb-fg-3);
     font-variant-numeric: tabular-nums;

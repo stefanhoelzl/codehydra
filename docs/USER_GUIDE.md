@@ -209,9 +209,9 @@ projects open, colors repeat.
 A workspace row shows its title (or its name if it has none); with a title, the
 second line shows the branch. Tags follow, each in its color and with its label,
 and its description on hover. With the process summary on, every awake row has
-a second line, ending in the workspace's CPU and memory; the branch and tags
-clip to leave them room. A title that does not fit ends in "…". The end of the
-row shows how long the agent has been working while it works — `42s`, then
+a second line, ending in the workspace's CPU and memory at the row's right edge;
+the branch and tags clip to leave them room. A title that does not fit ends in
+"…". The end of the first line shows how long the agent has been working while it works — `42s`, then
 `5m`, `1h 5m`, counted from when it last started (hover the spinner for the
 start time) — and for a hibernated workspace how long it has slept. The count
 restarts whenever the agent stops to wait for you, a permission prompt included. Hovering a row shows its actions: hibernate
