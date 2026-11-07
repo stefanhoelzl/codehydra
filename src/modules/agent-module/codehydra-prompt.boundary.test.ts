@@ -95,6 +95,13 @@ describe("composed agent system prompts", () => {
     expect(claude).toMatch(/ch[- ]bg/);
   });
 
+  it("tells Claude where a workflow takes the [bg] marker", () => {
+    // isOptedOutWorkflow reads background_tasks[].description, which Claude
+    // fills from the workflow script's meta.description.
+    expect(claude).toContain("`[bg]` opens its `meta.description`");
+    expect(opencode).not.toContain("meta.description");
+  });
+
   it("does not tell OpenCode about the background wrapper", () => {
     // Only detectable in Claude's background_tasks.
     expect(opencode).not.toMatch(/ch[- ]bg/);

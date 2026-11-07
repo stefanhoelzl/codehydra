@@ -33,7 +33,7 @@ import {
   type ScenarioRun,
 } from "./boundary-test-utils";
 
-/** A whole scenario is ~0.7s; the slowest (a background shell's full life) ~3s. */
+/** A whole scenario is ~0.7s; the slowest (a background workflow's full life) ~7s. */
 const SCENARIO_TIMEOUT_MS = 90_000;
 
 describe("a plain turn", () => {
@@ -157,6 +157,35 @@ describe("a turn that spawns a sub-agent", () => {
 
   it("the main Stop stays busy while the sub-agent is still running", () => {
     expect(run.statusAcross("Stop", 0)).toEqual({ before: "busy", after: "busy" });
+  });
+});
+
+describe("a background workflow, over its whole life", () => {
+  let run: ScenarioRun;
+  beforeAll(async () => {
+    // Two main-agent Stops: one while the workflow's agent still sleeps, and
+    // one after the wake-up Claude sends when the workflow finishes.
+    run = await runScenario("workflow", { until: (r) => seen(r, "Stop", 2) });
+  }, SCENARIO_TIMEOUT_MS);
+
+  it("the Stop that lands while the workflow runs stays busy", () => {
+    expect(run.statusAcross("Stop", 0)).toEqual({ before: "busy", after: "busy" });
+  });
+
+  it("the Stop after the workflow has finished goes idle", () => {
+    expect(run.statusAfter("Stop", 1)).toBe("idle");
+  });
+});
+
+describe("a [bg] workflow whose agent runs a background shell", () => {
+  let run: ScenarioRun;
+  beforeAll(async () => {
+    // The fixture lands the main Stop while the shell runs beside the workflow.
+    run = await runScenario("bgworkflowshell", { until: (r) => seen(r, "Stop") });
+  }, SCENARIO_TIMEOUT_MS);
+
+  it("goes idle beside the workflow and its agent's shell", () => {
+    expect(run.statusAfter("Stop", 0)).toBe("idle");
   });
 });
 

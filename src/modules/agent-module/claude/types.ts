@@ -58,6 +58,11 @@ export interface ClaudeCodeHookPayload {
   readonly notification_type?: string;
   /** Sub-agent ID for SubagentStart/SubagentStop hooks */
   readonly agent_id?: string;
+  /**
+   * With `agent_id`: the sub-agent's kind — `general-purpose`, `Explore`, …,
+   * or `workflow-subagent` for an agent a workflow started (checked on 2.1.319).
+   */
+  readonly agent_type?: string;
   /** Still-running background tasks, sent with Stop/StopFailure hooks */
   readonly background_tasks?: readonly ClaudeCodeBackgroundTask[];
 }
@@ -68,6 +73,9 @@ export interface ClaudeCodeHookPayload {
  * Code 2.1.202:
  * - shell:    `{id, type: "shell", status: "running", description, command}`
  * - subagent: `{id, type: "subagent", status: "running", description, agent_type}`
+ * - workflow: `{id, type: "workflow", status: "running", description, name}` —
+ *   a `Workflow` tool call, which always runs in the background; `description`
+ *   is the script's `meta.description` (checked on 2.1.319)
  * All fields optional — the payload is external input.
  */
 export interface ClaudeCodeBackgroundTask {
@@ -233,8 +241,9 @@ export function isBackgroundWrapped(command: string): boolean {
 /**
  * Decide whether a running background task keeps the workspace busy.
  *
- * A background sub-agent (type "subagent") keeps the workspace busy unless its
- * description starts with `[bg]` (see isBackgroundAgentLabel). A background
+ * A background sub-agent (type "subagent") or workflow (type "workflow") keeps
+ * the workspace busy unless its description starts with `[bg]` (see
+ * isBackgroundAgentLabel). A background
  * shell (type "shell") keeps it busy by default — the exception is a shell
  * invoked through the `ch-bg` wrapper, or started by a `[bg]` sub-agent (its id
  * in `optedOutShells`), which opt out. Non-running tasks and other types never
@@ -247,7 +256,7 @@ export function taskKeepsBusy(
   if (!isRunning(task)) {
     return false;
   }
-  if (task.type === "subagent") {
+  if (task.type === "subagent" || task.type === "workflow") {
     return !isBackgroundAgentLabel(task.description);
   }
   if (task.type !== "shell") {
@@ -262,6 +271,14 @@ export function taskKeepsBusy(
  */
 export function isOptedOutSubagent(task: ClaudeCodeBackgroundTask): boolean {
   return isRunning(task) && task.type === "subagent" && isBackgroundAgentLabel(task.description);
+}
+
+/**
+ * A running background workflow whose `meta.description` starts with `[bg]`:
+ * like a `[bg]` sub-agent, its agents work on while the workspace reads idle.
+ */
+export function isOptedOutWorkflow(task: ClaudeCodeBackgroundTask): boolean {
+  return isRunning(task) && task.type === "workflow" && isBackgroundAgentLabel(task.description);
 }
 
 /**

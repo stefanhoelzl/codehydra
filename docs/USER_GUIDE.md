@@ -519,13 +519,18 @@ sub-agent's description with `[bg]` (case doesn't matter):
 [bg] review the auth module
 ```
 
-Once the agent's turn ends and only `[bg]` sub-agents (and `ch bg` shells) are
+In Claude Code, a workflow (the `Workflow` tool, which always runs in the
+background) counts as a background sub-agent: it keeps the workspace busy until
+it finishes, unless its script's `meta.description` starts with `[bg]`.
+
+Once the agent's turn ends and only `[bg]` sub-agents and workflows (and `ch bg` shells) are
 still running, the workspace goes **idle**, so it shows that it needs you; their
 work doesn't flip it back. When one finishes, the agent is woken with its
 result: the workspace reads busy while it handles that, then idle again, with
 the usual chime and notification. Everything a `[bg]` sub-agent starts is opted
 out with it: in Claude Code, the background shells it runs (no `ch bg` needed),
-even once the sub-agent itself has finished and only its shell is left; in
+even once the sub-agent itself has finished and only its shell is left, and
+the background shells a `[bg]` workflow's agents run; in
 OpenCode, the sub-agents it spawns. OpenCode 1.x runs sub-agents in the background only
 when you set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` in its
 environment (e.g. from a `before-workspace-opened` plugin hook's `env`). Agents are told about `[bg]` in their system
@@ -1627,7 +1632,7 @@ opened on purpose with `xdg-open`, `open` or `ch ws open`.
 
 You don't have to explain CodeHydra to your agent. Every session gets a short
 system prompt: what busy and idle mean (so it ends its turn only when it needs
-you) and when a background sub-agent may stop holding it busy (`[bg]`: only
+you) and when a background sub-agent (or, in Claude Code, a workflow) may stop holding it busy (`[bg]`: only
 one it isn't waiting on, see [Background processes](#background-processes-ch-bg)), that the worktree's
 lifecycle belongs to CodeHydra, that an `index.lock`
 that survives a retry while no git process is running is stale and can be

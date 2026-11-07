@@ -295,7 +295,7 @@ A question put to the user blocks the workspace on them, so it reads **idle** wh
 ### Background Tasks: Sub-agents and Shells (Claude Code)
 
 The `Stop` hook payload carries `background_tasks` — the live snapshot of still-running
-background work, each entry tagged `type: "shell"` or `type: "subagent"`. On every `Stop`
+background work, each entry tagged `type: "shell"`, `"subagent"` or `"workflow"`. On every `Stop`
 the bridge evaluates it (`taskKeepsBusy`) and, when any qualifies, keeps the workspace
 busy instead of going idle:
 
@@ -307,6 +307,17 @@ busy instead of going idle:
   busy. OpenCode reads the same marker from a child session's title (the task
   description) and keeps the workspace busy while an unmarked child runs; a `[bg]`
   child's descendants are opted out with it.
+- A running **workflow** (`type: "workflow"`, a `Workflow` tool call, which always runs in
+  the background; checked on 2.1.319) is treated like a sub-agent: it keeps the workspace
+  busy unless its `description` (the script's `meta.description`) starts with `[bg]`
+  (`isOptedOutWorkflow`). Its agents' hooks carry an `agent_id` (their `agent_type` is
+  `workflow-subagent`), so beside a `[bg]` workflow they are ignored the same way. Those
+  hooks name no workflow (only `SubagentStop`'s `agent_transcript_path` does, too late),
+  so a background shell a workflow agent starts cannot be traced to its workflow. It need
+  not be: the shell's launch answers `tool_response.backgroundEndsWithFinalResponse: true`
+  and it dies with its agent, so it only runs while its workflow does. Such a shell is
+  opted out whatever the workflow (`isWorkflowAgentShell`, `hook-status.ts`), which leaves
+  the workflow alone to decide; without that flag it keeps the workspace busy.
 - A running **shell** (`type: "shell"`, Bash with `run_in_background`) keeps it busy,
   unless its command runs through `ch bg`/`ch-bg` (`isBackgroundWrapped`) or a `[bg]`
   sub-agent started it. The entry names no owner, and the sub-agent has often finished

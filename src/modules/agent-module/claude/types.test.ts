@@ -10,6 +10,7 @@ import {
   ALL_HOOK_NAMES,
   isBackgroundWrapped,
   isOptedOutSubagent,
+  isOptedOutWorkflow,
   registeredHooks,
   taskKeepsBusy,
   WRAPPER_HOOK_NAMES,
@@ -91,7 +92,33 @@ describe("taskKeepsBusy", () => {
     expect(isOptedOutSubagent({ ...agent, type: "shell" })).toBe(false);
   });
 
-  it("non-shell, non-subagent types never keep busy", () => {
+  it("a running workflow keeps busy", () => {
+    // The shape Claude 2.1.319 lists for a `Workflow` tool call.
+    const workflow = {
+      id: "wn8sk1kjh",
+      type: "workflow",
+      status: "running",
+      description: "probe workflow",
+    };
+    expect(taskKeepsBusy(workflow)).toBe(true);
+    expect(isOptedOutWorkflow(workflow)).toBe(false);
+    expect(taskKeepsBusy({ ...workflow, status: "completed" })).toBe(false);
+  });
+
+  it("excludes a workflow whose description starts with [bg]", () => {
+    const workflow = {
+      id: "w1",
+      type: "workflow",
+      status: "running",
+      description: "[bg] review",
+    };
+    expect(taskKeepsBusy(workflow)).toBe(false);
+    expect(isOptedOutWorkflow(workflow)).toBe(true);
+    expect(isOptedOutWorkflow({ ...workflow, status: "completed" })).toBe(false);
+    expect(isOptedOutWorkflow({ ...workflow, type: "subagent" })).toBe(false);
+  });
+
+  it("other types never keep busy", () => {
     expect(taskKeepsBusy({ ...runningShell, type: "agent" })).toBe(false);
   });
 

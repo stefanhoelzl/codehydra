@@ -270,6 +270,16 @@ describe("deriveStatus", () => {
       });
     });
 
+    it("stays busy on a Stop while a workflow runs", () => {
+      const result = derive(input("busy"), "Stop", {
+        background_tasks: [{ type: "workflow", status: "running", description: "review" }],
+      });
+      expect(result).toMatchObject({
+        status: null,
+        flags: { busyForBackgroundTasks: true, idleBesideBackgroundAgents: false },
+      });
+    });
+
     it("stays put on a Stop with running tasks when nothing was parked", () => {
       const result = derive(input("busy"), "Stop", {
         background_tasks: [{ type: "subagent", status: "running" }],
@@ -296,6 +306,22 @@ describe("deriveStatus", () => {
         flags: { busyForBackgroundTasks: false, idleBesideBackgroundAgents: true },
         suppressed: [],
       });
+    });
+
+    it("goes idle beside a [bg] workflow, and ignores its agents' hooks", () => {
+      const stop = derive(input("busy"), "Stop", {
+        background_tasks: [{ type: "workflow", status: "running", description: "[bg] review" }],
+      });
+      expect(stop).toMatchObject({
+        status: "idle",
+        flags: { busyForBackgroundTasks: false, idleBesideBackgroundAgents: true },
+      });
+      expect(
+        deriveStatus(input("idle", stop.flags), "PostToolUse", {
+          agent_id: "a1",
+          tool_name: "Bash",
+        })
+      ).toEqual({ kind: "ignored", reason: "background-subagent" });
     });
 
     it("matches the marker case-insensitively, at the start only", () => {
@@ -471,6 +497,53 @@ describe("trackBackgroundOwners", () => {
     );
     expect(owners.optedOutShells.size).toBe(0);
   });
+
+  /** A workflow agent's PostToolUse for a Bash call in the background (shape of 2.1.319). */
+  const launchWorkflowShell = (endsWithAgent: boolean): ClaudeCodeBridgePayload => ({
+    agent_id: "w-agent",
+    agent_type: "workflow-subagent",
+    tool_name: "Bash",
+    tool_input: { command: "sleep 60", run_in_background: true },
+    tool_response: {
+      stdout: "",
+      stderr: "",
+      backgroundTaskId: "b1",
+      backgroundEndsWithFinalResponse: endsWithAgent,
+    },
+  });
+
+  it("opts out a workflow agent's shell that ends with the agent", () => {
+    const owners = track(INITIAL_BACKGROUND_OWNERS, ["PostToolUse", launchWorkflowShell(true)]);
+    expect([...owners.optedOutShells]).toEqual(["b1"]);
+  });
+
+  it("keeps a workflow agent's shell that may outlive the agent", () => {
+    const owners = track(INITIAL_BACKGROUND_OWNERS, ["PostToolUse", launchWorkflowShell(false)]);
+    expect(owners.optedOutShells.size).toBe(0);
+  });
+
+  it("does not opt out a sub-agent's shell for ending with it", () => {
+    const owners = track(INITIAL_BACKGROUND_OWNERS, [
+      "PostToolUse",
+      { ...launchWorkflowShell(true), agent_type: "general-purpose" },
+    ]);
+    expect(owners.optedOutShells.size).toBe(0);
+  });
+
+  it.each([
+    ["[bg] review", "idle"],
+    ["review", "busy"],
+  ] as const)(
+    "a workflow described %j, with its agent's shell running, leaves the main Stop %s",
+    (description, expected) => {
+      const workflow = { id: "w1", type: "workflow", status: "running", description };
+      const owners = track(INITIAL_BACKGROUND_OWNERS, ["PostToolUse", launchWorkflowShell(true)]);
+      const result = derive(input("busy", {}, false, owners.optedOutShells), "Stop", {
+        background_tasks: [workflow, shell],
+      });
+      expect(result.status ?? "busy").toBe(expected);
+    }
+  );
 
   it("does not take a sub-agent's own Agent call for the main agent's", () => {
     const owners = track(INITIAL_BACKGROUND_OWNERS, [
