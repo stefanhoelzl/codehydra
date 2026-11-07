@@ -379,7 +379,8 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
    * The "confirm" hook on workspace:delete (interactive dispatches only):
    * opens the confirmation dialog immediately, fills the dirty/unmerged
    * warnings in when the background status check lands, and parks the
-   * dispatch until the user answers.
+   * dispatch until the user answers. A Remove closes the dialog at once but
+   * returns only once the status read in flight has settled (see below).
    */
   async function confirmRemove(
     input: HookInput<typeof DELETE_WORKSPACE_OPERATION_ID, "confirm">
@@ -407,7 +408,14 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     //    reads once the dialog is answered. A confirmed removal can finish
     //    within the fetch (git fetch is slow, a removal on Windows fast), and a
     //    status read of a workspace that is gone fails.
-    const readStatus = async (): Promise<boolean> => {
+    //
+    // `statusRead` is the read in flight (or the last one), for a Remove to wait on.
+    let statusRead: Promise<boolean> = Promise.resolve(true);
+    const readStatus = (): Promise<boolean> => {
+      statusRead = readStatusOnce();
+      return statusRead;
+    };
+    const readStatusOnce = async (): Promise<boolean> => {
       try {
         const [status, metadata] = await Promise.all([
           deps.dispatcher.dispatch<GetWorkspaceStatusIntent>({
@@ -452,17 +460,25 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       if (dialogOpen) await readStatus();
     })();
 
+    let event: Awaited<ReturnType<typeof handle.nextEvent>>;
     try {
-      const event = await handle.nextEvent();
-      if (event.kind !== "dismiss" && event.actionId === "remove") {
-        return { result: { keepBranch: event.data?.["keep-branch"] === "true" } };
-      }
-      // Cancel button or Escape.
-      return { result: { canceled: true } };
+      event = await handle.nextEvent();
     } finally {
       dialogOpen = false;
       handle.close();
     }
+
+    if (event.kind !== "dismiss" && event.actionId === "remove") {
+      // The dialog is gone, but the deletion waits for the status read still
+      // running: its git runs inside the worktree, so the release sweep would
+      // kill it (every process with its cwd there) and the read would fail —
+      // logged as an error — on a confirmation faster than git (one click, on
+      // Windows). No new read starts: `dialogOpen` is false. A read never rejects.
+      await statusRead;
+      return { result: { keepBranch: event.data?.["keep-branch"] === "true" } };
+    }
+    // Cancel button or Escape.
+    return { result: { canceled: true } };
   }
 
   return {
