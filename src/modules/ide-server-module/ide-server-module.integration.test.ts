@@ -934,6 +934,54 @@ describe("IdeServerModule", () => {
       }
     });
 
+    it("aborts the health-check fetch in flight before killing a starting server", async () => {
+      // Not issuing the next fetch is not enough: the one already connecting
+      // when the kill lands is the connection the dying server resets, and on
+      // macOS undici throws `setTypeOfService EINVAL` from it, uncaught.
+      const processRunner = createMockProcessRunner({
+        onSpawn: () => ({ ...defaultSpawnConfig(), untilKilled: true }),
+      });
+      const signals: (AbortSignal | undefined)[] = [];
+      // A fetch that only ever ends by being aborted, as one to a server that
+      // has not answered yet.
+      const fetch = vi.fn((_url: string, options?: { signal?: AbortSignal }) => {
+        const signal = options?.signal;
+        signals.push(signal);
+        return new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        });
+      });
+      const deps = createMockDeps({ processRunner, httpClient: { fetch } });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(minimalStart());
+      dispatcher.registerOperation(
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
+      );
+
+      const start = dispatcher.dispatch({ type: "app:start", payload: {} });
+      await vi.waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1);
+      });
+
+      const proc = processRunner.$.spawned(0);
+      const kill = proc.kill.bind(proc);
+      let abortedAtKill: boolean | undefined;
+      vi.spyOn(proc, "kill").mockImplementation((term, force) => {
+        abortedAtKill = signals[0]?.aborted;
+        return kill(term, force);
+      });
+
+      await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
+      await expect(start).resolves.toBeUndefined();
+
+      expect(abortedAtKill).toBe(true);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
     it("never spawns the server once shutdown has run", async () => {
       const processRunner = createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() });
       const deps = createMockDeps({ processRunner });
