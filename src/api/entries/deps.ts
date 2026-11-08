@@ -121,15 +121,15 @@ export interface PluginSourceListing {
   readonly status: string;
 }
 
-/** One automation, as `ch automation list` shows it. */
+/** One automation, as `ch plugin automation list` shows it. */
 export interface AutomationListing {
   /** `<plugin>/<name>`, e.g. `local:default:github/reviews`. */
   readonly automation: string;
   readonly plugin: string;
   readonly state: PluginState;
-  /** Its cron expression; absent: every poll. */
-  readonly schedule?: string;
-  /** ISO time of the next time its schedule names. */
+  /** How long it waits between runs (hourly … yearly); absent: every poll. */
+  readonly schedule?: Schedule;
+  /** ISO time it next runs: its last run plus its wait, or now when it has not run since the app started. */
   readonly nextRun?: string;
   /** The project a repository's automation belongs to. */
   readonly project?: string;
@@ -137,17 +137,17 @@ export interface AutomationListing {
   readonly path: string;
 }
 
-/** What `ch automation add` was given. */
+/** What `ch plugin automation add` was given. */
 export interface NewAutomationRequest {
   readonly name: string;
   readonly script: string;
-  readonly schedule?: string;
-  readonly shell?: "bash" | "powershell" | "cmd";
+  readonly schedule?: Schedule;
+  readonly shell?: ScriptShell;
   /** Into the workspace's `.codehydra/plugins`, instead of `~/.codehydra/plugins`. */
   readonly repo: boolean;
 }
 
-/** The file `ch automation add|remove` wrote or deleted. */
+/** The file `ch plugin automation add|remove` wrote or deleted. */
 export interface AutomationFile {
   readonly automation: string;
   readonly plugin: string;
@@ -196,9 +196,9 @@ export interface Plugins {
   list(scope: PluginScope): Promise<readonly PluginListing[]>;
   /** Every automation: the user's, and each open project's on its default branch. */
   automations(): Promise<readonly AutomationListing[]>;
-  /** Write a new automation's manifest (`ch automation add`). */
+  /** Write a new automation's manifest (`ch plugin automation add`). */
   addAutomation(scope: PluginScope, request: NewAutomationRequest): Promise<AutomationFile>;
-  /** Delete a manifest holding just that automation (`ch automation remove`). */
+  /** Delete a manifest holding just that automation (`ch plugin automation remove`). */
   removeAutomation(scope: PluginScope, name: string, repo: boolean): Promise<AutomationFile>;
   /** Set a plugin's state. Throws `not-found` when no such plugin exists. */
   setState(scope: PluginScope, id: string, state: PluginState): Promise<PluginListing>;
@@ -227,7 +227,17 @@ export interface Plugins {
 }
 
 /** The shells a script can be written for. */
-export type ScriptShell = "bash" | "powershell" | "cmd";
+export const SCRIPT_SHELLS = ["bash", "powershell", "cmd"] as const;
+export type ScriptShell = (typeof SCRIPT_SHELLS)[number];
+
+/** How long an automation waits after a run before the next (plugin-module/schedule.ts). */
+export const SCHEDULES = ["hourly", "daily", "weekly", "monthly", "yearly"] as const;
+export type Schedule = (typeof SCHEDULES)[number];
+
+/** An automation's name: it becomes a log directory and a tracking key, so it stays plain. */
+export const AUTOMATION_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+export const AUTOMATION_NAME_RULE =
+  "an automation's name uses letters, digits, - and _ (and starts with a letter or digit)";
 
 /** A workspace's wakeup script: run every poll tick while it is hibernated. */
 export interface WakeupScript {

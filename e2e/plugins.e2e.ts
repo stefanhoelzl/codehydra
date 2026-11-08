@@ -470,9 +470,13 @@ test("ch plugin lists, disables and reports", async () => {
     [repoPlugin("extra"), "enabled"],
     [repoPlugin("setup"), "enabled"],
   ]);
-  // Outside every workspace, only the user's own.
-  const outside = json(ch(["plugin", "list"])) as { name: string }[];
-  expect(outside.map((row) => row.name)).not.toContain(repoPlugin("setup"));
+  // Outside every workspace, the user's own and each open project's as its
+  // default branch has them: the repository's are committed there too.
+  const outside = json(ch(["plugin", "list"])) as { name: string; status: string }[];
+  expect(outside.map((row) => row.name)).toEqual(rows.map((row) => row.name));
+  expect(outside.find((row) => row.name === repoPlugin("setup"))?.status).toMatch(
+    /^default branch [0-9a-f]{7}$/
+  );
 
   expect(json(ch(["plugin", "disable", repoPlugin("extra")], worktree))).toMatchObject({
     state: "disabled",

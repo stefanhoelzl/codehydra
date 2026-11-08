@@ -29,9 +29,10 @@
  *     refuse. It fails closed: a script that breaks stops the deletion too.
  *   - `on-workspace-opened` observes `workspace:created` (every open).
  * - **automations** (automations.ts): a script run on a timer whose items each
- *   run a registry operation — every poll tick, or the first one after a time
- *   its `schedule` names (schedule.ts). A repository's run from its default
- *   branch (project-automations.ts), not a worktree: they are project-wide, and
+ *   run a registry operation — every poll tick, or once its `schedule`
+ *   interval since the last run is over (schedule.ts). A repository's run in a
+ *   checkout of its default branch (project-automations.ts), not a worktree of
+ *   the user's: they are project-wide, and
  *   whichever worktree happened to be read would otherwise decide what runs. The
  *   poll module (poll-module.ts) runs them and announces their failures; this
  *   module says which there are and acts on what they print.
@@ -114,6 +115,7 @@ import type {
   PluginScope,
   PluginSourceListing,
   Plugins,
+  Schedule,
 } from "../../api/entries/deps";
 import { ApiError } from "../../api/errors";
 import { invokePluginAction } from "../../api/adapters/plugin-actions";
@@ -159,9 +161,14 @@ import {
   type RemoteSpec,
   type RemoteStatus,
 } from "./remotes";
-import { createProjectCopies, type ProjectCopies } from "./project-automations";
+import {
+  createProjectCheckouts,
+  PROJECT_AUTOMATIONS_DIR,
+  type ProjectCheckout,
+  type ProjectCheckouts,
+} from "./project-automations";
 import { automationManifest, holdsOnlyAutomation } from "./automation-files";
-import { isDue, nextScheduled } from "./schedule";
+import { isDue, nextRun } from "./schedule";
 import { settingsEnv } from "./plugin-config";
 import { manifestJsonSchema, type PluginDocument } from "./manifest";
 import { createPluginErrorBook, ERRORS_POINTER, type PluginErrorBook } from "./errors";
@@ -217,7 +224,7 @@ export interface PluginModuleDeps {
     | "addDetachedWorktree"
     | "removeWorktree"
     | "pruneWorktrees"
-    | "exportFolder"
+    | "hasFolder"
   >;
   readonly sink: HookOutputSink;
   /**
@@ -346,8 +353,8 @@ interface ConfiguredPlugin extends LoadedPlugin {
   readonly env: Readonly<Record<string, string>>;
   /** The remote checkout it was read from, held while one of its scripts runs. */
   readonly tree?: Path;
-  /** The default-branch copy it was read from, held likewise (project-automations.ts). */
-  readonly copy?: { readonly dir: Path; readonly commit: string };
+  /** The default-branch checkout it was read from, held likewise (project-automations.ts). */
+  readonly checkout?: ProjectCheckout;
 }
 
 /** A hook script one plugin contributes to one entry. */
@@ -362,7 +369,7 @@ interface PluginAutomation extends AutomationSource {
   readonly owner: ConfiguredPlugin;
   readonly shell: ShellName;
   readonly script: string;
-  readonly schedule?: string;
+  readonly schedule?: Schedule;
   /** The project a repository's automation belongs to. */
   readonly repository?: OpenProject;
 }
@@ -531,11 +538,11 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     },
   });
 
-  const copies: ProjectCopies = createProjectCopies({
+  const defaultBranches: ProjectCheckouts = createProjectCheckouts({
     git: deps.git,
     fileSystem: deps.fileSystem,
     logger: deps.logger,
-    root: deps.pathProvider.dataPath("plugins/project-automations"),
+    root: deps.pathProvider.dataPath(PROJECT_AUTOMATIONS_DIR),
   });
 
   /** The entries of `plugins.config`; just the default folder when it cannot be read. */
@@ -729,10 +736,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     return { type: "project", entry: projectNameOf(project.ref) };
   }
 
-  /** What a project's default branch has in `.codehydra/plugins`; undefined when it cannot say. */
-  async function readProjectCopy(project: OpenProject) {
+  /** A project's default branch, checked out: null when it has no plugins, undefined when it cannot say. */
+  async function readDefaultBranch(
+    project: OpenProject
+  ): Promise<ProjectCheckout | null | undefined> {
     if (project.defaultBaseBranch === undefined) return undefined;
-    const read = await copies.read(new Path(project.path), project.defaultBaseBranch);
+    const read = await defaultBranches.read(new Path(project.path), project.defaultBaseBranch);
     const scope = {
       source: `${sourceId(projectSource(project))} default branch`,
       project: project.path,
@@ -747,7 +756,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       return undefined;
     }
     errors.setProblems(scope, []);
-    return read.state === "ready" ? read.copy : undefined;
+    return read.state === "ready" ? read.checkout : null;
   }
 
   /**
@@ -756,10 +765,16 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
    * nothing about whether they are still there.
    */
   async function loadProjectCopy(project: OpenProject): Promise<ConfiguredPlugin[] | undefined> {
-    const copy = await readProjectCopy(project);
-    if (copy === undefined) return undefined;
+    const checkout = await readDefaultBranch(project);
+    if (checkout === undefined) return undefined;
+    if (checkout === null) return [];
     const source = projectSource(project);
-    const loaded = await loadPlugins(deps.fileSystem, copy.dir, source, platform);
+    const loaded = await loadPlugins(
+      deps.fileSystem,
+      workspacePluginsDir(checkout.tree),
+      source,
+      platform
+    );
     const values = loaded.plugins.length === 0 ? {} : await projectValues(project.ref);
     // Values for a plugin only a worktree has are that read's to judge.
     const { plugins, problems } = configure(
@@ -773,15 +788,19 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       { source: `${sourceId(source)} default branch manifests`, project: project.path },
       problems
     );
-    return plugins.map((plugin) => ({ ...plugin, copy }));
+    return plugins.map((plugin) => ({ ...plugin, checkout }));
   }
 
   /** The plugin names a project's default branch has, for judging `plugins.config` values. */
   async function defaultBranchNames(ref: ProjectRef): Promise<readonly string[]> {
     const project = (await openProjects())?.find((candidate) => candidate.ref === ref);
-    const copy = project === undefined ? undefined : await readProjectCopy(project);
-    if (project === undefined || copy === undefined) return [];
-    const found = await discoverPlugins(deps.fileSystem, copy.dir, projectSource(project));
+    const checkout = project === undefined ? undefined : await readDefaultBranch(project);
+    if (project === undefined || checkout === undefined || checkout === null) return [];
+    const found = await discoverPlugins(
+      deps.fileSystem,
+      workspacePluginsDir(checkout.tree),
+      projectSource(project)
+    );
     return [...found.plugins, ...found.problems].map((plugin) => plugin.name);
   }
 
@@ -1455,8 +1474,9 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
    * the user's, then each open project's from its default branch.
    *
    * A repository's automation not collected may only be away: its project closed
-   * or unreadable, its plugin's question unanswered. What it tracks stands
-   * meanwhile, or a workspace deleted by hand would come back with it.
+   * or unreadable, its plugin's question unanswered or answered no until restart.
+   * What it tracks stands meanwhile, or a workspace deleted by hand would come back
+   * with it. Only a lasting answer (`ch plugin disable`) forgets it.
    */
   async function automationSources(): Promise<readonly PluginAutomation[]> {
     const sources: PluginAutomation[] = [];
@@ -1468,7 +1488,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     }
 
     const readable: string[] = [];
-    const waiting: string[] = [];
+    const held: string[] = [];
     for (const project of (await openProjects()) ?? []) {
       const plugins = await loadProjectCopy(project);
       if (plugins === undefined) continue;
@@ -1483,7 +1503,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         { ref: project.ref, path: project.path },
         candidates.map((plugin) => plugin.name)
       );
-      for (const name of answer.waiting) waiting.push(`${prefix}${name}/`);
+      for (const name of answer.held) held.push(`${prefix}${name}/`);
       for (const plugin of candidates) {
         if (answer.allowed.has(plugin.name)) sources.push(...automationsOf(plugin, project));
       }
@@ -1491,7 +1511,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     keepsTracking = (key) =>
       key.startsWith("project:") &&
       (!readable.some((prefix) => key.startsWith(prefix)) ||
-        waiting.some((prefix) => key.startsWith(prefix)));
+        held.some((prefix) => key.startsWith(prefix)));
     return sources;
   }
 
@@ -1548,9 +1568,10 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       entry: automationEntry(source),
       shell: source.shell,
       script: source.script,
-      // A repository's runs in its project, where `gh` and `git` find the repository;
-      // a user's in its plugin's folder, or the folder that holds a one-file plugin.
-      cwd: repository?.path ?? (owner.pluginDir ?? owner.manifestPath.dirname).toString(),
+      // A repository's runs in its default branch's checkout, as a workspace plugin's
+      // hooks run in their worktree; a user's in its plugin's folder, or the folder
+      // that holds a one-file plugin.
+      cwd: (owner.checkout?.tree ?? owner.pluginDir ?? owner.manifestPath.dirname).toString(),
       input:
         repository === undefined ? {} : { project: repository.ref, projectPath: repository.path },
       logDir: logDir(owner, repository?.path ?? "", "automations", source.name).toString(),
@@ -1566,20 +1587,24 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     collected = new Map(sources.map((source) => [source.id, source]));
     // A tick that never reached a job's result holds nothing past the next.
     for (const id of [...leases.keys()]) releaseLease(id);
-    for (const { id, owner } of sources) {
+    for (const { id, owner, repository } of sources) {
       if (owner.tree !== undefined) leases.set(id, checkouts.acquire(owner.tree));
-      else if (owner.copy !== undefined) leases.set(id, copies.acquire(owner.copy.dir));
+      else if (owner.checkout !== undefined && repository !== undefined) {
+        const project = new Path(repository.path);
+        leases.set(id, defaultBranches.acquire(owner.checkout.tree, project));
+      }
     }
     return sources.map(automationJob);
   }
 
-  /** When each automation with a schedule last ran, or was first seen, by id. */
-  const scheduledSince = new Map<string, number>();
+  /** When each automation with a schedule last ran since the app started, by id. */
+  const lastRuns = new Map<string, number>();
 
   /**
-   * The automations whose time has come. Kept in memory, so a schedule neither
-   * runs at startup nor makes up for time the app was closed — and one coming
-   * back from being disabled or removed starts afresh, the same way.
+   * The automations whose time has come. Kept in memory, so every one runs at the
+   * first poll after the app starts: nothing is missed while the app was closed,
+   * and a restart runs it early instead. A time stays while its automation is
+   * away (disabled, its project closed), so coming back does not run it early.
    */
   function dueNow(sources: readonly PluginAutomation[]): readonly PluginAutomation[] {
     const time = now();
@@ -1589,20 +1614,20 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         due.push(source);
         continue;
       }
-      const since = scheduledSince.get(source.id);
-      if (since !== undefined && isDue(source.schedule, since, time)) {
-        scheduledSince.set(source.id, time);
+      if (isDue(source.schedule, lastRuns.get(source.id), time)) {
+        lastRuns.set(source.id, time);
         due.push(source);
         continue;
       }
-      if (since === undefined) scheduledSince.set(source.id, time);
       deps.poll.markWaiting({ owner: AUTOMATIONS_OWNER, id: source.id });
     }
-    const present = new Set(sources.map((source) => source.id));
-    for (const id of [...scheduledSince.keys()]) {
-      if (!present.has(id)) scheduledSince.delete(id);
-    }
     return due;
+  }
+
+  /** When an automation with a schedule runs next: now, if it has not run since the app started. */
+  function nextRunOf(id: string, schedule: Schedule): number {
+    const last = lastRuns.get(id);
+    return last === undefined ? now() : nextRun(schedule, last);
   }
 
   /** Act on what an automation printed; what went wrong is the poll module's to announce. */
@@ -1691,8 +1716,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       ...(remote !== undefined && {
         status: describeRemote(checkouts.status(remoteSpec(remote))),
       }),
-      ...(plugin.copy !== undefined && {
-        status: `default branch ${plugin.copy.commit.slice(0, 7)}`,
+      ...(plugin.checkout !== undefined && {
+        status: `default branch ${plugin.checkout.commit.slice(0, 7)}`,
       }),
     };
   }
@@ -1716,7 +1741,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     );
   }
 
-  /** Every enabled-or-not automation there is, as `ch automation list` shows it. */
+  /** Every enabled-or-not automation there is, as `ch plugin automation list` shows it. */
   async function listAutomations(): Promise<AutomationListing[]> {
     const rows: AutomationListing[] = [];
     const add = (plugin: ConfiguredPlugin, project?: OpenProject): void => {
@@ -1730,7 +1755,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
           ...(project !== undefined && { project: project.ref }),
           ...(source.schedule !== undefined && {
             schedule: source.schedule,
-            nextRun: new Date(nextScheduled(source.schedule, now())).toISOString(),
+            nextRun: new Date(nextRunOf(source.id, source.schedule)).toISOString(),
           }),
         });
       }
@@ -1742,7 +1767,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     return rows;
   }
 
-  /** The folder `ch automation add|remove` work in, and what becomes of a change there. */
+  /** The folder `ch plugin automation add|remove` work in, and what becomes of a change there. */
   function automationFolder(
     scope: PluginScope,
     repo: boolean
@@ -1794,6 +1819,18 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     return { automation: name, plugin: pluginId(source, name), path: path.toNative(), takesEffect };
   }
 
+  /**
+   * Where else an automation by this name is: preferably in a plugin of that name,
+   * the file `add` would have written, for the error that points there.
+   */
+  function elsewhereOf(
+    rows: readonly AutomationListing[],
+    name: string
+  ): AutomationListing | undefined {
+    const named = rows.filter((row) => row.automation === `${row.plugin}/${name}`);
+    return named.find((row) => row.plugin.endsWith(`:${name}`)) ?? named[0];
+  }
+
   async function removeAutomation(
     scope: PluginScope,
     name: string,
@@ -1803,9 +1840,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     const found = await discoverPlugins(deps.fileSystem, dir, source);
     const ref = found.plugins.find((plugin) => plugin.name === name);
     if (ref === undefined) {
-      const elsewhere = repo
-        ? undefined
-        : (await listAutomations()).find((row) => row.automation.endsWith(`/${name}`));
+      const elsewhere = repo ? undefined : elsewhereOf(await listAutomations(), name);
       throw elsewhere === undefined
         ? new ApiError("not-found", `No plugin ${name} in ${dir.toNative()}`)
         : new ApiError(

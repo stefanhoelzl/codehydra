@@ -244,9 +244,6 @@ describe("registry contents", () => {
       // standing anywhere — including outside every worktree.
       expect(global).toEqual([
         "agent.message",
-        "automation.add",
-        "automation.list",
-        "automation.remove",
         "config.get",
         "config.list",
         "config.reset",
@@ -257,6 +254,9 @@ describe("registry contents", () => {
         "notification.close",
         "notification.show",
         "plugin.add",
+        "plugin.automation.add",
+        "plugin.automation.list",
+        "plugin.automation.remove",
         "plugin.disable",
         "plugin.enable",
         "plugin.errors",

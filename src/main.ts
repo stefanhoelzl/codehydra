@@ -150,6 +150,7 @@ import type { McpConfig } from "./modules/agent-module/types";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createWorkspaceAgentResolverModule } from "./modules/workspace-agent-resolver-module";
 import { createPluginModule } from "./modules/plugin-module/module";
+import { PROJECT_AUTOMATIONS_DIR } from "./modules/plugin-module/project-automations";
 import { createScripts } from "./modules/scripts/scripts";
 import { createPollModule } from "./modules/poll-module";
 import { createWakeupModule } from "./modules/wakeup-module";
@@ -396,7 +397,9 @@ const gitWorktreeProvider = new GitWorktreeProvider(
   () => {
     const agent = agentConfig.get();
     return agent === "claude" || agent === "opencode" ? { agent } : {};
-  }
+  },
+  // A repository's default branch, checked out for its automations (plugin-module).
+  pathProvider.dataPath(PROJECT_AUTOMATIONS_DIR)
 );
 const autoUpdater = new AutoUpdater({
   logger: loggingService.createLogger("updater"),

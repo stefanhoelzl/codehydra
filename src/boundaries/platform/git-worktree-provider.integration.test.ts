@@ -158,6 +158,35 @@ describe("GitWorktreeProvider integration", () => {
       expect(discovered[0]?.name).toBe("feature-a");
     });
 
+    it("leaves CodeHydra's own checkouts out, silently, and never offers them", async () => {
+      const internal = testPath("/data/plugins/project-automations");
+      const client = gitRepo({
+        branches: ["main"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "0123abcd",
+            path: "/data/plugins/project-automations/project-1a2b/0123abcd",
+            branch: null,
+          },
+          { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
+        ],
+      });
+      const logger = createMockLogger();
+      const provider = new GitWorktreeProvider(client, mockFs, logger, () => ({}), internal);
+      await provider.validateRepository(PROJECT_ROOT);
+      provider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
+
+      expect(await provider.discover(PROJECT_ROOT)).toEqual([]);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith("Skipping unmanaged worktree", {
+        "scope.path": testPath("/tmp/wt-8fa2").toString(),
+        branch: null,
+      });
+      const offered = await provider.listUnmanagedWorktrees(PROJECT_ROOT, WORKSPACES_DIR);
+      expect(offered.map((w) => w.name)).toEqual(["wt-8fa2"]);
+    });
+
     it("names its own detached worktree after the branch its directory encodes", async () => {
       const client = gitRepo({
         branches: ["main", "feature/x"],

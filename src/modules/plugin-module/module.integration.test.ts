@@ -79,6 +79,7 @@ import type {
   DialogDismissEvent,
 } from "../../shared/dialog-types";
 import type { NotificationConfig } from "../../shared/notification-types";
+import type { Schedule } from "../../api/entries/deps";
 import {
   createMockNotificationManager,
   type MockNotificationManager,
@@ -179,6 +180,8 @@ interface TestSetup {
   readonly stdin: unknown[];
   /** Env of each script run, in order. */
   readonly envs: NodeJS.ProcessEnv[];
+  /** The directory each script ran in, in order. */
+  readonly cwds: string[];
   readonly runningHooks: RunningHook[];
   /** Inputs the registry's `log` entry was invoked with, by automations. */
   readonly logged: unknown[];
@@ -198,6 +201,8 @@ interface TestSetup {
   now: number;
   /** Lands a commit on the default branch. */
   moveBranch(commit: string, files: Record<string, string>): void;
+  /** Gives a commit another folder, outside `.codehydra/plugins`. */
+  commitFolder(commit: string, folder: string, files: Record<string, string>): void;
   /** One poll, as the timer dispatches it. */
   tick(): Promise<void>;
   killedCount(): number;
@@ -240,6 +245,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   const metadataWrites: Array<{ key: string; value: string | null }> = [];
   const ran: string[] = [];
   const envs: NodeJS.ProcessEnv[] = [];
+  const cwds: string[] = [];
   const runningHooks: RunningHook[] = [];
   const trustAnswer = options?.trustAnswer ?? { action: "remember" };
 
@@ -279,7 +285,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
 
   const outcomes = options?.outcomes ?? {};
   const processRunner = createMockProcessRunner({
-    onSpawn: (command, args, _cwd, env) => {
+    onSpawn: (command, args, cwd, env) => {
+      cwds.push(String(cwd));
       // cmd gets the script as its (quoted) command, every other shell as its last argument.
       const scriptFile = new Path(args.at(-1) ?? command.replace(/^"|"$/g, ""));
       const entry = fileSystem.$.entries.get(scriptFile.toString());
@@ -523,6 +530,12 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       repo.revisions.set(DEFAULT_BRANCH, commit);
       repo.folders.set(`${commit}:${PLUGINS_FOLDER}`, files);
     },
+    commitFolder: (commit, folder, files) => {
+      const repo = git.$.repositories.get(PROJECT_ROOT) as unknown as {
+        folders: Map<string, Record<string, string>>;
+      };
+      repo.folders.set(`${commit}:${folder}`, files);
+    },
     tick: async () => {
       await dispatcher.dispatch<PollTickIntent>({ type: INTENT_POLL_TICK, payload: {} });
     },
@@ -550,6 +563,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       );
     },
     envs,
+    cwds,
     runningHooks,
     logged,
     config,
@@ -1730,6 +1744,51 @@ describe("a repository's automations", () => {
     expect(setup.envs[0]!.CH_PLUGIN_DIR).toContain(COMMIT_A);
   });
 
+  it("run in the default branch's checkout, which holds the whole repository", async () => {
+    const setup = repositorySetup(
+      { "nightly.yaml": automation("./scripts/nightly.sh") },
+      { outcomes: { "./scripts/nightly.sh": { stdout: "[]" } } }
+    );
+    setup.commitFolder(COMMIT_A, "scripts", { "nightly.sh": "echo []" });
+
+    await setup.tick();
+
+    const checkout = new Path(setup.cwds[0]!);
+    expect(checkout.basename).toBe(COMMIT_A);
+    expect(checkout.toString()).toContain("project-automations");
+    expect(
+      setup.fileSystem.$.entries.has(new Path(checkout, "scripts", "nightly.sh").toString())
+    ).toBe(true);
+  });
+
+  it("are a worktree of the project that discovery is told to leave alone", async () => {
+    const setup = repositorySetup(
+      { "github.yaml": automation("list") },
+      { outcomes: { list: { stdout: "[]" } } }
+    );
+
+    await setup.tick();
+
+    const worktrees = await setup.git.listWorktrees(new Path(PROJECT_ROOT));
+    expect(worktrees.map((wt) => new Path(wt.path).basename)).toContain(COMMIT_A);
+  });
+
+  it("retry a branch git could not read, rather than taking it for one without plugins", async () => {
+    const setup = repositorySetup(
+      { "github.yaml": automation("list") },
+      { outcomes: { list: { stdout: "[]" } } }
+    );
+    vi.spyOn(setup.git, "hasFolder").mockRejectedValueOnce(new Error("git broke"));
+
+    await setup.tick();
+    expect(setup.ran).toEqual([]);
+    expect(setup.module.api.errors()[0]?.message).toContain("git broke");
+
+    await setup.tick();
+    expect(setup.ran).toEqual(["list"]);
+    expect(setup.module.api.errors()).toEqual([]);
+  });
+
   it("leave a plugin's hooks to the worktree", async () => {
     const setup = repositorySetup(
       { "github.yaml": hooksManifest({ "after-worktree-created": "from-branch" }) },
@@ -1773,6 +1832,13 @@ describe("a repository's automations", () => {
     expect(setup.ran).toEqual([]);
     expect(setup.dialogs).toEqual([]);
     expect(setup.module.api.errors()).toEqual([]);
+    // Nothing checked out for a branch with nothing to run.
+    expect(await setup.git.listWorktrees(new Path(PROJECT_ROOT))).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ name: COMMIT_A })])
+    );
+    expect([...setup.fileSystem.$.entries.keys()].some((key) => key.includes(COMMIT_A))).toBe(
+      false
+    );
   });
 
   it("report a broken manifest on the default branch", async () => {
@@ -1782,6 +1848,20 @@ describe("a repository's automations", () => {
 
     expect(setup.ran).toEqual([]);
     expect(setup.module.api.errors()[0]).toMatchObject({ plugin: "project:project:github" });
+  });
+
+  it("forget a broken manifest once the default branch fixes it", async () => {
+    const setup = repositorySetup(
+      { "github.yaml": "automations: [nonsense\n" },
+      { outcomes: { list: { stdout: "[]" } } }
+    );
+    await setup.tick();
+
+    setup.moveBranch(COMMIT_B, { "github.yaml": automation("list") });
+    await setup.tick();
+
+    expect(setup.module.api.errors()).toEqual([]);
+    expect(setup.ran).toEqual(["list"]);
   });
 
   it("default an item to their own project, and sign what they create by name", async () => {
@@ -1948,6 +2028,31 @@ describe("a repository's automations", () => {
       expect(tracked(setup)).toEqual([KEY]);
     });
 
+    it("stands while the plugin's question was answered no until restart", async () => {
+      const setup = repositorySetup(
+        { "github.yaml": automation("x") },
+        { tracking: TRACKING, untrusted: true, trustAnswer: { action: "", dismiss: true } }
+      );
+
+      await setup.tick();
+      await settle();
+      await setup.tick();
+
+      expect(setup.ran).toEqual([]);
+      expect(tracked(setup)).toEqual([KEY]);
+    });
+
+    it("goes when the plugin is disabled for good", async () => {
+      const setup = repositorySetup(
+        { "github.yaml": automation("x") },
+        { tracking: TRACKING, pluginsEnabled: { [TRUST_KEY("github")]: false } }
+      );
+
+      await setup.tick();
+
+      expect(tracked(setup)).toEqual([]);
+    });
+
     it("goes when the automation is removed from an open project", async () => {
       const setup = repositorySetup(
         { "github.yaml": automation("x") },
@@ -2060,49 +2165,34 @@ describe("a repository's automations", () => {
 });
 
 describe("schedule", () => {
-  const scheduled = (expression: string, script = "list"): string =>
-    `automations:\n  a:\n    schedule: "${expression}"\n    script: ${script}\n`;
+  const scheduled = (schedule: string, script = "list"): string =>
+    `automations:\n  a:\n    schedule: ${schedule}\n    script: ${script}\n`;
   const OK = { list: { stdout: "[]" } };
+  const HOUR = 60 * 60_000;
 
-  it("does not run at startup", async () => {
-    const setup = createTestSetup({ local: { "n.yaml": scheduled("0 3 * * *") }, outcomes: OK });
-
-    await setup.tick();
-
-    expect(setup.ran).toEqual([]);
-  });
-
-  it("runs at the first poll after a time it names, then waits for the next", async () => {
-    const setup = createTestSetup({ local: { "n.yaml": scheduled("0 13 * * *") }, outcomes: OK });
-    setup.now = new Date("2026-03-10T12:59:00").getTime();
-    await setup.tick();
-
-    setup.now = new Date("2026-03-10T12:59:59").getTime();
-    await setup.tick();
-    expect(setup.ran).toEqual([]);
-
-    setup.now = new Date("2026-03-10T13:00:20").getTime();
+  it("runs at the first poll after the app starts, then waits its interval", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled("hourly") }, outcomes: OK });
     await setup.tick();
     expect(setup.ran).toEqual(["list"]);
 
-    setup.now = new Date("2026-03-10T13:01:20").getTime();
+    setup.now += HOUR - 1000;
     await setup.tick();
     expect(setup.ran).toEqual(["list"]);
 
-    setup.now = new Date("2026-03-11T13:00:10").getTime();
+    setup.now += 1000;
     await setup.tick();
     expect(setup.ran).toEqual(["list", "list"]);
   });
 
-  it("gives one run for several times passing between polls", async () => {
-    const setup = createTestSetup({ local: { "n.yaml": scheduled("* * * * *") }, outcomes: OK });
+  it("runs once at the first poll after a long sleep, not once per interval missed", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled("daily") }, outcomes: OK });
     await setup.tick();
 
-    setup.now += 10 * 60_000;
+    setup.now += 3 * 24 * HOUR;
     await setup.tick();
     await setup.tick();
 
-    expect(setup.ran).toEqual(["list"]);
+    expect(setup.ran).toEqual(["list", "list"]);
   });
 
   it("leaves an automation without one running every poll", async () => {
@@ -2114,8 +2204,8 @@ describe("schedule", () => {
     expect(setup.ran).toEqual(["list", "list"]);
   });
 
-  it("starts afresh after being disabled, not making up for the time", async () => {
-    const setup = createTestSetup({ local: { "n.yaml": scheduled("* * * * *") }, outcomes: OK });
+  it("keeps its wait while disabled, so enabling it again does not run it early", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled("hourly") }, outcomes: OK });
     await setup.tick();
 
     await setup.module.api.setState({ workspace: null }, "local:default:n", "disabled");
@@ -2124,36 +2214,46 @@ describe("schedule", () => {
     await setup.module.api.setState({ workspace: null }, "local:default:n", "enabled");
     await setup.tick();
 
-    expect(setup.ran).toEqual([]);
+    expect(setup.ran).toEqual(["list"]);
   });
 
   it("keeps a failing automation's card between its runs", async () => {
     const setup = createTestSetup({
-      local: { "n.yaml": scheduled("* * * * *") },
+      local: { "n.yaml": scheduled("hourly") },
       outcomes: { list: { exitCode: 1 } },
     });
-    await setup.startApp();
-
-    setup.now += 2 * 60_000;
     await setup.tick();
     expect(setup.module.api.errors()).toHaveLength(1);
 
+    setup.now += 60_000;
     await setup.tick();
+    expect(setup.ran).toEqual(["list"]);
     expect(setup.module.api.errors()).toHaveLength(1);
     expect(setup.cards.notifications.every((card) => !card.closed)).toBe(true);
   });
 
-  it("reports an invalid one as a problem", async () => {
-    const setup = createTestSetup({ local: { "n.yaml": scheduled("0 * * * * *") } });
+  it("lists when it runs next: now until it has run, then a wait after", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled("hourly") }, outcomes: OK });
+    const nextRun = async (): Promise<string | undefined> =>
+      (await setup.module.api.automations())[0]?.nextRun;
+
+    expect(await nextRun()).toBe(new Date(setup.now).toISOString());
+    const ranAt = setup.now;
+    await setup.tick();
+    expect(await nextRun()).toBe(new Date(ranAt + HOUR).toISOString());
+  });
+
+  it("reports one that is not an interval as a problem", async () => {
+    const setup = createTestSetup({ local: { "n.yaml": scheduled('"0 3 * * *"') } });
 
     await setup.tick();
 
     expect(setup.ran).toEqual([]);
-    expect(setup.module.api.errors()[0]?.message).toContain("5 fields");
+    expect(setup.module.api.errors()[0]?.message).toMatch(/schedule: .*hourly/);
   });
 });
 
-describe("ch automation", () => {
+describe("ch plugin automation", () => {
   const NOWHERE = { workspace: null };
   const IN_WORKSPACE = {
     workspace: {
@@ -2192,13 +2292,13 @@ describe("ch automation", () => {
   it("add writes a schedule", async () => {
     const setup = createTestSetup();
 
-    await setup.module.api.addAutomation(NOWHERE, { ...request, schedule: "0 3 * * *" });
+    await setup.module.api.addAutomation(NOWHERE, { ...request, schedule: "daily" });
 
     const rows = await setup.module.api.automations();
     expect(rows).toEqual([
       expect.objectContaining({
         automation: "local:default:reviews/reviews",
-        schedule: "0 3 * * *",
+        schedule: "daily",
         state: "enabled",
         nextRun: expect.any(String),
       }),
@@ -2209,7 +2309,7 @@ describe("ch automation", () => {
     const setup = createTestSetup();
 
     await expect(
-      setup.module.api.addAutomation(NOWHERE, { ...request, schedule: "soon" })
+      setup.module.api.addAutomation(NOWHERE, { ...request, schedule: "soon" as Schedule })
     ).rejects.toMatchObject({ category: "usage" });
 
     expect(contentOf(setup, new Path(LOCAL_PLUGINS, "reviews.yaml"))).toBeUndefined();
@@ -2302,6 +2402,22 @@ describe("ch automation", () => {
     await expect(
       setup.module.api.removeAutomation(NOWHERE, "reviews", false)
     ).rejects.toMatchObject({ category: "usage", message: expect.stringContaining("tools.yaml") });
+  });
+
+  it("remove points at the plugin named like the automation, of several sources having it", async () => {
+    const setup = createTestSetup({
+      sources: `work:\n  path: ${testPath("/work").toString()}\n`,
+      folders: {
+        [testPath("/work").toString()]: {
+          "tools.yaml": "automations:\n  reviews: x\n",
+          "reviews.yaml": "automations:\n  reviews: y\n",
+        },
+      },
+    });
+
+    await expect(
+      setup.module.api.removeAutomation(NOWHERE, "reviews", false)
+    ).rejects.toMatchObject({ message: expect.stringContaining("reviews.yaml") });
   });
 
   it("remove says when there is no such automation", async () => {

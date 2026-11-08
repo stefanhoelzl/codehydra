@@ -300,53 +300,14 @@ export class SimpleGitClient implements IGitClient {
     this.logger.scoped({ path: worktreePath.toString() }).debug("AddDetachedWorktree", { commit });
   }
 
-  async exportFolder(
-    repoPath: Path,
-    commit: string,
-    folder: string,
-    destination: Path,
-    indexFile: Path
-  ): Promise<boolean> {
-    const tree = await this.folderTree(repoPath, commit, folder);
-    if (tree === null) return false;
-    await this.wrapGitOperation(async () => {
-      // An index of its own, so the repository's is never touched, and a work
-      // tree of its own, which a bare repository does not otherwise have.
-      const git = this.getGit(repoPath, {
-        GIT_INDEX_FILE: indexFile.toNative(),
-        GIT_WORK_TREE: destination.toNative(),
-      });
-      await git.raw(["read-tree", tree]);
-      await git.raw(["checkout-index", "--all", "--force"]);
-    }, `Failed to export ${folder} of ${commit}`);
-    this.logger.scoped({ path: destination.toString() }).debug("ExportFolder", { commit, folder });
-    return true;
-  }
-
-  /** The tree a commit holds at a path; null when the path is absent or not a folder. */
-  private async folderTree(repoPath: Path, commit: string, folder: string): Promise<string | null> {
-    const git = this.getGit(repoPath);
-    let id: string;
-    try {
-      id = (
-        await git.raw([
-          "rev-parse",
-          "--verify",
-          "--quiet",
-          "--end-of-options",
-          `${commit}^{commit}:${folder}`,
-        ])
-      ).trim();
-    } catch {
-      // --verify --quiet exits 1 for a revision that names nothing: no such folder.
-      return null;
-    }
-    if (id === "") return null;
-    const kind = await this.wrapGitOperation(
-      () => git.raw(["cat-file", "-t", id]),
-      `Failed to read ${folder} of ${commit}`
+  async hasFolder(repoPath: Path, commit: string, folder: string): Promise<boolean> {
+    // An absent path lists nothing and exits 0, so only a real failure throws.
+    // -d lists the folder itself rather than what it holds, and skips a file.
+    const listed = await this.wrapGitOperation(
+      () => this.getGit(repoPath).raw(["ls-tree", "-d", `${commit}^{commit}`, "--", folder]),
+      `Failed to look for ${folder} in ${commit}`
     );
-    return kind.trim() === "tree" ? id : null;
+    return listed.split("\n").some((line) => /^\d+ tree /.test(line));
   }
 
   async removeWorktree(repoPath: Path, worktreePath: Path): Promise<void> {

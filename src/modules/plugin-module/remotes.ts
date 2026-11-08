@@ -12,7 +12,8 @@
  * checks it out beside the old one and then switches `current`, so a script
  * already running keeps the tree it started in: it holds a lease
  * (`acquire`), and a tree is removed only once it is neither current nor
- * leased. Nothing is ever updated in place.
+ * leased. Nothing is ever updated in place. The trees themselves are
+ * commit-trees.ts's, shared with a repository's default branch.
  *
  * When fetching happens is deliberate: once at app start (in the background),
  * when an entry is new or its ref changed, and when the user asks
@@ -29,11 +30,11 @@ import { createHash } from "node:crypto";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { IGitClient } from "../../boundaries/platform/git-client";
 import type { Logger } from "../../boundaries/platform/logging-types";
-import { FileSystemError } from "../../shared/errors/service-errors";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
 import { expandGitUrl, normalizeGitUrl } from "../../utils/url-utils";
 import { safeJsonParse, isPlainObject } from "./util";
+import { createCommitTrees, directoryExists } from "./commit-trees";
 
 /** What a remote source needs to be checked out. */
 export interface RemoteSpec {
@@ -149,33 +150,15 @@ export function createRemoteCheckouts(deps: RemoteCheckoutsDeps): RemoteCheckout
   const currents = new Map<string, Current>();
   /** Failures and clones in progress, by remote directory. */
   const statuses = new Map<string, RemoteStatus>();
-  /** One git operation per remote at a time. */
-  const queues = new Map<string, Promise<unknown>>();
   /** The work a remote has queued, so a second ask joins it. */
   const pending = new Map<string, Promise<RemoteStatus>>();
   /** The ref whose last attempt failed, by remote directory. */
   const failedRefs = new Map<string, string | null>();
-  /** Scripts running in each tree. */
-  const leases = new Map<string, number>();
+  /** Its checkouts; one git operation per remote at a time, by its directory. */
+  const trees = createCommitTrees(deps);
 
   const dirOf = (spec: RemoteSpec): Path => new Path(deps.root, remoteDirName(spec));
   const treeOf = (dir: Path, commit: string): Path => new Path(dir, TREES_DIR, commit);
-
-  function serialize<T>(dir: Path, work: () => Promise<T>): Promise<T> {
-    const key = dir.toString();
-    const previous = queues.get(key) ?? Promise.resolve();
-    const next = previous.then(work, work);
-    const tail = next.then(
-      () => undefined,
-      () => undefined
-    );
-    queues.set(key, tail);
-    // An idle remote has no queue: what is queued is what is busy.
-    void tail.then(() => {
-      if (queues.get(key) === tail) queues.delete(key);
-    });
-    return next;
-  }
 
   async function readCurrent(dir: Path): Promise<Current | undefined> {
     const known = currents.get(dir.toString());
@@ -189,16 +172,6 @@ export function createRemoteCheckouts(deps: RemoteCheckoutsDeps): RemoteCheckout
     const current = parseCurrent(text);
     if (current !== undefined) currents.set(dir.toString(), current);
     return current;
-  }
-
-  async function exists(path: Path): Promise<boolean> {
-    try {
-      await deps.fileSystem.readdir(path);
-      return true;
-    } catch (error) {
-      if (error instanceof FileSystemError && error.fsCode === "ENOENT") return false;
-      throw error;
-    }
   }
 
   /** The revisions a ref may name in a bare clone, most likely first. */
@@ -222,34 +195,12 @@ export function createRemoteCheckouts(deps: RemoteCheckoutsDeps): RemoteCheckout
   }
 
   /** Remove trees that are neither current nor leased. Best-effort. */
-  async function prune(dir: Path): Promise<void> {
-    const current = currents.get(dir.toString());
-    const repo = new Path(dir, REPO_DIR);
-    let entries;
-    try {
-      entries = await deps.fileSystem.readdir(new Path(dir, TREES_DIR));
-    } catch {
-      return;
-    }
-    let removed = false;
-    for (const entry of entries) {
-      if (!entry.isDirectory || entry.name === current?.commit) continue;
-      const tree = treeOf(dir, entry.name);
-      if ((leases.get(tree.toString()) ?? 0) > 0) continue;
-      try {
-        // git forgets the checkout (and removes it); whatever it leaves goes too.
-        await deps.git.removeWorktree(repo, tree).catch(() => undefined);
-        await deps.fileSystem.rm(tree, { recursive: true, force: true });
-        removed = true;
-      } catch (error) {
-        deps.logger
-          .scoped({ path: tree.toString() })
-          .warn("Could not remove an old plugin tree", { error: getErrorMessage(error) });
-      }
-    }
-    if (removed) {
-      await deps.git.pruneWorktrees(repo).catch(() => undefined);
-    }
+  function prune(dir: Path): Promise<void> {
+    return trees.prune(
+      new Path(dir, REPO_DIR),
+      new Path(dir, TREES_DIR),
+      currents.get(dir.toString())?.commit
+    );
   }
 
   /** Clone or fetch, resolve the ref, check its commit out and make it current. */
@@ -258,7 +209,7 @@ export function createRemoteCheckouts(deps: RemoteCheckoutsDeps): RemoteCheckout
     const repo = new Path(dir, REPO_DIR);
     const previous = await readCurrent(dir);
     try {
-      if (!(await exists(repo))) {
+      if (!(await directoryExists(deps.fileSystem, repo))) {
         statuses.set(dir.toString(), { state: "cloning" });
         await deps.fileSystem.mkdir(dir);
         try {
@@ -273,11 +224,7 @@ export function createRemoteCheckouts(deps: RemoteCheckoutsDeps): RemoteCheckout
       }
 
       const commit = await resolve(repo, spec.ref);
-      const tree = treeOf(dir, commit);
-      if (!(await exists(tree))) {
-        await deps.fileSystem.mkdir(new Path(dir, TREES_DIR));
-        await deps.git.addDetachedWorktree(repo, tree, commit);
-      }
+      await trees.checkout(repo, new Path(dir, TREES_DIR), commit);
       const current: Current = { commit, ref: spec.ref ?? null, fetchedAt: now().toISOString() };
       await deps.fileSystem.writeFile(new Path(dir, CURRENT_FILE), JSON.stringify(current));
       currents.set(dir.toString(), current);
@@ -309,7 +256,8 @@ export function createRemoteCheckouts(deps: RemoteCheckoutsDeps): RemoteCheckout
     const key = `${dir.toString()}\0${spec.ref ?? ""}`;
     const queued = pending.get(key);
     if (queued !== undefined) return queued;
-    const work = serialize(dir, () => fetchAndSwitch(spec, fetch))
+    const work = trees
+      .serialize(dir, () => fetchAndSwitch(spec, fetch))
       .then((status) => {
         deps.onResult?.(spec, status);
         return status;
@@ -370,10 +318,7 @@ export function createRemoteCheckouts(deps: RemoteCheckoutsDeps): RemoteCheckout
       for (const entry of entries) {
         if (!entry.isDirectory || keep.has(entry.name)) continue;
         const dir = new Path(deps.root, entry.name);
-        const busy = [...leases.entries()].some(
-          ([tree, count]) => count > 0 && new Path(tree).isChildOf(dir)
-        );
-        if (busy || queues.has(dir.toString())) continue;
+        if (trees.leased(dir) || trees.busy(dir)) continue;
         try {
           await deps.fileSystem.rm(dir, { recursive: true, force: true });
           currents.delete(dir.toString());
@@ -389,21 +334,10 @@ export function createRemoteCheckouts(deps: RemoteCheckoutsDeps): RemoteCheckout
     },
     status: statusOf,
     acquire(tree) {
-      const key = tree.toString();
-      leases.set(key, (leases.get(key) ?? 0) + 1);
-      let released = false;
-      return () => {
-        if (released) return;
-        released = true;
-        const left = (leases.get(key) ?? 1) - 1;
-        if (left > 0) {
-          leases.set(key, left);
-          return;
-        }
-        leases.delete(key);
+      return trees.acquire(tree, () => {
         const dir = tree.dirname.dirname;
-        void serialize(dir, () => prune(dir));
-      };
+        void trees.serialize(dir, () => prune(dir));
+      });
     },
   };
 }

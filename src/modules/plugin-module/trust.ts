@@ -96,7 +96,11 @@ export interface PluginTrust {
   /**
    * The same answer for something that must not wait and runs again and again:
    * an automation. What is enabled, or was allowed until restart, may run;
-   * anything unanswered is `waiting`, and asked about in the background.
+   * anything unanswered is asked about in the background.
+   *
+   * `held` is what may not run now but has no lasting answer either: unanswered,
+   * or answered no until restart. Its automations keep what they track, since a
+   * later yes picks them up where they were.
    *
    * "Just this time" holds until restart here, and a dismissal or an unchecked
    * box counts as no until then: a poll comes round every minute, and would
@@ -105,7 +109,7 @@ export interface PluginTrust {
   checkNow(
     project: TrustProject,
     plugins: readonly string[]
-  ): { readonly allowed: ReadonlySet<string>; readonly waiting: ReadonlySet<string> };
+  ): { readonly allowed: ReadonlySet<string>; readonly held: ReadonlySet<string> };
   /**
    * Bring answers stored by older versions to today's keys: `local:<name>` is
    * the default folder's (`local:default:<name>`), `workspace:` is `project:`,
@@ -322,9 +326,9 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
   function checkNow(
     project: TrustProject,
     plugins: readonly string[]
-  ): { readonly allowed: ReadonlySet<string>; readonly waiting: ReadonlySet<string> } {
+  ): { readonly allowed: ReadonlySet<string>; readonly held: ReadonlySet<string> } {
     const allowed = new Set<string>();
-    const waiting = new Set<string>();
+    const held = new Set<string>();
     const unasked: string[] = [];
     const keyOf = (name: string): string => trustKey(PROJECT_SOURCE, name, project.ref);
 
@@ -333,9 +337,12 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
       if (current === "enabled") allowed.add(name);
       if (current !== "ask") continue;
       const answer = untilRestart.get(keyOf(name));
-      if (answer === true) allowed.add(name);
-      if (answer !== undefined) continue;
-      waiting.add(name);
+      if (answer === true) {
+        allowed.add(name);
+        continue;
+      }
+      held.add(name);
+      if (answer === false) continue;
       if (!beingAsked.has(keyOf(name))) unasked.push(name);
     }
 
@@ -354,7 +361,7 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
           for (const name of unasked) beingAsked.delete(keyOf(name));
         });
     }
-    return { allowed, waiting };
+    return { allowed, held };
   }
 
   return {

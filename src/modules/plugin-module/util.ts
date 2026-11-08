@@ -32,6 +32,17 @@ export function describeIssue(issue: z.core.$ZodIssue, noun: string, hint?: stri
     // key in record"; the reason is on the key's own issues.
     return `${at}${issue.issues.map((keyIssue) => keyIssue.message).join("; ")}`;
   }
+  if (issue.code === "invalid_union") {
+    // "Invalid input" names nothing: say what the alternative that got furthest
+    // (a script, or an object with a schedule) found wrong, at its own path.
+    const deepest = issue.errors
+      .map((issues) => issues[0])
+      .filter((inner) => inner !== undefined)
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    if (deepest !== undefined && deepest.path.length > 0) {
+      return describeIssue({ ...deepest, path: [...issue.path, ...deepest.path] }, noun, hint);
+    }
+  }
   if (issue.code === "unrecognized_keys") {
     const keys = issue.keys.join(", ");
     const suffix = hint === undefined ? "" : ` (${hint})`;
