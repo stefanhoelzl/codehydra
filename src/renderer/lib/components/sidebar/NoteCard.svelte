@@ -262,10 +262,11 @@
     border-radius: 2px;
     transition: width 0.15s linear;
   }
-  /* Stepped on the spinners' clock (spin-clock.ts): ~4 frames a second, not one per vsync. */
+  /* Stepped on the spinners' clock (spin-clock.ts): 8 frames a second, landing
+     on the spinners' frames, not one per vsync. */
   .bar.indet > i {
     width: 35%;
-    animation: indet 2s steps(8) infinite;
+    animation: indet 2s steps(16) infinite;
   }
   @keyframes indet {
     from {
