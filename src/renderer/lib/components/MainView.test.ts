@@ -220,6 +220,24 @@ describe("MainView component", () => {
 
       expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "set-sidebar-mode", mode: "docked" });
     });
+
+    it("the speaker button shows the silent state and emits the set-silent ui:event", async () => {
+      renderMainView();
+      await pushState(makeUiState([]));
+
+      const mute = screen.getByRole("button", { name: "Mute chime" });
+      expect(mute).toHaveAttribute("aria-pressed", "true");
+      expect(mute).toHaveClass("on");
+      await fireEvent.click(mute);
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "set-silent", silent: true });
+
+      await pushState({ ...makeUiState([]), silent: true });
+      const unmute = await screen.findByRole("button", { name: "Unmute chime" });
+      expect(unmute).toHaveAttribute("aria-pressed", "false");
+      expect(unmute).not.toHaveClass("on");
+      await fireEvent.click(unmute);
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "set-silent", silent: false });
+    });
   });
 
   describe("actions", () => {

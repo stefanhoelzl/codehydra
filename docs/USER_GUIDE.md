@@ -128,8 +128,9 @@ Projects are sorted by name.
   follows the drag.
 - The **footer** counts all workspaces by [status](#status-indicators), and has
   **+** (New workspace), the **pulse** (process summary, below), the **dock**
-  button, the **gear** (settings) and **?** (this guide). Hover any sidebar icon
-  for what it does.
+  button, the **speaker** (mute the [sound](#notifications-and-updates)), the
+  **gear** (settings) and **?** (this guide). Hover any sidebar icon for what it
+  does.
 - The **process summary** shows the CPU, memory and number of processes of what
   each workspace runs, e.g. `12% · 874M · 7`, on the second line of each awake
   row. A bar above the footer shows all of CodeHydra, each number
@@ -437,7 +438,9 @@ failed panel means Dismiss.
 ### Notifications and updates
 
 - **Sound** — played when a workspace's idle count goes up (including an agent
-  that reports idle when it first connects). Mute it with `silent`.
+  that reports idle when it first connects). Mute it with the speaker button in
+  the sidebar's footer (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>M</kbd>); the
+  choice is saved as `silent`.
 - **OS notifications** — "CodeHydra agent needs your attention", only while the
   CodeHydra window is not focused; clicking one brings the window forward and
   switches to that workspace. By default only the first agent to finish while
@@ -481,6 +484,7 @@ holding <kbd>Alt</kbd> while you press:
 | <kbd>C</kbd>                             | Collapse / expand the active workspace's project                                 |
 | <kbd>D</kbd>                             | Dock / undock the sidebar                                                        |
 | <kbd>P</kbd>                             | Show / hide the process summary in the sidebar                                   |
+| <kbd>M</kbd>                             | Mute / unmute the sound played when an agent goes idle                           |
 | <kbd>S</kbd>                             | Open settings                                                                    |
 | <kbd>B</kbd>                             | Report a bug (also works while a dialog is open)                                 |
 | <kbd>Escape</kbd>                        | Leave shortcut mode                                                              |

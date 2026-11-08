@@ -154,6 +154,15 @@ describe("ShortcutOverlay component", () => {
       render(ShortcutOverlay, { props: { active: true, sidebarDocked: true } });
       expect(screen.getByLabelText("D key to undock the sidebar")).toHaveTextContent("Undock");
     });
+
+    it("labels the M hint with the mute action the key would take", () => {
+      const { unmount } = render(ShortcutOverlay, { props: { active: true } });
+      expect(screen.getByLabelText("M key to mute the chime")).toHaveTextContent("Mute");
+      unmount();
+
+      render(ShortcutOverlay, { props: { active: true, silent: true } });
+      expect(screen.getByLabelText("M key to unmute the chime")).toHaveTextContent("Unmute");
+    });
   });
 
   describe("styling", () => {

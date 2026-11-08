@@ -47,6 +47,8 @@ export interface ShortcutNavigationDeps {
   readonly toggleSidebarMode: () => void;
   /** Show/hide each row's CPU and memory (`sidebar.process-summary`). */
   readonly toggleProcessSummary: () => void;
+  /** Mute/unmute the idle chime (config `silent`, m key). */
+  readonly toggleSilent: () => void;
 }
 
 /** Awake and switchable: neither hibernated nor a still-creating placeholder. */
@@ -198,6 +200,9 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
         break;
       case "d":
         deps.toggleSidebarMode();
+        break;
+      case "m":
+        deps.toggleSilent();
         break;
       default:
         if (/^[0-9]$/.test(key)) handleJump(key as JumpKey);

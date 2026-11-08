@@ -1519,6 +1519,23 @@ describe("PresentationModule - sidebar resize", () => {
     expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
   });
 
+  it("persists a set-silent event and echoes it in the next snapshot", async () => {
+    const deps = createDeps();
+    await startModule(deps);
+    expect(lastSnapshot(deps).silent).toBe(false);
+
+    emitUiEvent(deps, { kind: "set-silent", silent: true });
+    await flush();
+
+    expect(deps.configService.getEffective()["silent"]).toBe(true);
+    expect(lastSnapshot(deps).silent).toBe(true);
+
+    emitUiEvent(deps, { kind: "set-silent", silent: false });
+    await flush();
+
+    expect(lastSnapshot(deps).silent).toBe(false);
+  });
+
   describe("process summary", () => {
     it("is off by default: no polling, no totals on the rows", async () => {
       const deps = createDeps();
@@ -3400,6 +3417,21 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "d");
     await flush();
     expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
+  });
+
+  it("m toggles silent on and off", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    expect(lastSnapshot(deps).silent).toBe(false);
+
+    await key(module, "m");
+    await flush();
+    expect(lastSnapshot(deps).silent).toBe(true);
+    expect(deps.configService.getEffective()["silent"]).toBe(true);
+
+    await key(module, "m");
+    await flush();
+    expect(lastSnapshot(deps).silent).toBe(false);
   });
 
   it("t cycles the active project's hibernated view: hidden, manual, all, hidden", async () => {

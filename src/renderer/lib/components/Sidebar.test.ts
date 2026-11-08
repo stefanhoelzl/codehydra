@@ -478,7 +478,7 @@ describe("Sidebar", () => {
       ]);
     });
 
-    it("the footer opens the form, shows processes, docks, opens settings and help", async () => {
+    it("the footer opens the form, shows processes, docks, mutes, opens settings and help", async () => {
       const { container } = setup({ projects: sampleProjects() });
       for (const button of container.querySelectorAll(".sb-foot button")) {
         await fireEvent.click(button);
@@ -487,6 +487,7 @@ describe("Sidebar", () => {
         { kind: "open-new-workspace", projectId: null },
         { kind: "set-sidebar-process-summary", mode: "total" },
         { kind: "set-sidebar-mode", mode: "overlay" },
+        { kind: "set-silent", silent: true },
         { kind: "open-settings" },
         { kind: "open-help" },
       ]);
