@@ -173,6 +173,7 @@
     sidebarWidth={ui.sidebar.width}
     onRenderedWidthChange={(width) => (sidebarRenderedWidth = width)}
     sidebarMode={ui.sidebar.mode}
+    silent={ui.silent}
     find={ui.sidebar.find}
     processSummary={ui.sidebar.processSummary}
     processLevel={ui.sidebar.processLevel}
@@ -196,6 +197,7 @@
     activeCollapsed={activeCollapsedForC}
     sidebarDocked={ui.sidebar.mode === "docked"}
     processSummary={ui.sidebar.processSummary !== "off"}
+    silent={ui.silent}
   />
 
   <!-- Creation panel ("modeless"): the backend creation module's always-alive

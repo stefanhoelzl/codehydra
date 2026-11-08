@@ -13,6 +13,8 @@
     | "help"
     | "docked"
     | "undocked"
+    | "speaker"
+    | "speaker-muted"
     | "trash"
     | "warn"
     | "branch"
@@ -73,6 +75,14 @@
     /><path d="M6 3v10" />
   {:else if name === "undocked"}
     <rect x="2" y="3" width="12" height="10" rx="2" /><path d="M6 3v10" />
+  {:else if name === "speaker"}
+    <!-- A speaker cone with two sound waves: the idle chime plays. -->
+    <path d="M2.5 6h2.5L8.5 3v10L5 10H2.5z" /><path
+      d="M10.5 6a2.5 2.5 0 0 1 0 4M12 4.2a5 5 0 0 1 0 7.6"
+    />
+  {:else if name === "speaker-muted"}
+    <!-- The speaker cone with a cross: the idle chime is muted. -->
+    <path d="M2.5 6h2.5L8.5 3v10L5 10H2.5z" /><path d="M10.5 6.2l3.3 3.6M13.8 6.2l-3.3 3.6" />
   {:else if name === "trash"}
     <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" />
   {:else if name === "warn"}

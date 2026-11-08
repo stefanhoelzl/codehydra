@@ -60,6 +60,10 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // `sidebar.mode` config key and echoes it back in the snapshot. The Alt+X+D
   // shortcut toggles the same key via the shortcut-key domain event.
   z.object({ kind: z.literal("set-sidebar-mode"), mode: z.enum(SIDEBAR_MODES) }),
+  // Mute or unmute the idle chime (the footer's speaker button). The presenter
+  // writes the `silent` config key and echoes it back in the snapshot. The
+  // Alt+X+M shortcut toggles the same key via the shortcut-key domain event.
+  z.object({ kind: z.literal("set-silent"), silent: z.boolean() }),
   // Set the process summary's mode (the footer's pulse button, the process
   // bar's level buttons). The presenter writes the `sidebar.process-summary`
   // config key, which also starts or stops the process monitor's polling, and

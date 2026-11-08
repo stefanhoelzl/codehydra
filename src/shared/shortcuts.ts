@@ -38,6 +38,7 @@ export const SHORTCUT_KEYS = [
   "f",
   "d",
   "p",
+  "m",
   "0",
   "1",
   "2",

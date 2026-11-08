@@ -532,7 +532,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   // Read at snapshot-build time, so flipping it re-pushes
   // ui:state and the very next chime is suppressed — no restart, and the
-  // renderer never caches the value.
+  // renderer never caches the value. The footer's speaker button (set-silent
+  // ui:event) and Alt+X+M write it.
   const silentConfig = deps.configService.register("silent", {
     default: false,
     description: "Silence the audible notification played when an agent goes idle",
@@ -699,6 +700,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     toggleSidebarMode: () =>
       setSidebarMode(sidebarModeConfig.get() === "docked" ? "overlay" : "docked"),
     toggleProcessSummary: () => processBar.toggle(),
+    toggleSilent: () => setSilent(!silentConfig.get()),
   });
 
   /** Whether a workspace's IDE frame is in the snapshot's `frames` region. */
@@ -1234,6 +1236,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       case "set-sidebar-mode":
         setSidebarMode(event.mode);
         return;
+      case "set-silent":
+        setSilent(event.silent);
+        return;
       case "set-sidebar-process-summary":
         processBar.setMode(event.mode);
         return;
@@ -1424,6 +1429,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   function setSidebarMode(mode: SidebarMode): void {
     void sidebarModeConfig.set(mode).catch((error: unknown) => {
       logger.warn("Failed to persist sidebar mode", { error: getErrorMessage(error) });
+    });
+    scheduleUpdate();
+  }
+
+  function setSilent(silent: boolean): void {
+    void silentConfig.set(silent).catch((error: unknown) => {
+      logger.warn("Failed to persist silent", { error: getErrorMessage(error) });
     });
     scheduleUpdate();
   }

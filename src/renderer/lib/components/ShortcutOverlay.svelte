@@ -19,10 +19,12 @@
      * collapsed; null hides the hint (no active workspace, or Find is open).
      */
     activeCollapsed?: boolean | null;
-    /** Whether the sidebar shows each row's CPU and memory (drives the M hint label). */
+    /** Whether the sidebar shows each row's CPU and memory (drives the P hint label). */
     processSummary?: boolean;
-    /** Whether the sidebar is docked (drives the P hint label). */
+    /** Whether the sidebar is docked (drives the D hint label). */
     sidebarDocked?: boolean;
+    /** Whether the idle chime is muted (drives the M hint label). */
+    silent?: boolean;
   }
 
   let {
@@ -36,6 +38,7 @@
     activeCollapsed = null,
     sidebarDocked = false,
     processSummary = false,
+    silent = false,
   }: Props = $props();
 
   // When there's no active workspace (e.g. the New workspace view is the
@@ -150,6 +153,13 @@
   >
     <vscode-badge>P</vscode-badge>
     {processSummary ? "Hide processes" : "Show processes"}
+  </span>
+  <span
+    class="shortcut-hint"
+    aria-label={silent ? "M key to unmute the chime" : "M key to mute the chime"}
+  >
+    <vscode-badge>M</vscode-badge>
+    {silent ? "Unmute" : "Mute"}
   </span>
   <span class="shortcut-hint" aria-label="S key to open settings">
     <vscode-badge>S</vscode-badge> Settings

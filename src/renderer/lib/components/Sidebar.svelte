@@ -68,6 +68,8 @@
     onRenderedWidthChange?: (width: number) => void;
     /** Overlay (expands over the workspace) or docked (always expanded). */
     sidebarMode?: SidebarMode;
+    /** Whether the idle chime is muted (config `silent`). */
+    silent?: boolean;
     /** Main's Find state (null while the Find field does not have the focus). */
     find?: UiSidebarFind | null;
     /** Open sidebar notifications from the snapshot. */
@@ -98,6 +100,7 @@
     sidebarWidth,
     onRenderedWidthChange,
     sidebarMode = "overlay",
+    silent = false,
     find = null,
     notifications,
     mode = "workspace",
@@ -754,6 +757,16 @@
         onclick={() =>
           api.emitEvent({ kind: "set-sidebar-mode", mode: docked ? "overlay" : "docked" })}
         ><SidebarIcon name={docked ? "docked" : "undocked"} /></button
+      >
+      <button
+        type="button"
+        class="ib"
+        class:on={!silent}
+        title={`${silent ? "Unmute" : "Mute"} chime (Alt+X, M)`}
+        aria-label={silent ? "Unmute chime" : "Mute chime"}
+        aria-pressed={!silent}
+        onclick={() => api.emitEvent({ kind: "set-silent", silent: !silent })}
+        ><SidebarIcon name={silent ? "speaker-muted" : "speaker"} /></button
       >
       <button
         type="button"

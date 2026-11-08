@@ -58,7 +58,7 @@ Default `off` · `presentation/process-bar.ts`. `off` | `total` | `breakdown` | 
 
 #### `silent`
 
-Default `false` · `presentation-module.ts`. Silence the audible chime played when an agent goes idle. `appctrl` always launches the app with `--silent=true --notification=disabled` (`DRIVER_APP_ARGS`, `scripts/appctrl.ts`). Live.
+Default `false` · `presentation-module.ts`. Silence the audible chime played when an agent goes idle. Written by the sidebar footer's speaker button (`set-silent` ui:event) and <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>M</kbd>; under a `--silent` / `CH_SILENT` override they still apply for the session, and the override wins again at the next start. `appctrl` always launches the app with `--silent=true --notification=disabled` (`DRIVER_APP_ARGS`, `scripts/appctrl.ts`). Live.
 
 #### `notification`
 
