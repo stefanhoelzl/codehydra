@@ -605,7 +605,13 @@ then <kbd>S</kbd>). Keys are grouped by their first segment; dotless keys are
 under **General**.
 
 - Edits are buffered: **Save**, **Save & Restart** (saves, then relaunches) or
-  **Cancel**. Save is disabled while a field is invalid.
+  **Cancel** (or <kbd>Escape</kbd>). Save is disabled while a field is invalid.
+- To search, just start typing (or press <kbd>Ctrl</kbd>+<kbd>F</kbd> /
+  <kbd>Cmd</kbd>+<kbd>F</kbd>, which also works inside a text field): a search
+  box appears and only matching settings stay visible. Every word must appear in
+  the setting's name, description or options, or in its group's name — typing a
+  group name shows the whole group. Hidden settings keep your unsaved edits.
+  <kbd>Escape</kbd> clears the search; a second <kbd>Escape</kbd> cancels.
 - A key that only takes effect after a restart says **Restart to apply** once
   changed; the others apply at once.
 - A key set by an env var or CLI flag carries an `env` / `cli` badge: saving it

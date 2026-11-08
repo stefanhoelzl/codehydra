@@ -25,6 +25,10 @@
   sections out in a vertical flow. `config.layout` switches the section
   layout: "centered" (default) is the centered stack; "form" is left-aligned
   labeled rows.
+
+  `config.search` adds a search box, hidden until the user types outside a
+  text field (or presses Ctrl/Cmd+F), that hides non-matching sections (see
+  ./search.ts). Escape with a query clears it before it cancels.
 -->
 <script lang="ts">
   import type {
@@ -33,11 +37,12 @@
     DialogKind,
     DialogUserEvent,
   } from "@shared/dialog-types";
-  import { onMount, onDestroy, untrack } from "svelte";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
   import { sendDialogEvent } from "$lib/api";
   import { trapTabKey, getFocusables } from "$lib/utils/focus-trap";
   import Section from "./Section.svelte";
   import { reconcileField, suggestionLabel } from "./reconcile-field";
+  import { visibleSections } from "./search";
   import type {
     ButtonItem,
     CheckboxSectionConfig,
@@ -46,6 +51,7 @@
   } from "./types";
 
   let formRef: HTMLElement | undefined;
+  let searchRef: HTMLInputElement | undefined = $state();
 
   interface Props {
     dialogId: string;
@@ -155,6 +161,86 @@
   }
 
   const sectionKeys = $derived(sectionKeysOf(config.sections));
+
+  // ---- Search (config.search) ----
+  // Renderer-only: the query never leaves the form. Filtered-out sections stay
+  // mounted (hidden), so their field values survive and every snapshot still
+  // carries them.
+  const searchEnabled = $derived(config.search === true);
+  let searchQuery = $state("");
+  /** The search box is revealed (it stays hidden until used). */
+  let searchOpen = $state(false);
+
+  const sectionVisible = $derived(
+    searchEnabled ? visibleSections(config.sections, searchQuery) : config.sections.map(() => true)
+  );
+
+  /** A query is active and only pinned sections (if any) survived it. */
+  const noMatches = $derived(
+    searchEnabled &&
+      searchQuery.trim() !== "" &&
+      config.sections.every(
+        (section, index) => section.pinned === true || sectionVisible[index] !== true
+      )
+  );
+
+  /**
+   * Reveal the search box and focus it. `initial` (a typed character) becomes
+   * the query; without it (Ctrl/Cmd+F) the current query is selected.
+   */
+  async function openSearch(initial?: string): Promise<void> {
+    if (initial !== undefined) searchQuery = initial;
+    searchOpen = true;
+    await tick();
+    if (!searchRef) return;
+    searchRef.focus();
+    if (initial !== undefined) {
+      searchRef.setSelectionRange(searchQuery.length, searchQuery.length);
+    } else {
+      searchRef.select();
+    }
+  }
+
+  /** Clear the query, hide the box and park focus on the form root. */
+  function clearSearch(): void {
+    // Focus first: hiding the box while it holds focus would drop focus to
+    // <body>, out of the keyboard contract's reach.
+    formRef?.focus();
+    searchQuery = "";
+    searchOpen = false;
+  }
+
+  /**
+   * Whether a keystroke lands in a control that takes typed text (an editable
+   * input, textarea or contenteditable) — typing there is the control's, not a
+   * search. A read-only input (a non-searchable dropdown) does not count.
+   */
+  function isTextEntryTarget(event: KeyboardEvent): boolean {
+    const target = event.composedPath()[0];
+    if (target instanceof HTMLTextAreaElement) return !target.readOnly && !target.disabled;
+    if (target instanceof HTMLInputElement) {
+      const textTypes = ["text", "search", "password", "email", "url", "tel", "number"];
+      return textTypes.includes(target.type) && !target.readOnly && !target.disabled;
+    }
+    if (target instanceof HTMLElement) {
+      if (target.isContentEditable) return true;
+      // A text web component whose shadow input was not reported (closed root).
+      const tag = target.tagName.toLowerCase();
+      return tag === "vscode-textfield" || tag === "vscode-textarea";
+    }
+    return false;
+  }
+
+  /** A plain printable character (no Ctrl/Cmd/Alt chord), excluding Space. */
+  function isTypedCharacter(event: KeyboardEvent): boolean {
+    return (
+      event.key.length === 1 &&
+      event.key !== " " &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey
+    );
+  }
 
   // Track all field values (radio + dropdown + input) keyed by field id.
   let fieldValues = $state<Record<string, string>>({});
@@ -322,7 +408,9 @@
    * wins, else the computed default target (first enabled field, else the
    * primary button). In the form layout (settings) the default target is
    * skipped — focusing the first field would open its dropdown list — so an
-   * unflagged form-layout config leaves focus unset.
+   * unflagged form-layout config focuses the form root instead: no control is
+   * active, but the keyboard contract (Escape, Tab, type-to-search) is live
+   * rather than left with whatever held focus before (the workspace).
    *
    * Used for both mount and ownership transfer, so a form with no explicit
    * autofocus flag (e.g. the bug report dialog) still regains its caret when
@@ -337,7 +425,10 @@
         explicit.focus();
         return;
       }
-      if (layout === "form") return;
+      if (layout === "form") {
+        formRef?.focus();
+        return;
+      }
       defaultFocusTarget()?.focus();
     });
   }
@@ -579,12 +670,30 @@
       triggerPrimaryAction();
       return;
     }
+    // Ctrl/Cmd+F reveals the search box from anywhere in the form, text
+    // fields included (where plain typing belongs to the field).
+    if (
+      searchEnabled &&
+      event.key.toLowerCase() === "f" &&
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey
+    ) {
+      event.preventDefault();
+      void openSearch();
+      return;
+    }
     // A field-level handler that consumed the key (dropdown Enter/Escape,
     // input Enter) marks it defaultPrevented — stay out for the rest.
     if (event.defaultPrevented) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      // An active search is cleared first; the next Escape cancels.
+      if (searchEnabled && searchQuery !== "") {
+        clearSearch();
+        return;
+      }
       const cancel = findCancelButton(config);
       if (cancel) {
         handleButton(cancel);
@@ -593,6 +702,13 @@
         sendDialogEvent(dismiss);
       }
       // "modal"/"panel" with no enabled cancel-role button: Escape is a no-op.
+      return;
+    }
+    // Type-to-search: a character typed outside any text-entry control
+    // reveals the search box and starts the query with it.
+    if (searchEnabled && isTypedCharacter(event) && !isTextEntryTarget(event)) {
+      event.preventDefault();
+      void openSearch(event.key);
       return;
     }
     if (formRef) {
@@ -608,6 +724,7 @@
   class:layout-form={layout === "form"}
   class:split-footer={splitFooter}
   role="none"
+  tabindex="-1"
   bind:this={formRef}
   onkeydown={handleKeydown}
 >
@@ -629,20 +746,55 @@
       onSubmit={triggerPrimaryAction}
     />
   {/snippet}
+  <!-- A section the search filtered out stays mounted (its field values
+       survive) but hidden; the slot is layout-transparent otherwise. -->
+  {#snippet renderSlot(section: DialogSection, sectionIndex: number)}
+    <div class="section-slot" hidden={sectionVisible[sectionIndex] === false || undefined}>
+      {@render renderSection(section)}
+    </div>
+  {/snippet}
+  {#snippet searchBox()}
+    {#if searchOpen}
+      <div class="form-search">
+        <vscode-icon name="search" aria-hidden="true"></vscode-icon>
+        <input
+          class="search-input"
+          type="text"
+          placeholder="Search"
+          aria-label="Search"
+          bind:this={searchRef}
+          bind:value={searchQuery}
+          onblur={() => {
+            if (searchQuery === "") searchOpen = false;
+          }}
+        />
+      </div>
+    {/if}
+  {/snippet}
+  {#snippet noMatchesLine()}
+    {#if noMatches}
+      <p class="search-empty">No matches for "{searchQuery.trim()}"</p>
+    {/if}
+  {/snippet}
   {#if splitFooter}
-    <!-- Scrolling body (everything above the footer) + a pinned footer row. -->
+    <!-- Search box (pinned above) + scrolling body (everything above the
+         footer) + a pinned footer row. -->
+    {@render searchBox()}
     <div class="form-body">
       {#each config.sections.slice(0, footerIndex) as section, sectionIndex (sectionKeys[sectionIndex])}
-        {@render renderSection(section)}
+        {@render renderSlot(section, sectionIndex)}
       {/each}
+      {@render noMatchesLine()}
     </div>
     <div class="form-footer">
-      {@render renderSection(config.sections[footerIndex]!)}
+      {@render renderSlot(config.sections[footerIndex]!, footerIndex)}
     </div>
   {:else}
+    {@render searchBox()}
     {#each config.sections as section, sectionIndex (sectionKeys[sectionIndex])}
-      {@render renderSection(section)}
+      {@render renderSlot(section, sectionIndex)}
     {/each}
+    {@render noMatchesLine()}
   {/if}
 </div>
 
@@ -657,6 +809,65 @@
     align-items: center;
     gap: 0.75rem;
     width: 100%;
+  }
+
+  /* The root takes focus (tabindex -1) only so the keyboard contract works
+     when no control is focused; it is not a control, so no focus ring. */
+  .form:focus {
+    outline: none;
+  }
+
+  /* One per section: transparent to the layout, so the section lays out as a
+     direct child of the form/body; hidden when the search filtered it out. */
+  .section-slot {
+    display: contents;
+  }
+
+  .section-slot[hidden] {
+    display: none;
+  }
+
+  /* ---- Search (config.search) ---- */
+
+  .form-search {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    align-self: stretch;
+    padding: 0.25rem 0.5rem;
+    background: var(--ch-input-bg);
+    border: 1px solid var(--ch-input-border);
+    border-radius: var(--ch-radius-sm, 6px);
+  }
+
+  .form-search:focus-within {
+    border-color: var(--ch-focus-border);
+  }
+
+  .form.split-footer .form-search {
+    margin: 1rem 2rem 0;
+  }
+
+  .search-input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.25rem 0;
+    font-family: inherit;
+    font-size: 0.875rem;
+    color: var(--ch-foreground);
+    background: transparent;
+    border: none;
+    outline: none;
+  }
+
+  .search-input::placeholder {
+    color: var(--ch-foreground);
+    opacity: 0.5;
+  }
+
+  .search-empty {
+    margin: 0;
+    opacity: 0.6;
   }
 
   /* Form-layout mode: left-aligned labeled rows. */

@@ -31,9 +31,13 @@ const FOCUSABLE_SELECTOR = [
 /**
  * All focusable (tabbable) elements within `container`, in DOM order. The
  * shared way to enumerate focus targets — keeps the selector itself private.
+ * Skips anything inside a `hidden` element (e.g. a section the dialog search
+ * filtered out), which the browser cannot focus either.
  */
 export function getFocusables(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (el) => el.closest("[hidden]") === null
+  );
 }
 
 /**
@@ -49,7 +53,10 @@ export function trapTabKey(event: KeyboardEvent, container: HTMLElement): void {
   const first = focusables[0]!;
   const last = focusables[focusables.length - 1]!;
   const active = document.activeElement;
-  const inContainer = active instanceof Node && container.contains(active);
+  // The container itself (a form root focused so its keyboard contract is
+  // live) counts as outside: Tab enters at the first control, Shift+Tab at
+  // the last, instead of leaving.
+  const inContainer = active instanceof Node && active !== container && container.contains(active);
   if (event.shiftKey) {
     if (!inContainer || active === first) {
       event.preventDefault();

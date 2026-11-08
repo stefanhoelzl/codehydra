@@ -14,6 +14,16 @@
 // ---- Sections ----
 
 /**
+ * What every section carries.
+ *
+ * - pinned: the dialog search (DialogConfig.search) never hides this section,
+ *   e.g. a footer button row. Only meaningful on top-level sections.
+ */
+interface SectionBase {
+  readonly pinned?: boolean;
+}
+
+/**
  * Text section - displays a text element with optional styling and icon.
  *
  * - style "heading": large + bold (h1-like)
@@ -27,7 +37,7 @@
  * - icon: codicon name rendered before text (e.g., "error" for danger
  *   styling). Alert styles default to the "warning" icon when unset.
  */
-interface TextSection {
+interface TextSection extends SectionBase {
   readonly type: "text";
   readonly content: string;
   readonly style?: "heading" | "subheading" | "subtitle" | "warning" | "error";
@@ -42,7 +52,7 @@ interface TextSection {
  * dropped; in-document `#anchor` links scroll within the dialog and other
  * links open in the OS browser.
  */
-interface MarkdownSection {
+interface MarkdownSection extends SectionBase {
   readonly type: "markdown";
   readonly content: string;
 }
@@ -54,7 +64,7 @@ interface MarkdownSection {
  *   (undefined progress = indeterminate, else determinate)
  * - style "spinner": running items show a spinner ring
  */
-interface ProgressSection {
+interface ProgressSection extends SectionBase {
   readonly type: "progress";
   readonly items: readonly ProgressItem[];
   readonly style?: "bar" | "spinner";
@@ -97,7 +107,7 @@ export type FieldChangeConfig = boolean | { readonly debounceMs?: number };
  *   name field once a project exists), focus follows; re-sending the same
  *   target never steals focus. At most one control should carry the flag.
  */
-interface FieldSection {
+interface FieldSection extends SectionBase {
   readonly id: string;
   readonly label?: string;
   readonly error?: string;
@@ -181,7 +191,7 @@ interface DropdownSection extends FieldSection {
 /**
  * Table section - displays a data table with optional header.
  */
-interface TableSection {
+interface TableSection extends SectionBase {
   readonly type: "table";
   readonly columns: readonly TableColumn[];
   readonly rows: readonly TableRow[];
@@ -270,7 +280,7 @@ interface CheckboxSection extends FieldSection {
  *   order for tabbing — the dialog-footer convention where the primary button
  *   is tabbed first but sits on the right (declare [primary, cancel]).
  */
-interface GroupSection {
+interface GroupSection extends SectionBase {
   readonly type: "group";
   readonly label?: string;
   readonly align?: "left" | "center" | "right";
@@ -307,7 +317,7 @@ export type SettingRowField = CheckboxSection | InputSection | DropdownSection;
  *   Presentational only; shown in a monospace, whitespace-preserving panel.
  * - helpLabel: label for that disclosure toggle (defaults to a generic label).
  */
-interface SettingRowSection {
+interface SettingRowSection extends SectionBase {
   readonly type: "setting-row";
   readonly label: string;
   readonly fields: readonly SettingRowField[];
@@ -453,6 +463,19 @@ export interface DialogConfig {
    *   actions right-aligned).
    */
   readonly layout?: "centered" | "form";
+  /**
+   * Make the dialog searchable. A search box, hidden until used, sits above the
+   * sections: typing while no text field has focus (or Ctrl/Cmd+F) reveals it,
+   * and it filters the sections by their text. Renderer-only — the backend
+   * never sees the query, and hidden sections keep their field values.
+   *
+   * Matching: the query's whitespace-separated words must each appear,
+   * case-insensitively, in a section's text or its heading's/subheading's.
+   * Headings stay visible while anything under them matches. A `pinned`
+   * section is never hidden. Escape with a query clears it (instead of
+   * cancelling).
+   */
+  readonly search?: boolean;
   /**
    * This dialog is waiting on the user and they may not be looking at it.
    *
