@@ -1,5 +1,5 @@
 /**
- * The manifest files `ch automation add|remove` manage: a `<name>.yaml` holding
+ * The manifest files `ch plugin automation add|remove` manage: a `<name>.yaml` holding
  * one automation and nothing else.
  *
  * `remove` deletes a whole file, so it first checks the file is one of these. A
@@ -9,11 +9,12 @@
 import { stringify } from "yaml";
 import { PLUGIN_PLATFORMS, parseManifest } from "./manifest";
 import type { ShellName } from "../scripts/shells";
+import type { Schedule } from "../../api/entries/deps";
 
 export interface NewAutomation {
   readonly name: string;
   readonly script: string;
-  readonly schedule?: string;
+  readonly schedule?: Schedule;
   readonly shell?: ShellName;
 }
 

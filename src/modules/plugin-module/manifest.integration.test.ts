@@ -23,18 +23,18 @@ describe("parseManifest", () => {
 
   it("reads an automation with a schedule", () => {
     const [doc] = parseManifest(
-      ["automations:", "  prs:", '    schedule: "0 3 * * *"', "    script: ./prs.sh"].join("\n")
+      ["automations:", "  prs:", "    schedule: daily", "    script: ./prs.sh"].join("\n")
     );
 
-    expect(doc?.automations).toEqual([{ name: "prs", script: "./prs.sh", schedule: "0 3 * * *" }]);
+    expect(doc?.automations).toEqual([{ name: "prs", script: "./prs.sh", schedule: "daily" }]);
   });
 
-  it("refuses a schedule cron cannot read, naming the automation", () => {
+  it("refuses a schedule that is not one of the intervals, naming the automation", () => {
     expect(() =>
       parseManifest(
-        ["automations:", "  prs:", '    schedule: "0 3 * *"', "    script: ./prs.sh"].join("\n")
+        ["automations:", "  prs:", '    schedule: "0 3 * * *"', "    script: ./prs.sh"].join("\n")
       )
-    ).toThrow(/automations\.prs\.schedule/);
+    ).toThrow(/automations\.prs\.schedule: .*hourly/);
   });
 
   it("refuses an unknown key beside a schedule", () => {
@@ -65,7 +65,7 @@ describe("parseManifest", () => {
       "automations:\n  a:\n    action: workspace.create\n    script: x\n",
       /automations\.a/,
     ],
-    ["an automation name that is not plain", "automations:\n  a b: x\n", /automation names/],
+    ["an automation name that is not plain", "automations:\n  a b: x\n", /automation's name/],
     ["broken YAML", "hooks: [\n", /document 1:/],
     ["the second document", "hooks: {}\n---\nshell: fish\n", /document 2:/],
   ])("refuses %s", (_what, text, message) => {

@@ -118,7 +118,7 @@ function setup() {
         automation: "local:default:github/reviews",
         plugin: "local:default:github",
         state: "enabled",
-        schedule: "0 3 * * *",
+        schedule: "daily",
         nextRun: "2026-03-11T03:00:00.000Z",
         path: "/plugins/github.yaml",
       },
@@ -406,15 +406,15 @@ describe("plugin.add / plugin.remove / plugin.update", () => {
   });
 });
 
-describe("automation.list / automation.add / automation.remove", () => {
+describe("plugin.automation.list / add / remove", () => {
   it("lists a row per automation, in strings", async () => {
     const { call } = setup();
 
-    expect(await call("automation.list", outside, {})).toEqual([
+    expect(await call("plugin.automation.list", outside, {})).toEqual([
       {
         automation: "local:default:github/reviews",
         state: "enabled",
-        schedule: "0 3 * * *",
+        schedule: "daily",
         next: "2026-03-11T03:00:00.000Z",
         path: "/plugins/github.yaml",
       },
@@ -424,15 +424,15 @@ describe("automation.list / automation.add / automation.remove", () => {
   it("adds to the user's folder, with nothing naming a workspace", async () => {
     const { call, newAutomations, scopes } = setup();
 
-    const row = await call("automation.add", outside, {
+    const row = await call("plugin.automation.add", outside, {
       name: "reviews",
       script: "gh pr list",
-      schedule: "0 3 * * *",
+      schedule: "daily",
       shell: "bash",
     });
 
     expect(newAutomations).toEqual([
-      { name: "reviews", script: "gh pr list", schedule: "0 3 * * *", shell: "bash", repo: false },
+      { name: "reviews", script: "gh pr list", schedule: "daily", shell: "bash", repo: false },
     ]);
     expect(scopes).toEqual([{ workspace: null }]);
     expect(row).toMatchObject({ takesEffect: "at the next poll" });
@@ -441,13 +441,15 @@ describe("automation.list / automation.add / automation.remove", () => {
   it("refuses a name that would not make a file name or a key", async () => {
     const { call } = setup();
 
-    await expect(call("automation.add", outside, { name: "../up", script: "x" })).rejects.toThrow();
+    await expect(
+      call("plugin.automation.add", outside, { name: "../up", script: "x" })
+    ).rejects.toThrow();
   });
 
   it("removes what is named, saying whether from the repository", async () => {
     const { call, removedAutomations } = setup();
 
-    await call("automation.remove", outside, { name: "reviews" });
+    await call("plugin.automation.remove", outside, { name: "reviews" });
 
     expect(removedAutomations).toEqual([["reviews", false]]);
   });

@@ -22,12 +22,14 @@
 
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import { Path } from "../../utils/path/path";
+import { SCRIPT_SHELLS } from "../../api/entries/deps";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-export const SHELL_NAMES = ["bash", "powershell", "cmd"] as const;
+/** The registry's list (`ch` and MCP offer these), so the two cannot drift apart. */
+export const SHELL_NAMES = SCRIPT_SHELLS;
 
 export type ShellName = (typeof SHELL_NAMES)[number];
 

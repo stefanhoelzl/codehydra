@@ -50,7 +50,10 @@ export interface ErrorKey {
 
 /** Which plugins one read of a plugins directory speaks for. */
 export interface ProblemScope {
-  /** `<type>:<entry>`: the source its plugin names start with. */
+  /**
+   * Who reports these: a source (`<type>:<entry>`) or another label. Its next
+   * report replaces what it reported before.
+   */
   readonly source: string;
   /** The project, for a repository's plugins. */
   readonly project?: string;
@@ -92,6 +95,12 @@ export function createPluginErrorBook(deps: {
   readonly now?: () => Date;
 }): PluginErrorBook {
   const entries = new Map<string, PluginErrorEntry>();
+  /**
+   * Which scope reported each problem, so the scope's next report replaces it.
+   * Not the plugin name's prefix: a scope's label need not be one
+   * (`plugins.config`, a repository's default branch).
+   */
+  const reportedBy = new Map<string, string>();
   const past = new PastFailures<PluginErrorEntry>();
   const now = deps.now ?? ((): Date => new Date());
 
@@ -99,6 +108,7 @@ export function createPluginErrorBook(deps: {
     const previous = entries.get(id);
     if (previous === undefined) return;
     entries.delete(id);
+    reportedBy.delete(id);
     past.add(id, previous);
     deps.cards.clear(id);
   }
@@ -123,28 +133,20 @@ export function createPluginErrorBook(deps: {
     });
   }
 
-  function inScope(entry: PluginErrorEntry, scope: ProblemScope): boolean {
-    return (
-      entry.entry === undefined &&
-      entry.plugin.startsWith(`${scope.source}:`) &&
-      entry.project === scope.project
-    );
-  }
-
   return {
     setProblems(scope, problems) {
+      const reporter = JSON.stringify([scope.source, scope.project ?? null]);
       const current = new Set(problems.map((problem) => keyOf({ ...scope, ...problem })));
-      for (const [id, entry] of entries) {
-        if (inScope(entry, scope) && !current.has(id)) forget(id);
+      for (const [id, by] of [...reportedBy]) {
+        if (by === reporter && !current.has(id)) forget(id);
       }
       for (const problem of problems) {
-        record(
-          {
-            plugin: problem.plugin,
-            ...(scope.project !== undefined && { project: scope.project }),
-          },
-          problem.message
-        );
+        const key = {
+          plugin: problem.plugin,
+          ...(scope.project !== undefined && { project: scope.project }),
+        };
+        record(key, problem.message);
+        reportedBy.set(keyOf(key), reporter);
       }
     },
     failure: (key, message, logPath) => record(key, message, logPath),

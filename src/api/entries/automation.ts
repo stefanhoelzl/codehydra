@@ -1,5 +1,5 @@
 /**
- * Automation registry entries — `ch automation list|add|remove`.
+ * Automation registry entries — `ch plugin automation list|add|remove`.
  *
  * One automation at a time, where `ch plugin add|remove` handle whole sources.
  * An automation is a file in a plugins folder: these write and delete that file,
@@ -11,16 +11,21 @@
 import { z } from "zod/v4";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry } from "../types";
-import type { AutomationFile, AutomationListing, EntryDeps } from "./deps";
+import {
+  AUTOMATION_NAME,
+  AUTOMATION_NAME_RULE,
+  SCHEDULES,
+  SCRIPT_SHELLS,
+  type AutomationFile,
+  type AutomationListing,
+  type EntryDeps,
+} from "./deps";
 import { createPluginScopeResolver } from "./plugin";
 import { targetFields } from "./target";
 
 const nameSchema = z
   .string()
-  .regex(
-    /^[A-Za-z0-9][A-Za-z0-9_-]*$/,
-    "an automation's name uses letters, digits, - and _ (and starts with a letter or digit)"
-  )
+  .regex(AUTOMATION_NAME, AUTOMATION_NAME_RULE)
   .describe("The automation's name, and its file's: <name>.yaml");
 
 const repoSchema = z
@@ -52,12 +57,12 @@ export function automationEntries(deps: EntryDeps): readonly AnyOperationEntry[]
   const scopeOf = createPluginScopeResolver(deps.dispatcher);
 
   const list = defineEntry({
-    name: "automation.list",
+    name: "plugin.automation.list",
     kind: "command",
     description: "List automations: yours, and each open project's",
     instructions:
       "One row per automation that can run: <plugin>/<name>, its plugin's state (enabled, " +
-      "disabled, or ask when not answered yet), its schedule and next scheduled time (empty: " +
+      "disabled, or ask when not answered yet), its schedule and when it runs next (empty: " +
       "every poll) and where it is. A repository's are those on its default branch: one not " +
       "merged yet is not listed.",
     input: z.object({}),
@@ -66,7 +71,7 @@ export function automationEntries(deps: EntryDeps): readonly AnyOperationEntry[]
   });
 
   const add = defineEntry({
-    name: "automation.add",
+    name: "plugin.automation.add",
     kind: "command",
     description: "Add an automation",
     instructions:
@@ -80,15 +85,14 @@ export function automationEntries(deps: EntryDeps): readonly AnyOperationEntry[]
       name: nameSchema,
       script: z.string().min(1).describe("The script itself"),
       schedule: z
-        .string()
-        .min(1)
+        .enum(SCHEDULES)
         .optional()
         .describe(
-          "When to run: a 5-field cron expression in local time (default: every poll). " +
-            "It runs at the first poll after each time it names."
+          "How long it waits after a run before the next (default: none, it runs every poll). " +
+            "Every automation runs at the first poll after the app starts."
         ),
       shell: z
-        .enum(["bash", "powershell", "cmd"])
+        .enum(SCRIPT_SHELLS)
         .optional()
         .describe("The shell it is written for (default: bash)"),
       repo: repoSchema,
@@ -108,7 +112,7 @@ export function automationEntries(deps: EntryDeps): readonly AnyOperationEntry[]
   });
 
   const remove = defineEntry({
-    name: "automation.remove",
+    name: "plugin.automation.remove",
     kind: "command",
     description: "Remove an automation",
     instructions:

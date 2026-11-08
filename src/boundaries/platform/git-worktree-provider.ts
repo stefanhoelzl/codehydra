@@ -195,17 +195,30 @@ export class GitWorktreeProvider {
    * default leaves it alone.
    */
   private readonly migrationDefaults: () => Metadata;
+  private readonly internalWorktrees: Path | undefined;
 
+  /**
+   * @param internalWorktrees A folder CodeHydra keeps checkouts of its own in (a
+   *   repository's default branch, for its automations). Worktrees under it are
+   *   never workspaces, never warned about and never offered for adoption.
+   */
   constructor(
     gitClient: IGitClient,
     fileSystemLayer: FileSystemBoundary,
     logger: Logger,
-    migrationDefaults: () => Metadata = () => ({})
+    migrationDefaults: () => Metadata = () => ({}),
+    internalWorktrees?: Path
   ) {
     this.gitClient = gitClient;
     this.fileSystemLayer = fileSystemLayer;
     this.logger = logger;
     this.migrationDefaults = migrationDefaults;
+    this.internalWorktrees = internalWorktrees;
+  }
+
+  /** Whether a worktree is one of CodeHydra's own checkouts rather than the user's. */
+  private isInternal(worktreePath: Path): boolean {
+    return this.internalWorktrees !== undefined && worktreePath.isChildOf(this.internalWorktrees);
   }
 
   /**
@@ -366,7 +379,8 @@ export class GitWorktreeProvider {
    * the add-project picker (its metadata carries the external tag). Every other
    * worktree of the repository is skipped: agents (Claude's `isolation: "worktree"`,
    * for one) create worktrees of the same repo as scratch space, and those must not
-   * surface as workspaces.
+   * surface as workspaces. CodeHydra's own checkouts (`internalWorktrees`) are
+   * left out without a warning.
    *
    * Reads every managed workspace's metadata file; the workspaces come back with
    * it, for the core registry to hold. A managed worktree without one is migrated from the legacy `branch.<b>.codehydra.*` git config:
@@ -391,7 +405,9 @@ export class GitWorktreeProvider {
       await this.gitClient.pruneWorktrees(projectRoot);
     }
 
-    const candidates = worktrees.filter((wt) => !wt.isMain && !wt.prunable);
+    const candidates = worktrees.filter(
+      (wt) => !wt.isMain && !wt.prunable && !this.isInternal(wt.path)
+    );
     const loaded = await Promise.all(candidates.map((wt) => this.loadMetadataFile(wt.path)));
 
     // The legacy config is read only while some worktree still has no file: once
@@ -548,6 +564,7 @@ export class GitWorktreeProvider {
       (wt) =>
         !wt.isMain &&
         !wt.prunable &&
+        !this.isInternal(wt.path) &&
         !isOwnWorktree({ workspacesDir, previousWorkspacesDirs }, wt.path)
     );
     const loaded = await Promise.all(candidates.map((wt) => this.loadMetadataFile(wt.path)));

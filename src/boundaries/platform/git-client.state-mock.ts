@@ -87,7 +87,10 @@ interface RepositoryState {
   remoteUrl?: string;
   /** What `resolveCommit` answers: revision -> commit hash */
   revisions: Map<string, string>;
-  /** What `exportFolder` writes: `<commit>:<folder>` -> relative file path -> content */
+  /**
+   * Folders commits hold: `<commit>:<folder>` -> path relative to the folder -> content.
+   * `hasFolder` finds them; `addDetachedWorktree` writes them into the checkout.
+   */
   folders: Map<string, Readonly<Record<string, string>>>;
 }
 
@@ -143,7 +146,7 @@ export interface RepositoryInit {
   readonly remoteUrl?: string;
   /** What `resolveCommit` answers: revision -> commit hash (a 40-hex revision always resolves to itself) */
   readonly revisions?: Readonly<Record<string, string>>;
-  /** What `exportFolder` writes: `<commit>:<folder>` -> relative file path -> content */
+  /** Folders commits hold: `<commit>:<folder>` -> path relative to the folder -> content */
   readonly folders?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
 
@@ -501,23 +504,25 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         prunable: false,
       });
       await options?.fileSystem?.mkdir(worktreePath);
+      // What the commit holds, as a checkout has it.
+      for (const [key, files] of repo.folders) {
+        if (!key.startsWith(`${commit}:`)) continue;
+        const folder = key.slice(commit.length + 1);
+        for (const [name, content] of Object.entries(files)) {
+          const path = new Path(worktreePath, folder, name);
+          await options?.fileSystem?.mkdir(path.dirname);
+          await options?.fileSystem?.writeFile(path, content);
+        }
+      }
     },
 
-    async exportFolder(
-      repoPath: Path,
-      commit: string,
-      folder: string,
-      destination: Path
-    ): Promise<boolean> {
+    async hasFolder(repoPath: Path, commit: string, folder: string): Promise<boolean> {
       const repo = getRepoOrThrow(repoPath);
-      const files = repo.folders.get(`${commit}:${folder}`);
-      if (files === undefined) return false;
-      for (const [name, content] of Object.entries(files)) {
-        const path = new Path(destination, name);
-        await options?.fileSystem?.mkdir(path.dirname);
-        await options?.fileSystem?.writeFile(path, content);
+      if (!/^[0-9a-f]{40}$/.test(commit) && ![...repo.revisions.values()].includes(commit)) {
+        throw new GitError(`Unknown commit: ${commit}`);
       }
-      return true;
+      // git stores no empty folder: one without files is not there.
+      return Object.keys(repo.folders.get(`${commit}:${folder}`) ?? {}).length > 0;
     },
 
     async resolveCommit(repoPath: Path, rev: string): Promise<string | null> {

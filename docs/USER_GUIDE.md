@@ -768,7 +768,7 @@ that workspace's project, and elsewhere `ch plugin enable|disable` asks you to
 say which with `--workspace`.
 
 A repository's plugin is laid out like any other, and one file can hold both
-hooks and automations, but the two are read from different copies of it:
+hooks and automations, but the two are read from different checkouts of it:
 
 - **Hooks** are read from the **worktree**, so they must be committed on the
   branch the worktree checks out. They run as they are in the worktree at that
@@ -924,9 +924,10 @@ the way GitHub Actions runs a `run:` step for its shell:
     [settings](#plugin-settings) — never another plugin's, nor any
     `CH_CONFIG_*` in CodeHydra's own environment.
 - **Working directory**: the worktree for a hook; the plugin's folder (or the
-  plugins folder, for a one-file plugin) for an automation; the project's folder
-  for a repository's automation, so `gh` and `git` find the repository. From a worktree,
-  `ch` acts on that workspace without being told which (`ch ws title`, …).
+  plugins folder, for a one-file plugin) for an automation; for a repository's
+  automation, CodeHydra's checkout of the project's default branch (see
+  [Repository automations](#repository-automations)). From a worktree, `ch` acts
+  on that workspace without being told which (`ch ws title`, …).
 - **Timeout**: none for a hook (see [Canceling a hook](#canceling-a-hook)); an
   automation's script is killed after `poll.timeout` seconds (default 30).
 
@@ -1373,69 +1374,81 @@ run log holds the whole output.
 #### Schedules
 
 An automation normally runs every poll. To run it less often, give it a
-`schedule` — a standard 5-field cron expression (minute, hour, day of month,
-month, day of week) in this machine's local time:
+`schedule`: `hourly`, `daily`, `weekly`, `monthly` or `yearly`.
 
 ```yaml
 automations:
   nightly:
-    schedule: "0 3 * * *"
+    schedule: daily
     script: ./nightly.sh
   reviews: ./reviews.sh # no schedule: every poll
 ```
 
-- It runs at the first poll after a time the schedule names, so `0 3 * * *` runs
-  within about a minute after 03:00 at the default `poll.interval`.
+- **It waits that long after each run**, then runs at the next poll. A day,
+  month or year is a calendar one in this machine's local time, so `daily`
+  keeps its time of day across a daylight-saving change, and `monthly` from
+  the 31st runs on the last day of a shorter month.
+- **Every automation runs at the first poll after CodeHydra starts**, schedule or
+  not. So nothing is missed: a run due while the machine slept happens at the
+  first poll after it wakes, and one due while CodeHydra was closed at the first
+  poll after it starts. The cost is that a restart runs a `daily` (or
+  `yearly`) automation early.
+- **One run, however long it waited:** after a week asleep, a `daily`
+  automation runs once, not seven times.
+- **Disabling it does not reset the wait:** enabled again, it runs when its
+  wait since the last run is over.
 - A schedule can only make an automation run less often than `poll.interval`.
-  Several times passing between two polls give one run, so `* * * * *` simply
-  means every poll, whatever `poll.interval` is.
-- An automation with a schedule does not run when CodeHydra starts, and times
-  missed while it was closed — or while the plugin was disabled — are not made
-  up for: if 03:00 passes with the app closed, the next run is at 03:00 the next
-  day. Without a schedule, it runs at the first poll as usual.
-- A 6-field expression (with seconds), an alias like `@daily` or anything else
-  that is not 5 valid fields makes the manifest invalid; `ch plugin errors` says
-  why.
+  Any other value makes the manifest invalid; `ch plugin errors` says why.
 
 #### Repository automations
 
 A repository can ship automations in its `.codehydra/plugins/`, in the same
 format as any other plugin. They run while the project is open, once
 [trusted](#trust), from what is **committed on the project's default branch** —
-the branch new workspaces fork from. CodeHydra keeps its own copy of that folder
+the branch new workspaces fork from. CodeHydra checks that branch out, detached,
 under `<data directory>/plugins/project-automations/`, so there is one version
-per project, whatever the worktrees hold.
+per project, whatever the worktrees hold, and the script sees the whole
+repository as committed there.
 
 - **A change takes effect once merged and fetched.** Each poll follows the
   branch as this machine knows it. CodeHydra fetches a project when it starts,
   on `ch plugin update`, when the new-workspace form opens, when an automation
-  creates a workspace, on workspace status and when deleting a workspace. A
-  script already running finishes from the copy it started in. To try a script
-  before merging it, run it by hand in a workspace.
+  creates a workspace, on workspace status and when deleting a workspace. A new
+  commit is checked out beside the old one, which goes once no script runs in it
+  any more. To try a script before merging it, run it by hand in a workspace.
+- **Only when there is something to run.** A default branch without
+  `.codehydra/plugins/` gets no checkout.
+- **These checkouts are worktrees of your repository**, so `git worktree list`
+  shows them. CodeHydra never lists them as workspaces nor offers them for
+  adoption. Leave them be: CodeHydra removes each one itself.
 - **Its own project by default.** A `workspace.create` item without `project`
   creates in this project, and a bare `workspace` name is looked up in this
   project only. Name another with `project` or `<project>::<name>`. This is a
   convenience, not a limit: a trusted script can do anything you can.
-- **What the script gets:** it runs in the project's folder, and `{project,
-projectPath}` on stdin instead of `{}`. A folder plugin finds its files through
-  `CH_PLUGIN_DIR`, which points at CodeHydra's copy; a one-file plugin has no
-  files of its own beside it, so a path in its script is relative to the project.
+- **What the script gets:** it runs at the root of that checkout, the same for a
+  local project and a cloned one, so `script: ./scripts/nightly.sh` runs the
+  committed `scripts/nightly.sh`, and `gh` and `git` find the repository. It
+  gets `{project, projectPath}` on stdin instead of `{}`: `projectPath` is
+  the project's own repository. A folder plugin also finds its files through
+  `CH_PLUGIN_DIR`.
 - **Closing a project** stops its automations, and what they track is kept: a
-  workspace you deleted by hand is not recreated when the project reopens.
-  Removing an automation from the default branch, or disabling its plugin, while
-  the project is open forgets what it tracked, as for any automation.
+  workspace you deleted by hand is not recreated when the project reopens. The
+  same holds while its plugin's trust question is unanswered, or answered no
+  until restart. Removing an automation from the default branch, or disabling
+  its plugin for good, while the project is open forgets what it tracked, as for
+  any automation.
 - **Settings** come from the project's entry in
   [`plugins.config`](#plugin-sources), the same values its hooks get.
 
 #### Adding and removing automations
 
 ```sh
-ch automation add reviews --script 'gh pr list …' [--schedule "0 3 * * *"] [--shell bash] [--repo]
-ch automation remove reviews [--repo]
-ch automation list   # each automation: state, schedule, next scheduled time, path
+ch plugin automation add reviews --script 'gh pr list …' [--schedule daily] [--shell bash] [--repo]
+ch plugin automation remove reviews [--repo]
+ch plugin automation list   # each automation: state, schedule, next run, path
 ```
 
-MCP has the same as `automation_add`, `automation_remove` and `automation_list`.
+MCP has the same as `plugin_automation_add`, `plugin_automation_remove` and `plugin_automation_list`.
 
 - **Without `--repo`**, `add` writes `~/.codehydra/plugins/reviews.yaml`, which
   runs from the next poll without asking.
