@@ -264,6 +264,17 @@ describe("SettingsModule — population", () => {
       "reset-all",
     ]);
   });
+
+  it("is searchable, with the footer pinned so the search never hides it", () => {
+    const { openSettings, dialogs } = setup();
+    openSettings();
+    const cfg = dialogs.lastHandle!.config;
+    expect(cfg.search).toBe(true);
+    const footer = sectionsOf(cfg).at(-1)!;
+    expect(footer).toMatchObject({ type: "group", pinned: true });
+    // Nothing but the footer is pinned.
+    expect(sectionsOf(cfg).filter((s) => s.pinned === true)).toHaveLength(1);
+  });
 });
 
 describe("SettingsModule — save", () => {

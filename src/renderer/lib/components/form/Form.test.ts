@@ -2068,6 +2068,176 @@ describe("Form component", () => {
 
   // ---- Layout ----
 
+  describe("search", () => {
+    // Settings-shaped: form layout, headings, rows, a pinned footer. Multiline
+    // inputs render as native <textarea>s, which happy-dom can focus.
+    const searchConfig = (search = true): DialogConfig => ({
+      layout: "form",
+      ...(search && { search: true }),
+      sections: [
+        { type: "text", content: "sidebar", style: "heading" },
+        {
+          type: "setting-row",
+          label: "width",
+          description: "Width in pixels",
+          fields: [{ type: "input", id: "width", multiline: true }],
+        },
+        { type: "text", content: "log", style: "heading" },
+        {
+          type: "setting-row",
+          label: "level",
+          fields: [{ type: "input", id: "level", multiline: true }],
+        },
+        {
+          type: "group",
+          pinned: true,
+          items: [
+            { type: "button", id: "save", label: "Save", variant: "primary" },
+            { type: "button", id: "cancel", label: "Cancel", role: "cancel" },
+          ],
+        },
+      ],
+    });
+
+    const form = (): HTMLElement => document.querySelector<HTMLElement>(".form")!;
+    const searchInput = (): HTMLInputElement | null =>
+      document.querySelector<HTMLInputElement>(".search-input");
+    /** Whether the section slot holding the element with `id` is shown. */
+    const shown = (id: string): boolean =>
+      document.getElementById(id)!.closest(".section-slot")!.hasAttribute("hidden") === false;
+
+    it("a form-layout dialog with no autofocus control focuses the form root", async () => {
+      renderForm(searchConfig(false));
+
+      await waitFor(() => {
+        expect(document.activeElement).toBe(form());
+      });
+    });
+
+    it("Escape cancels right after opening, with focus on the root", async () => {
+      renderForm(searchConfig(), { dialogId: "s-open" });
+      await waitFor(() => expect(document.activeElement).toBe(form()));
+
+      await fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ dialogId: "s-open", actionId: "cancel" })
+      );
+    });
+
+    it("the search box is hidden until a character is typed outside a text field", async () => {
+      renderForm(searchConfig());
+      expect(searchInput()).toBeNull();
+
+      await fireEvent.keyDown(form(), { key: "w" });
+
+      await waitFor(() => expect(document.activeElement).toBe(searchInput()));
+      expect(searchInput()!.value).toBe("w");
+    });
+
+    it("filters sections as the query changes, keeping headings and the pinned footer", async () => {
+      renderForm(searchConfig());
+      await fireEvent.keyDown(form(), { key: "p" });
+      await fireEvent.input(searchInput()!, { target: { value: "pixels" } });
+
+      expect(shown("width")).toBe(true);
+      expect(shown("level")).toBe(false);
+      expect(screen.getByText("sidebar").closest(".section-slot")).not.toHaveAttribute("hidden");
+      expect(screen.getByText("log").closest(".section-slot")).toHaveAttribute("hidden");
+      expect(screen.getByText("Save").closest(".section-slot")).not.toHaveAttribute("hidden");
+    });
+
+    it("typing in a text field types there, not into a search", async () => {
+      renderForm(searchConfig());
+
+      await fireEvent.keyDown(document.getElementById("width")!, { key: "w" });
+
+      expect(searchInput()).toBeNull();
+    });
+
+    it("Ctrl+F reveals the search box even from a text field", async () => {
+      renderForm(searchConfig());
+
+      await fireEvent.keyDown(document.getElementById("width")!, { key: "f", ctrlKey: true });
+
+      await waitFor(() => expect(document.activeElement).toBe(searchInput()));
+    });
+
+    it("does nothing on typing without config.search", async () => {
+      renderForm(searchConfig(false));
+
+      await fireEvent.keyDown(form(), { key: "w" });
+
+      expect(searchInput()).toBeNull();
+    });
+
+    it("Escape with a query clears it first; the next Escape cancels", async () => {
+      renderForm(searchConfig(), { dialogId: "s-esc" });
+      await fireEvent.keyDown(form(), { key: "l" });
+      await fireEvent.input(searchInput()!, { target: { value: "level" } });
+      expect(shown("width")).toBe(false);
+
+      await fireEvent.keyDown(searchInput()!, { key: "Escape" });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+      expect(searchInput()).toBeNull();
+      expect(shown("width")).toBe(true);
+      expect(document.activeElement).toBe(form());
+
+      await fireEvent.keyDown(form(), { key: "Escape" });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ dialogId: "s-esc", actionId: "cancel" })
+      );
+    });
+
+    it("a filtered-out field keeps its edit and still reports it", async () => {
+      renderForm(searchConfig(), { dialogId: "s-keep" });
+      await fireEvent.input(document.getElementById("width")!, { target: { value: "300" } });
+      await fireEvent.keyDown(form(), { key: "l" });
+      await fireEvent.input(searchInput()!, { target: { value: "level" } });
+      expect(shown("width")).toBe(false);
+
+      await fireEvent.click(screen.getByText("Save"));
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "s-keep",
+        actionId: "save",
+        data: { width: "300", level: "" },
+      });
+    });
+
+    it("says so when nothing matches", async () => {
+      renderForm(searchConfig());
+      await fireEvent.keyDown(form(), { key: "z" });
+      await fireEvent.input(searchInput()!, { target: { value: "zzz" } });
+
+      expect(screen.getByText('No matches for "zzz"')).toBeInTheDocument();
+    });
+
+    it("the empty search box hides again when it loses focus", async () => {
+      renderForm(searchConfig());
+      await fireEvent.keyDown(form(), { key: "w" });
+      await fireEvent.input(searchInput()!, { target: { value: "" } });
+
+      await fireEvent.blur(searchInput()!);
+
+      expect(searchInput()).toBeNull();
+    });
+
+    it("Tab skips controls of filtered-out sections", async () => {
+      renderForm(searchConfig());
+      await fireEvent.keyDown(form(), { key: "l" });
+      await fireEvent.input(searchInput()!, { target: { value: "level" } });
+
+      // Shift+Tab from the search box (the first control) wraps to the last
+      // visible control — never the hidden width field.
+      searchInput()!.focus();
+      await fireEvent.keyDown(searchInput()!, { key: "Tab", shiftKey: true });
+      expect(document.activeElement).not.toBe(document.getElementById("width"));
+    });
+  });
+
   describe("layout", () => {
     it("uses the centered layout by default", () => {
       const config: DialogConfig = {

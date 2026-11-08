@@ -15,7 +15,8 @@
  * (redact) keys render masked. Editing is buffered: Save / Save & Restart
  * persist the buffer (Save & Restart then relaunches), Cancel discards. Live
  * validation disables Save while any field is invalid; per-row reset and "Reset
- * all to defaults" revert to defaults immediately.
+ * all to defaults" revert to defaults immediately. The dialog is searchable
+ * (DialogConfig.search); the footer is pinned so the search never hides it.
  *
  * Modules may contribute extra rows (SettingsExtraRow) for values that are not
  * config keys: shown read-only among the config rows, with one button that hands
@@ -411,6 +412,8 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
     sections.push({
       type: "group",
       reverse: true,
+      // The search never hides the footer.
+      pinned: true,
       items: [
         {
           type: "button",
@@ -442,7 +445,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
       ],
     });
 
-    return { config: { sections, layout: "form" }, invalidCount };
+    return { config: { sections, layout: "form", search: true }, invalidCount };
   }
 
   /** Small source badge; only env/CLI overrides are noteworthy. */
