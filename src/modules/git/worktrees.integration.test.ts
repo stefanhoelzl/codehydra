@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Integration tests for GitWorktreeWorkspaceModule through the Dispatcher.
+ * Integration tests for the git module's workspace side (worktrees) through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers ->
  * GitWorktreeProvider calls + internal state management.
@@ -9,10 +9,10 @@
  * mock GitWorktreeProvider and PathProvider dependencies.
  */
 
-import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Dispatcher } from "../intents/lib/dispatcher";
-import { createMinimalOperation } from "../intents/lib/operation.test-utils";
+import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
+import { describe, it, expect, beforeEach } from "vitest";
+import { Dispatcher } from "../../intents/lib/dispatcher";
+import { createMinimalOperation } from "../../intents/lib/operation.test-utils";
 
 import { z } from "zod/v4";
 import type {
@@ -20,98 +20,73 @@ import type {
   OperationSchemas,
   HookContext,
   DispatchFn,
-} from "../intents/lib/operation";
-import type { Intent, DomainEvent } from "../intents/lib/types";
-import type { IntentModule } from "../intents/lib/module";
-import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
-import type { Workspace } from "../boundaries/platform/git-types";
-import { OPEN_PROJECT_OPERATION_ID, INTENT_OPEN_PROJECT } from "../intents/open-project";
-import type { DiscoverHookResult } from "../intents/open-project";
-import { CLOSE_PROJECT_OPERATION_ID, INTENT_CLOSE_PROJECT } from "../intents/close-project";
-import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
-import type { OpenWorkspaceIntent } from "../intents/open-workspace";
-import type { CreateHookResult } from "../intents/open-workspace";
+} from "../../intents/lib/operation";
+import type { Intent, DomainEvent } from "../../intents/lib/types";
+import type { IntentModule } from "../../intents/lib/module";
+import type { Workspace } from "../../boundaries/platform/git-types";
+import { OPEN_PROJECT_OPERATION_ID, INTENT_OPEN_PROJECT } from "../../intents/open-project";
+import type { DiscoverHookResult } from "../../intents/open-project";
+import { CLOSE_PROJECT_OPERATION_ID, INTENT_CLOSE_PROJECT } from "../../intents/close-project";
+import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../../intents/open-workspace";
+import type { OpenWorkspaceIntent } from "../../intents/open-workspace";
+import type { CreateHookResult } from "../../intents/open-workspace";
 import {
   GET_PROJECT_BASES_OPERATION_ID,
   INTENT_GET_PROJECT_BASES,
-} from "../intents/get-project-bases";
+} from "../../intents/get-project-bases";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
   preflightResultSchema,
   deleteResultSchema,
-} from "../intents/delete-workspace";
-import type { DeleteWorkspaceIntent, DeletePipelineHookInput } from "../intents/delete-workspace";
-import type { DeleteHookResult } from "../intents/delete-workspace";
+} from "../../intents/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  DeletePipelineHookInput,
+} from "../../intents/delete-workspace";
+import type { DeleteHookResult } from "../../intents/delete-workspace";
 import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   INTENT_GET_WORKSPACE_STATUS,
   getStatusHookResultSchema,
-} from "../intents/get-workspace-status";
-import type { GetStatusHookInput } from "../intents/get-workspace-status";
+} from "../../intents/get-workspace-status";
+import type { GetStatusHookInput } from "../../intents/get-workspace-status";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
   ResolveWorkspaceOperation,
   type StateHookInput,
-} from "../intents/resolve-workspace";
+} from "../../intents/resolve-workspace";
 import {
   SWITCH_WORKSPACE_OPERATION_ID,
   INTENT_SWITCH_WORKSPACE,
   type FindCandidatesHookResult,
-} from "../intents/switch-workspace";
+} from "../../intents/switch-workspace";
 import {
   LIST_PROJECTS_OPERATION_ID,
   INTENT_LIST_PROJECTS,
   type ListWorkspacesHookResult,
-} from "../intents/list-projects";
-import type { WorkspaceName } from "../shared/api/types";
-import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
-import type { WorkspaceRegistryModule } from "./workspace-registry-module";
-import { createTestWorkspaceRegistry, TEST_PROJECTS_DIR } from "./workspace-registry.test-utils";
-import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
-import type { MockDialogManager } from "./presentation/dialog-manager.state-mock";
-import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
-import type { MockNotificationManager } from "./presentation/notification-manager.state-mock";
-import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import { Path } from "../utils/path/path";
-import { parseProjectRef, projectRefOf } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
-import { wsPath, projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
+} from "../../intents/list-projects";
+import type { WorkspaceName } from "../../shared/api/types";
+import type { GitProjectModuleDeps } from "./module";
+import { createMockGitWorktreeProvider, createTestGitModule } from "./git.test-utils";
+import { createMockGitClient } from "../../boundaries/platform/git-client.state-mock";
+import type { WorkspaceRegistryModule } from "../workspace-registry-module";
+import { createTestWorkspaceRegistry } from "../workspace-registry.test-utils";
+import { createMockDialogManager } from "../presentation/dialog-manager.state-mock";
+import type { MockDialogManager } from "../presentation/dialog-manager.state-mock";
+import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
+import type { MockNotificationManager } from "../presentation/notification-manager.state-mock";
+import { Path } from "../../utils/path/path";
+import { parseProjectRef, projectRefOf } from "../../utils/ref";
+import { gitProjectRef } from "./ref";
+import { wsPath, projPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import type {
   WorkspacePath,
   ProjectPath,
   WorkspaceRef,
   WorkspaceClosing,
-} from "../intents/contract";
-import { WorkspaceError } from "../shared/errors/service-errors";
-
-// =============================================================================
-// Mock Dependencies
-// =============================================================================
-
-function createMockGitWorktreeProvider() {
-  return {
-    registerProject: vi.fn(),
-    unregisterProject: vi.fn(),
-    discover: vi.fn().mockResolvedValue([]),
-    createWorkspace: vi.fn(),
-    removeWorkspace: vi.fn().mockResolvedValue({ workspaceRemoved: true, baseDeleted: false }),
-    isDirty: vi.fn().mockResolvedValue(false),
-    countUnmergedCommits: vi.fn().mockResolvedValue(0),
-    listBases: vi.fn().mockResolvedValue([]),
-    defaultBase: vi.fn().mockResolvedValue(undefined),
-    updateBases: vi.fn().mockResolvedValue(undefined),
-    cleanupOrphanedWorkspaces: vi.fn().mockResolvedValue({ removedCount: 0, failedPaths: [] }),
-    validateRepository: vi.fn().mockResolvedValue(undefined),
-    ensureWorkspaceRegistered: vi.fn(),
-    listUnmanagedWorktrees: vi.fn().mockResolvedValue([]),
-    adoptWorktree: vi.fn().mockResolvedValue(undefined),
-    // Where a worktree's metadata file is: the test registry's directory.
-    metadataFileOf: vi.fn(
-      async (worktreePath: Path) => new Path(TEST_PROJECTS_DIR, `${worktreePath.basename}.json`)
-    ),
-  };
-}
+} from "../../intents/contract";
+import { WorkspaceError } from "../../shared/errors/service-errors";
 
 // =============================================================================
 // Minimal Test Operations
@@ -305,7 +280,11 @@ const minimalGetProjectBasesOperation: Operation<typeof getProjectBasesSchemas> 
       projectPath: ProjectPath;
       hookPoint?: "list" | "refresh";
     };
-    const hookCtx = { intent: ctx.intent, projectPath: payload.projectPath };
+    const hookCtx = {
+      intent: ctx.intent,
+      projectPath: payload.projectPath,
+      projectRef: gitProjectRef(payload.projectPath),
+    };
 
     if (payload.hookPoint === "refresh") {
       const { errors } = await ctx.hooks.collect("refresh", hookCtx);
@@ -430,8 +409,8 @@ interface TestSetup {
 function createMockUi(): {
   dialogs: MockDialogManager;
   notifications: MockNotificationManager;
-  ui: Parameters<typeof createGitWorktreeWorkspaceModule>[3];
-  notify: Parameters<typeof createGitWorktreeWorkspaceModule>[4];
+  ui: GitProjectModuleDeps["ui"];
+  notify: GitProjectModuleDeps["dispatcher"];
 } {
   const dialogs = createMockDialogManager();
   const notifications = createMockNotificationManager();
@@ -467,14 +446,13 @@ function createTestSetup(): TestSetup {
   // Wire the module under test, with the core registry it feeds
   const { registry } = createTestWorkspaceRegistry();
   const { dialogs, notifications, ui, notify } = createMockUi();
-  const module = createGitWorktreeWorkspaceModule(
-    provider as unknown as GitWorktreeProvider,
-    workspacesRoot,
-    SILENT_LOGGER,
+  const module = createTestGitModule({
+    gitWorktreeProvider: provider,
+    workspacesRoot: { ...workspacesRoot, remotesDir: () => testPath("/remotes") },
     ui,
-    notify,
-    registry
-  );
+    dispatcher: notify,
+    registry,
+  });
   dispatcher.registerModule(registry);
   dispatcher.registerModule(module);
 
@@ -524,14 +502,13 @@ function createPreflightTestSetup(): Omit<TestSetup, "module" | "registry"> {
 
   const { registry } = createTestWorkspaceRegistry();
   const { dialogs, notifications, ui, notify } = createMockUi();
-  const module = createGitWorktreeWorkspaceModule(
-    provider as unknown as GitWorktreeProvider,
-    workspacesRoot,
-    SILENT_LOGGER,
+  const module = createTestGitModule({
+    gitWorktreeProvider: provider,
+    workspacesRoot: { ...workspacesRoot, remotesDir: () => testPath("/remotes") },
     ui,
-    notify,
-    registry
-  );
+    dispatcher: notify,
+    registry,
+  });
   dispatcher.registerModule(registry);
   dispatcher.registerModule(module);
 
@@ -690,7 +667,7 @@ async function dispatchPreflight(
 // Tests
 // =============================================================================
 
-describe("GitWorktreeWorkspaceModule Integration", () => {
+describe("Git module: worktrees", () => {
   let setup: TestSetup;
 
   beforeEach(() => {
@@ -1543,14 +1520,14 @@ describe("Add-project worktree picker", () => {
 
     const { dialogs, notifications, ui, notify } = createMockUi();
     dispatcher.registerModule(
-      createGitWorktreeWorkspaceModule(
-        provider as unknown as GitWorktreeProvider,
-        workspacesRoot,
-        SILENT_LOGGER,
+      createTestGitModule({
+        gitWorktreeProvider: provider,
+        workspacesRoot: { ...workspacesRoot, remotesDir: () => testPath("/remotes") },
+        // Every picked path is a repository already, so no git-init offer comes first.
+        gitClient: { ...createMockGitClient(), isRepositoryRoot: async () => true },
         ui,
-        notify,
-        createTestWorkspaceRegistry().registry
-      )
+        dispatcher: notify,
+      })
     );
 
     return { dispatcher, provider, dialogs, notifications };

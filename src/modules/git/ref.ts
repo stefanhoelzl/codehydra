@@ -7,10 +7,10 @@
  * workspaces root.
  */
 
-import type { ProjectRef } from "../intents/contract";
-import { Path } from "../utils/path/path";
-import { makeProjectRef } from "../utils/ref";
-import { normalizeGitUrl } from "../utils/url-utils";
+import type { ProjectRef } from "../../intents/contract";
+import { Path } from "../../utils/path/path";
+import { makeProjectRef, parseProjectRef } from "../../utils/ref";
+import { normalizeGitUrl } from "../../utils/url-utils";
 
 /** The project type name git projects are stored and referred to under. */
 export const GIT_PROJECT_TYPE = "git";
@@ -23,4 +23,13 @@ export function gitProjectIdentifier(path: string, remoteUrl?: string): string {
 /** The ref of the git project at `path`, cloned from `remoteUrl` when it was. */
 export function gitProjectRef(path: string, remoteUrl?: string): ProjectRef {
   return makeProjectRef(GIT_PROJECT_TYPE, gitProjectIdentifier(path, remoteUrl));
+}
+
+/**
+ * Whether a project belongs to the git type. Every git hook that serves an
+ * existing project checks it first: the hook points are shared by every
+ * project type, and git acts only on its own projects.
+ */
+export function isGitProject(ref: ProjectRef): boolean {
+  return parseProjectRef(ref)?.type === GIT_PROJECT_TYPE;
 }

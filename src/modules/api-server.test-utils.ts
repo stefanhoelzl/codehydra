@@ -71,7 +71,7 @@ import type {
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { workspacePathSchema, type WorkspacePath, type WorkspaceRef } from "../intents/contract";
 import { parseWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import { testWorkspaceRef } from "../shared/test-fixtures";
 import { Path } from "../utils/path/path";
 import type { LogScopeStore } from "../boundaries/platform/logging-types";

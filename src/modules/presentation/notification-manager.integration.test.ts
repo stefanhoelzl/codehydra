@@ -11,7 +11,7 @@ import { NotificationManager } from "./sessions";
 import { ApiError } from "../../api/errors";
 import type { NotificationConfig } from "../../shared/notification-types";
 import { makeWorkspaceRef } from "../../utils/ref";
-import { gitProjectRef } from "../git-project-ref";
+import { gitProjectRef } from "../git/ref";
 import { projPath } from "../../shared/test-fixtures";
 
 const PROJECT_REF = gitProjectRef(projPath("/project"));

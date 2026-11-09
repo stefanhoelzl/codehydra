@@ -436,7 +436,7 @@ Code change involves external system interface?
 
 | Condition                                     | Entry Point                        | Example                                     |
 | --------------------------------------------- | ---------------------------------- | ------------------------------------------- |
-| Module is reached through an intent           | `dispatcher.dispatch()`            | GitWorktreeWorkspaceModule, AgentModule     |
+| Module is reached through an intent           | `dispatcher.dispatch()`            | GitProjectModule, AgentModule               |
 | Module is internal service with complex state | Direct service                     | IdeServerModule, ApiServer                  |
 | Module is Electron wrapper                    | Direct with mocked Electron APIs   | ViewManager, WindowManager                  |
 | Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog              |

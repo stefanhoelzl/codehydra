@@ -34,7 +34,6 @@ import type { NotificationConfig } from "../shared/notification-types";
 import type { WorkspacePath } from "../intents/contract";
 import { Path } from "../utils/path/path";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
 import { defineHooks } from "../intents/declarations";
 
 interface DebugModuleDeps {
@@ -93,7 +92,7 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
           handler: async (ctx): Promise<HookOutput<DeleteHookResult>> => {
             if (!isActive("debug.blocking-pids")) return { result: {} };
             const { projectPath, workspacePath, workspaceName } = ctx;
-            const projectRef = gitProjectRef(projectPath);
+            const { projectRef } = ctx;
             debugWorkspaces.set(workspacePath, {
               workspaceRef: makeWorkspaceRef(projectRef, workspaceName),
               workspacePath,

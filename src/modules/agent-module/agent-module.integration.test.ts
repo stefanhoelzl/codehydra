@@ -98,7 +98,7 @@ import type { ConfigAgentType } from "../../boundaries/platform/config";
 import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
 import { wsPath, projPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import type { WorkspacePath } from "../../intents/contract";
-import { gitProjectRef } from "../git-project-ref";
+import { gitProjectRef } from "../git/ref";
 import type { WorkspaceRef } from "../../intents/contract";
 
 /** The ref of the one workspace these tests act on. */

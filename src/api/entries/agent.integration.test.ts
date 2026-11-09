@@ -27,7 +27,7 @@ import type {
 } from "../../intents/lib/operation";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { ProjectPath, WorkspaceRef } from "../../intents/contract";
-import { gitProjectRef } from "../../modules/git-project-ref";
+import { gitProjectRef } from "../../modules/git/ref";
 import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { createLockModule } from "../../modules/lock-module";
 import { ApiError } from "../errors";

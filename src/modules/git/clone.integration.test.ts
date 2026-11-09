@@ -1,5 +1,6 @@
 /**
- * Integration tests for RemoteProjectModule.
+ * Integration tests for the git module's project side for URLs: clone on open,
+ * delete the clone on a close that asks for it.
  *
  * Tests hook handlers through the Dispatcher -- the same
  * infrastructure used by operations -- with frozen contexts and result/error
@@ -14,30 +15,29 @@ import type {
   HookResult,
   OperationSchemas,
   ResolvedHooks,
-} from "../intents/lib/operation";
-import type { IntentModule } from "../intents/lib/module";
+} from "../../intents/lib/operation";
+import type { IntentModule } from "../../intents/lib/module";
 
-import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {
   createMockGitClient,
   gitClientMatchers,
-} from "../boundaries/platform/git-client.state-mock";
-import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
-import { createFileSystemMock } from "../boundaries/platform/filesystem.state-mock";
-import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
-import { createRemoteProjectModule } from "./remote-project-module";
-import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
-import type { OpenProjectIntent, CloneProgressFrame } from "../intents/open-project";
-import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
-import type { CloseHookInput, CloseProjectIntent } from "../intents/close-project";
-import { Path } from "../utils/path/path";
-import { extractRepoName } from "../utils/url-utils";
-import type { ProjectId } from "../shared/api/types";
-import type { schemas as openProjectSchemas } from "../intents/open-project";
-import type { schemas as closeProjectSchemas } from "../intents/close-project";
-import type { ProjectPath } from "../intents/contract";
-import { projPath, testPath } from "../shared/test-fixtures";
-import { gitProjectRef } from "./git-project-ref";
+} from "../../boundaries/platform/git-client.state-mock";
+import { createMockPathProvider } from "../../boundaries/platform/path-provider.test-utils";
+import { createFileSystemMock } from "../../boundaries/platform/filesystem.state-mock";
+import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
+import { createTestGitModule } from "./git.test-utils";
+import { OPEN_PROJECT_OPERATION_ID } from "../../intents/open-project";
+import type { OpenProjectIntent, CloneProgressFrame } from "../../intents/open-project";
+import { CLOSE_PROJECT_OPERATION_ID } from "../../intents/close-project";
+import type { CloseHookInput, CloseProjectIntent } from "../../intents/close-project";
+import { Path } from "../../utils/path/path";
+import { extractRepoName } from "../../utils/url-utils";
+import type { ProjectId } from "../../shared/api/types";
+import type { schemas as openProjectSchemas } from "../../intents/open-project";
+import type { schemas as closeProjectSchemas } from "../../intents/close-project";
+import type { ProjectPath } from "../../intents/contract";
+import { projPath, testPath } from "../../shared/test-fixtures";
+import { gitProjectRef } from "./ref";
 
 // Pre-computed: generateProjectIdFromUrl("https://github.com/org/repo.git")
 const URL_PROJECT_ID = "repo-4c06e3f1" as ProjectId;
@@ -101,11 +101,15 @@ function createTestSetup() {
 
   const notifications = createMockNotificationManager();
 
-  const module = createRemoteProjectModule({
+  const module = createTestGitModule({
+    projectsDir: pathProvider.dataPath("projects").toString(),
     fs,
     gitClient,
-    workspacesRoot: { remotesDir: () => pathProvider.dataPath("remotes") },
-    logger: SILENT_LOGGER,
+    workspacesRoot: {
+      remotesDir: () => pathProvider.dataPath("remotes"),
+      workspacesDir: () => pathProvider.dataPath("workspaces"),
+      previousWorkspacesDirs: () => [],
+    },
     dispatcher: notifications.dispatcher,
   });
 
@@ -149,7 +153,7 @@ function closeProjectIntent(payload: {
 // Tests
 // =============================================================================
 
-describe("RemoteProjectModule Integration", () => {
+describe("Git module: cloned projects", () => {
   // ---------------------------------------------------------------------------
   // open-project / resolve
   // ---------------------------------------------------------------------------
@@ -209,8 +213,8 @@ describe("RemoteProjectModule Integration", () => {
       expect(gitClient.$.repositories.size).toBe(0);
     });
 
-    it("returns undefined for local path (no git URL)", async () => {
-      const { hookRegistry } = createTestSetup();
+    it("does not clone for a local path (no git URL)", async () => {
+      const { hookRegistry, gitClient } = createTestSetup();
 
       const hooks = hookRegistry.resolve<typeof openProjectSchemas>(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({
@@ -219,8 +223,13 @@ describe("RemoteProjectModule Integration", () => {
 
       const { results, errors } = await hooks.collect("resolve", resolveContext(intent));
 
+      // The local branch resolves it, by its path and without a remote.
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(0);
+      expect(results).toEqual([
+        expect.objectContaining({ type: "git", projectPath: projPath("/local/project") }),
+      ]);
+      expect(results[0]).not.toHaveProperty("remoteUrl");
+      expect(gitClient.$.repositories.size).toBe(0);
     });
 
     it.each(["/srv/git/repo", "file:///srv/git/repo", "./repo"])(

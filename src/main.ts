@@ -169,9 +169,7 @@ import { DefaultStateService } from "./boundaries/platform/state-service";
 import { createWorkspacesRootModule } from "./modules/workspaces-root/module";
 import { createStateModule } from "./modules/state-module";
 import { createProjectStoreModule } from "./modules/project-store-module";
-import { createLocalProjectModule } from "./modules/local-project-module";
-import { createRemoteProjectModule } from "./modules/remote-project-module";
-import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
+import { createGitProjectModule } from "./modules/git/module";
 import { createWorkspaceRegistryModule } from "./modules/workspace-registry-module";
 import { createWorkspaceLifecycleModule } from "./modules/workspace-lifecycle-module";
 import { createBadgeModule } from "./modules/badge-module";
@@ -822,7 +820,7 @@ const pluginModule = createPluginModule({
     logger: loggingService.createLogger("plugins"),
   }),
   // Built further down; read when app:start migrates.
-  projectRefs: () => localProjectModule.projectRefs(),
+  projectRefs: () => gitProjectModule.projectRefs(),
   registry: () => operationRegistry,
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
@@ -879,32 +877,20 @@ const workspacesRootModule = createWorkspacesRootModule({
   logger: loggingService.createLogger("workspaces-root"),
 });
 const workspacesRoot = workspacesRootModule.root;
-const localProjectModule = createLocalProjectModule({
+// The git project type: its projects (local and cloned) and their worktrees.
+const gitProjectModule = createGitProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
-  remotesDir: () => workspacesRoot.remotesDir().toString(),
+  workspacesRoot,
   fs: fileSystemLayer,
   store: projectStoreModule,
+  registry: workspaceRegistryModule,
   gitWorktreeProvider,
+  gitClient,
   ui: presentationModule,
   dispatcher,
-  gitClient,
   logger: lifecycleLogger,
+  workspaceLogger: apiLogger,
 });
-const remoteProjectModule = createRemoteProjectModule({
-  fs: fileSystemLayer,
-  gitClient,
-  workspacesRoot,
-  logger: lifecycleLogger,
-  dispatcher,
-});
-const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
-  gitWorktreeProvider,
-  workspacesRoot,
-  apiLogger,
-  presentationModule,
-  dispatcher,
-  workspaceRegistryModule
-);
 const badgeModule = createBadgeModule({
   platformInfo,
   appLayer,
@@ -1147,11 +1133,9 @@ dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
 dispatcher.registerModule(deleteWindowsLockModule);
 dispatcher.registerModule(posixProcessCleanupModule);
-dispatcher.registerModule(remoteProjectModule);
 dispatcher.registerModule(projectStoreModule);
 dispatcher.registerModule(workspaceRegistryModule);
-dispatcher.registerModule(localProjectModule);
-dispatcher.registerModule(gitWorktreeWorkspaceModule);
+dispatcher.registerModule(gitProjectModule);
 dispatcher.registerModule(windowTitleModule);
 dispatcher.registerModule(stateModule);
 dispatcher.registerModule(workspacesRootModule.module);

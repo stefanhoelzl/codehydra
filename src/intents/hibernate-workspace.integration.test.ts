@@ -61,7 +61,7 @@ import {
 import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
 import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import { workspaceSchema } from "./contract";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 
 const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;

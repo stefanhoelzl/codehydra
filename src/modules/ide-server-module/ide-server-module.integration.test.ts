@@ -110,7 +110,7 @@ import {
 import { FileSystemError, SetupError } from "../../shared/errors/service-errors";
 import type { WorkspaceName } from "../../shared/api/types";
 import { wsPath, projPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
-import { gitProjectRef } from "../git-project-ref";
+import { gitProjectRef } from "../git/ref";
 
 const FEATURE_REF = workspaceRefIn(projPath("/test/project"), "feature-1");
 

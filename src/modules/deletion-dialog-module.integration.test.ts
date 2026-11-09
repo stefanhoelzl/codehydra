@@ -33,7 +33,7 @@ import type { WorkspaceName, ProjectId } from "../shared/api/types";
 import type { DialogConfig } from "../shared/dialog-types";
 import { testPath } from "../shared/test-fixtures";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 
 // =============================================================================
 // Test Helpers

@@ -27,7 +27,7 @@ import type { IntentModule } from "./module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { workspaceRefSchema } from "../contract";
 import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
-import { gitProjectRef } from "../../modules/git-project-ref";
+import { gitProjectRef } from "../../modules/git/ref";
 
 // =============================================================================
 // Test operation

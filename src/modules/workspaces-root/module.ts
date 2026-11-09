@@ -49,7 +49,7 @@ import type { UiPresenter } from "../presentation/presentation-module";
 import type { DialogHandle } from "../presentation/sessions";
 import { notify } from "../presentation/notification-card";
 import type { SettingsExtraRow } from "../settings-module";
-import { loadAllProjects } from "../local-project-module";
+import { loadAllProjects } from "../git/records";
 import { Path } from "../../utils/path/path";
 import { createWorkspacesRoot, remotesDirUnder, type WorkspacesRoot } from "./workspaces-root";
 import {

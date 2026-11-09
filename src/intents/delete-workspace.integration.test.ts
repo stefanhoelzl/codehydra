@@ -99,7 +99,7 @@ import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-pr
 import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath, ProjectRef, WorkspaceRef } from "./contract";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 
 // =============================================================================
 // Test Helpers

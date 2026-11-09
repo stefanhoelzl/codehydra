@@ -14,7 +14,7 @@ import type { ProjectId, WorkspaceName, WorkspaceRef } from "../intents/contract
 import type { EventFor } from "../intents/declarations";
 import { projPath } from "../shared/test-fixtures";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 
 const PROJECT_REF = gitProjectRef(projPath("/projects/test"));
 const REF: WorkspaceRef = makeWorkspaceRef(PROJECT_REF, "a");

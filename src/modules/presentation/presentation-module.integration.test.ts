@@ -105,7 +105,7 @@ import {
 } from "../../intents/show-notification";
 import { projPath, wsPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { makeWorkspaceRef } from "../../utils/ref";
-import { gitProjectRef } from "../git-project-ref";
+import { gitProjectRef } from "../git/ref";
 import type { ProjectPath, ProjectRef } from "../../intents/contract";
 
 // =============================================================================

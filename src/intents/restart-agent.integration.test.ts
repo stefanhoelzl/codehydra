@@ -33,7 +33,7 @@ import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 import type { WorkspacePath, WorkspaceRef } from "./contract";
 
 // =============================================================================

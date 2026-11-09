@@ -142,7 +142,7 @@ export function wsPath(p: string): WorkspacePath {
  * same value the code under test registers the project with.
  */
 export function workspaceRefIn(projectPath: string, name: string): WorkspaceRef {
-  // A git checkout's ref (see modules/git-project-ref.ts, which the renderer cannot import)
+  // A git checkout's ref (see modules/git/ref.ts, which the renderer cannot import)
   return makeWorkspaceRef(makeProjectRef("git", new Path(projectPath).toString()), name);
 }
 

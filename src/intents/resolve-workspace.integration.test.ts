@@ -31,7 +31,7 @@ import type { HookContext, HookOutput } from "./lib/operation";
 import type { WorkspaceName } from "../shared/api/types";
 import { wsPath, projPath } from "../shared/test-fixtures";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 
 // =============================================================================
 // Test Constants
