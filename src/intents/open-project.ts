@@ -2,7 +2,7 @@
  * OpenProjectOperation - Orchestrates project opening.
  *
  * Runs 3 sequential hook points using collect() for isolated contexts:
- * 1. "resolve": clone if URL, validate git; the project's type + config → ResolveHookResult
+ * 1. "resolve": clone if URL, validate git; the project's type, config + identifier → ResolveHookResult
  * 2. "register": generate ID, store state, persist type + config → RegisterHookResult
  * 3. "discover": find existing workspaces → DiscoverHookResult
  *
@@ -42,7 +42,7 @@ import {
 import { activeWorkspaceRef } from "./lib/active-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
-import { projectRefFor } from "../utils/ref";
+import { makeProjectRef } from "../utils/ref";
 import { Path } from "../utils/path/path";
 import { compareDisplayNames } from "../shared/ui-state";
 import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
@@ -127,6 +127,11 @@ export const resolveHookResultSchema = z
     type: projectTypeSchema.optional(),
     /** That type's opaque description of the project, persisted by the project store. */
     config: projectTypeConfigSchema.optional(),
+    /**
+     * What the type names the project by, derived from its config: the part of
+     * the project's ref after its type (`ch::local::<type>::<identifier>`).
+     */
+    identifier: z.string().min(1).optional(),
     /** If true, the project is already open — skip workspace:open and event emission. */
     alreadyOpen: z.boolean().optional(),
   })
@@ -402,13 +407,17 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
     const resolvedRemoteUrl = onlyDefined(resolveResults, "remoteUrl", "project:open resolve");
     const projectType = onlyDefined(resolveResults, "type", "project:open resolve");
     const projectConfig = onlyDefined(resolveResults, "config", "project:open resolve");
+    const identifier = onlyDefined(resolveResults, "identifier", "project:open resolve");
     let alreadyOpen = resolveResults.some((r) => r.alreadyOpen);
     if (!projectPath) {
       throw new Error("Resolve hook did not provide projectPath");
     }
+    if (projectType === undefined || identifier === undefined) {
+      throw new Error(`No project type resolved for ${projectPath}`);
+    }
 
-    // The project's identity: its origin when cloned, else its path
-    const projectRef = projectRefFor(projectPath, resolvedRemoteUrl);
+    // The project's identity: its type, and what that type names it by
+    const projectRef = makeProjectRef(projectType, identifier);
 
     // 2. Register: generate ID, store state, persist
     const registerCtx: RegisterHookInput = {

@@ -33,7 +33,7 @@ import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 import type { WorkspacePath, WorkspaceRef } from "./contract";
 
 // =============================================================================
@@ -192,7 +192,7 @@ describe("RestartAgent Operation", () => {
       expect(event.payload.projectId).toBe(projectId);
       expect(event.payload.workspaceName).toBe(workspaceName);
       expect(event.payload.workspaceRef).toBe(WORKSPACE_REF);
-      expect(event.payload.projectRef).toBe(projectRefFor(PROJECT_ROOT));
+      expect(event.payload.projectRef).toBe(gitProjectRef(PROJECT_ROOT));
       expect(event.payload.port).toBe(9090);
     });
 

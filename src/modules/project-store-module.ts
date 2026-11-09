@@ -337,6 +337,17 @@ export function createProjectStoreModule(deps: ProjectStoreModuleDeps): ProjectS
             const existing = (await loadProjectRecords(fs, projectsDir)).find((record) =>
               isRecordOf(record, type, config)
             );
+            // A ref names one open project. Checked with no await before the
+            // project is added below: startup opens the saved projects in parallel.
+            const sameRef = [...projects.entries()].find(
+              ([, project]) => project.ref === projectRef
+            );
+            if (sameRef !== undefined) {
+              throw new Error(
+                `${projectPathStr} would have the ref ${projectRef}, which the open project ` +
+                  `at ${sameRef[0]} already has`
+              );
+            }
             // A record keeps its badge color while no other open project has it.
             // Picked and added to internal state with no await in between:
             // startup opens the saved projects in parallel.

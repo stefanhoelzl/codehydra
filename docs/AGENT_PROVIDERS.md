@@ -528,7 +528,7 @@ Every registered hook but `SessionStart` is a Claude **HTTP hook** (`type: "http
 ```
 POST /hook/<HookName>
 Content-Type: application/json
-X-CH-Workspace: ch::local::/path/to/project::feature-x      (HTTP hooks)
+X-CH-Workspace: ch::local::git::/path/to/project::feature-x     (HTTP hooks)
 
 { "session_id": "...", ... }   (+ "workspaceRef", "_ch_messaging" from the SessionStart handler)
 ```

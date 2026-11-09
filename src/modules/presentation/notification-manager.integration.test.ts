@@ -10,10 +10,11 @@ import { describe, it, expect, vi } from "vitest";
 import { NotificationManager } from "./sessions";
 import { ApiError } from "../../api/errors";
 import type { NotificationConfig } from "../../shared/notification-types";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { makeWorkspaceRef } from "../../utils/ref";
+import { gitProjectRef } from "../git-project-ref";
 import { projPath } from "../../shared/test-fixtures";
 
-const PROJECT_REF = projectRefFor(projPath("/project"));
+const PROJECT_REF = gitProjectRef(projPath("/project"));
 const WS_FEAT = makeWorkspaceRef(PROJECT_REF, "feat");
 const WS_A = makeWorkspaceRef(PROJECT_REF, "a");
 const WS_B = makeWorkspaceRef(PROJECT_REF, "b");

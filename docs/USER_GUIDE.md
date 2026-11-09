@@ -1061,8 +1061,8 @@ Every entry receives this core, plus a field of its own:
   "workspaceName": "feature-x",
   "workspacePath": "/home/me/.local/share/codehydra/projects/my-app-1a2b3c4d/workspaces/feature-x",
   "projectPath": "/home/me/src/my-app",
-  "workspace": "ch::local::/home/me/src/my-app::feature-x",
-  "project": "ch::local::/home/me/src/my-app",
+  "workspace": "ch::local::git::/home/me/src/my-app::feature-x",
+  "project": "ch::local::git::/home/me/src/my-app",
   "branch": "feature-x",
   "base": "main"
 }
@@ -1730,8 +1730,9 @@ ch guide plugins
   first (the one the current directory's workspace belongs to, or whose
   checkout you are in) and wins there; otherwise it must be unique across the
   other open projects. `--project <project>` (a name, the checkout's path, the
-  origin it was cloned from, or its ref) looks the name up in that project
-  only. A workspace's path is not accepted. A name that matches no open
+  origin it was cloned from, `<type>::<identifier>` — the part of its ref after
+  the machine, e.g. `git::github.com/org/my-app` — or its ref) looks the name up
+  in that project only. An origin with no type in front means git. A workspace's path is not accepted. A name that matches no open
   workspace fails the command with exit 6; one that matches several fails it
   with exit 2 — add `--project` or pass the ref. `--project` without `--workspace` is exit 2 (except on
   `ws create` and `ws switch`, whose own `--project` it is). On a command that
@@ -1766,19 +1767,27 @@ Every workspace and project has a ref: the one name that identifies it,
 whatever else changes.
 
 ```
-ch::local::github.com/org/my-app                (a project cloned from a URL)
-ch::local::/home/me/src/my-app                  (a project opened from a folder)
-ch::local::/home/me/src/my-app::feature-x       (a workspace of it)
+ch::local::git::github.com/org/my-app             (a project cloned from a URL)
+ch::local::git::/home/me/src/my-app               (a project opened from a folder)
+ch::local::git::/home/me/src/my-app::feature-x    (a workspace of it)
 ```
 
-A project's ref names the machine (`local` for now), then the origin it was
-cloned from (normalized: no scheme, lower case) or the folder it was opened
-from. A workspace's ref adds its name. A ref survives CodeHydra moving its
-clones and worktrees, and a workspace switching branch. Every `--workspace` /
-`--project` (and MCP's `workspace` / `project`) accepts one; `ch project list`
-shows them, and plugins receive them. A project cannot be cloned from a path
-on this machine (or a `file:` URL): it would get the same ref as that folder
-opened directly — open the folder instead.
+A project's ref names the machine (`local` for now), then the project's type
+(`git`, the only one so far), then what that type names the project by: for
+git, the origin it was cloned from (normalized: no scheme, lower case) or the
+folder it was opened from. A workspace's ref adds its name. A ref survives
+CodeHydra moving its clones and worktrees, and a workspace switching branch.
+Every `--workspace` / `--project` (and MCP's `workspace` / `project`) accepts
+one; `ch project list` shows them, and plugins receive them. A project cannot
+be cloned from a path on this machine (or a `file:` URL): it would get the same
+ref as that folder opened directly — open the folder instead.
+
+Refs written before project types had no type (`ch::local::github.com/org/my-app`,
+`ch::local::/home/me/src/my-app::feature-x`). They are still accepted wherever
+a ref is, and name the git project they always did, but CodeHydra only ever
+shows and hands out refs with a type — a plugin or script comparing refs as
+text should compare against the new form. Remembered plugin answers, automation
+entries and collapsed sidebar cards stored under an old ref carry over.
 
 ### Workspace metadata
 

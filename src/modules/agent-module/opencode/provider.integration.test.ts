@@ -46,7 +46,7 @@ describe("OpenCodeProvider.sendMessage", () => {
   beforeEach(async () => {
     wire.current = createWireClientMock();
     provider = new OpenCodeProvider(
-      workspaceRefSchema.parse("ch::local::/workspace::feature-a"),
+      workspaceRefSchema.parse("ch::local::git::/workspace::feature-a"),
       new Path("/workspace/feature-a"),
       SILENT_LOGGER
     );
@@ -113,7 +113,7 @@ describe("OpenCodeProvider.sendPromptAsync", () => {
   beforeEach(async () => {
     wire.current = createWireClientMock();
     provider = new OpenCodeProvider(
-      workspaceRefSchema.parse("ch::local::/workspace::feature-a"),
+      workspaceRefSchema.parse("ch::local::git::/workspace::feature-a"),
       new Path("/workspace/feature-a"),
       SILENT_LOGGER
     );
@@ -161,7 +161,7 @@ describe("OpenCodeProvider.sendPromptAsync", () => {
 
   it("reports not connected without a client", async () => {
     const disconnected = new OpenCodeProvider(
-      workspaceRefSchema.parse("ch::local::/workspace::feature-b"),
+      workspaceRefSchema.parse("ch::local::git::/workspace::feature-b"),
       new Path("/workspace/feature-b"),
       SILENT_LOGGER
     );

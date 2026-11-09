@@ -30,7 +30,7 @@ import { notify } from "./presentation/notification-card";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 import { defineHooks } from "../intents/declarations";
-import { GIT_PROJECT_TYPE } from "./local-project-module";
+import { GIT_PROJECT_TYPE, gitProjectIdentifier } from "./git-project-ref";
 
 // =============================================================================
 // Factory
@@ -46,6 +46,7 @@ function resolved(gitPath: Path, remoteUrl: string): ResolveHookResult {
     remoteUrl,
     type: GIT_PROJECT_TYPE,
     config: { remoteUrl },
+    identifier: gitProjectIdentifier(gitPath.toString(), remoteUrl),
   };
 }
 

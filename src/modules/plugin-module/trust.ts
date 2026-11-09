@@ -38,7 +38,7 @@ import type { Logger } from "../../boundaries/platform/logging-types";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
 import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
-import { isRef } from "../../utils/ref";
+import { asProjectRef, isRef } from "../../utils/ref";
 import type { PluginSource } from "./discovery";
 import { DEFAULT_SOURCE } from "./sources";
 
@@ -93,7 +93,8 @@ export interface PluginTrust {
    * the default folder's (`local:default:<name>`), `workspace:` is `project:`,
    * and a project stored by its path, as versions before refs did, is stored
    * by its ref. An answer whose project is unknown keeps its path and is never
-   * read again: its project asks afresh.
+   * read again: its project asks afresh. A ref from before project types
+   * (`ch::local::<project>`) becomes the git ref it names.
    */
   migrateKeys(refsByPath: ReadonlyMap<string, ProjectRef>): Promise<void>;
 }
@@ -131,7 +132,8 @@ function migratedKey(
   if (cut <= 0) return undefined;
   const project = rest.slice(0, cut);
   const name = rest.slice(cut + 1);
-  const ref = isRef(project) ? project : (refOf(project) ?? project);
+  // A ref from before project types is rewritten as the git ref it names
+  const ref = isRef(project) ? (asProjectRef(project) ?? project) : (refOf(project) ?? project);
   const next = `project:${ref}:${name}`;
   return next === key ? undefined : next;
 }

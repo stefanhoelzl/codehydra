@@ -11,7 +11,7 @@ import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
-import { projectRefFor } from "../../utils/ref";
+import { gitProjectRef } from "../../modules/git-project-ref";
 import { OperationRegistry } from "../registry";
 import { defineEntry, type OperationContext } from "../types";
 import { OPERATION_NAMES } from "../names";
@@ -33,7 +33,7 @@ class ListProjectsOp implements Operation<typeof listProjectsSchemas> {
   async execute(): Promise<Project[]> {
     return [
       {
-        ref: projectRefFor(APP),
+        ref: gitProjectRef(APP),
         id: "app-1" as ProjectId,
         name: "app",
         path: APP,

@@ -98,7 +98,7 @@ import type { ConfigAgentType } from "../../boundaries/platform/config";
 import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
 import { wsPath, projPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import type { WorkspacePath } from "../../intents/contract";
-import { projectRefFor } from "../../utils/ref";
+import { gitProjectRef } from "../git-project-ref";
 import type { WorkspaceRef } from "../../intents/contract";
 
 /** The ref of the one workspace these tests act on. */
@@ -292,7 +292,7 @@ function minimalSetup(
         fresh,
         workspaceRef: TEST_WS_REF,
         workspacePath: testPath("/test/workspace").toNative(),
-        projectRef: projectRefFor(projPath("/test/project")),
+        projectRef: gitProjectRef(projPath("/test/project")),
         projectPath: testPath("/test/project").toNative(),
         ...hookInput,
         ...(agentCapability !== null && {
@@ -330,7 +330,7 @@ function minimalShutdown(
           intent: ctx.intent,
           workspaceRef: payload.workspaceRef ?? TEST_WS_REF,
           workspacePath: wsPath("/test/workspace"),
-          projectRef: projectRefFor(projPath("/test/project")),
+          projectRef: gitProjectRef(projPath("/test/project")),
           projectPath: projPath("/test/project"),
           workspaceName: "test-workspace" as WorkspaceName,
           active: false,

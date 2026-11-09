@@ -27,7 +27,7 @@ import type {
 } from "../../intents/lib/operation";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { ProjectPath, WorkspaceRef } from "../../intents/contract";
-import { projectRefFor } from "../../utils/ref";
+import { gitProjectRef } from "../../modules/git-project-ref";
 import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { createLockModule } from "../../modules/lock-module";
 import { ApiError } from "../errors";
@@ -77,7 +77,7 @@ class ListProjectsOp implements Operation<typeof listProjectsSchemas> {
   readonly schemas = listProjectsSchemas;
   async execute(): Promise<Project[]> {
     return PROJECTS.map((project) => ({
-      ref: projectRefFor(project.path),
+      ref: gitProjectRef(project.path),
       id: `${project.name}-1` as ProjectId,
       name: project.name,
       path: project.path,

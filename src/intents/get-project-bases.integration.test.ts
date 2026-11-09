@@ -38,7 +38,7 @@ import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent } from "./lib/types";
 import type { ProjectId } from "../shared/api/types";
 import { projPath } from "../shared/test-fixtures";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 
 // =============================================================================
 // Test Constants
@@ -46,7 +46,7 @@ import { projectRefFor } from "../utils/ref";
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 const PROJECT_ROOT = projPath("/project");
-const PROJECT_REF = projectRefFor(PROJECT_ROOT);
+const PROJECT_REF = gitProjectRef(PROJECT_ROOT);
 const CACHED_BASES = [
   { name: "main", isRemote: false },
   { name: "origin/main", isRemote: true },
@@ -314,8 +314,8 @@ describe("GetProjectBases Operation", () => {
       const setup = createTestSetup();
 
       await expect(
-        setup.dispatcher.dispatch(createIntent(projectRefFor(projPath("/nonexistent/project"))))
-      ).rejects.toThrow(`Project not found: ${projectRefFor(projPath("/nonexistent/project"))}`);
+        setup.dispatcher.dispatch(createIntent(gitProjectRef(projPath("/nonexistent/project"))))
+      ).rejects.toThrow(`Project not found: ${gitProjectRef(projPath("/nonexistent/project"))}`);
     });
   });
 });

@@ -110,7 +110,7 @@ import {
 import { FileSystemError, SetupError } from "../../shared/errors/service-errors";
 import type { WorkspaceName } from "../../shared/api/types";
 import { wsPath, projPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
-import { projectRefFor } from "../../utils/ref";
+import { gitProjectRef } from "../git-project-ref";
 
 const FEATURE_REF = workspaceRefIn(projPath("/test/project"), "feature-1");
 
@@ -229,7 +229,7 @@ function createMinimalDeleteOperation() {
     {
       hookContext: (ctx): DeletePipelineHookInput => ({
         intent: ctx.intent,
-        projectRef: projectRefFor(projPath("/test/project")),
+        projectRef: gitProjectRef(projPath("/test/project")),
         projectPath: projPath("/test/project"),
         workspaceName: "feature-1" as WorkspaceName,
         workspaceRef: (ctx.intent as DeleteWorkspaceIntent).payload.workspaceRef,
@@ -1318,7 +1318,7 @@ describe("IdeServerModule", () => {
         type: "workspace:open",
         payload: {
           workspaceName: "feature-1",
-          projectRef: projectRefFor(projPath("/test/project")),
+          projectRef: gitProjectRef(projPath("/test/project")),
           base: "main",
         },
       })) as unknown as string | undefined;
@@ -1361,7 +1361,7 @@ describe("IdeServerModule", () => {
         type: "workspace:open",
         payload: {
           workspaceName: "feature-1",
-          projectRef: projectRefFor(projPath("/test/project")),
+          projectRef: gitProjectRef(projPath("/test/project")),
         },
       });
 
@@ -1414,7 +1414,7 @@ describe("IdeServerModule", () => {
         type: "workspace:open",
         payload: {
           workspaceName: "feature-1",
-          projectRef: projectRefFor(projPath("/test/project")),
+          projectRef: gitProjectRef(projPath("/test/project")),
           base: "main",
         },
       })) as unknown as string | undefined;

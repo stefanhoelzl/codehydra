@@ -39,7 +39,9 @@ import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 import { SwitchWorkspaceOperation, SWITCH_WORKSPACE_OPERATION_ID } from "./switch-workspace";
 import type { SwitchWorkspaceHookResult } from "./switch-workspace";
 import type { WorkspacePath, ProjectPath } from "./contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef } from "../utils/ref";
+import { GIT_PROJECT_TYPE, gitProjectRef } from "../modules/git-project-ref";
+import { looksLikePath } from "../api/workspace-lookup";
 import type { ProjectRef, WorkspaceRef } from "./contract";
 import { workspacePathSchema } from "./contract";
 import { parseProjectRef } from "../utils/ref";
@@ -141,7 +143,7 @@ export function workspacesFromProjects(
       if (workspace) {
         return {
           projectPath: project.path,
-          projectRef: projectRefFor(project.path, project.remoteUrl),
+          projectRef: gitProjectRef(project.path, project.remoteUrl),
           workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
           ...(workspace.metadata !== undefined && { metadata: workspace.metadata }),
         };
@@ -251,7 +253,7 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     // A workspace named by its ref is found among the entries by the ref its
     // project and name give. A lookup function answers refs when it lists its paths.
     const projectRefOfEntry = (entry: MockWorkspaceEntry): ProjectRef =>
-      entry.projectRef ?? projectRefFor(entry.projectPath);
+      entry.projectRef ?? gitProjectRef(entry.projectPath);
     const refOf = (entry: MockWorkspaceEntry): WorkspaceRef =>
       makeWorkspaceRef(projectRefOfEntry(entry), entry.workspaceName);
     const knownPaths = (): Iterable<WorkspacePath> =>
@@ -314,10 +316,10 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     const findProject = (
       projectRef: ProjectRef
     ): { entry: MockProjectEntry; projectPath: ProjectPath } | undefined => {
-      // A checkout's ref names its path; anything else is looked for by ref.
+      // A git checkout's ref names its path; anything else is looked for by ref.
       const parts = parseProjectRef(projectRef);
-      if (parts?.kind === "checkout") {
-        const projectPath = projectPathSchema.parse(parts.project);
+      if (parts?.type === GIT_PROJECT_TYPE && looksLikePath(parts.identifier)) {
+        const projectPath = projectPathSchema.parse(parts.identifier);
         const entry = lookupProject(projectPath);
         if (entry !== undefined && (entry.projectRef ?? projectRef) === projectRef) {
           return { entry, projectPath };

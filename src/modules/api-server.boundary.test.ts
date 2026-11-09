@@ -41,7 +41,7 @@ import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { WorkspacePath } from "../intents/contract";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import { AsyncLogScopeStore, ScopedLogger } from "../boundaries/platform/log-scope";
 import type { LogContext, Logger, LogScope } from "../boundaries/platform/logging-types";
 
@@ -62,7 +62,7 @@ function createDeleteShutdownOperation(
       const hookCtx: DeletePipelineHookInput = {
         // The minimal schema types the payload as `unknown`, so widen before narrowing.
         intent: ctx.intent as unknown as DeleteWorkspaceIntent,
-        projectRef: projectRefFor(projPath("/projects/test")),
+        projectRef: gitProjectRef(projPath("/projects/test")),
         projectPath: projPath("/projects/test"),
         workspaceRef,
         workspacePath,
@@ -79,7 +79,7 @@ function createDeleteShutdownOperation(
             projectId: "test-12345678" as ProjectId,
             workspaceName: "ws" as WorkspaceName,
             workspaceRef,
-            projectRef: projectRefFor(projPath("/projects/test")),
+            projectRef: gitProjectRef(projPath("/projects/test")),
             worktreeRemoved: true,
           },
         });
@@ -1025,7 +1025,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
           type: INTENT_OPEN_WORKSPACE,
           payload: expect.objectContaining({
             // The caller's own project: the one its ref extends.
-            projectRef: projectRefFor(testPath("/test").toString()),
+            projectRef: gitProjectRef(testPath("/test").toString()),
             workspaceName: "my-ws",
             base: "main",
             agent: { type: "default", prompt: "Do something" },

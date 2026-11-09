@@ -13,7 +13,7 @@ import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
-import { projectRefFor } from "../../utils/ref";
+import { gitProjectRef } from "../../modules/git-project-ref";
 import { createLockModule } from "../../modules/lock-module";
 import { ApiError } from "../errors";
 import type { OperationContext } from "../types";
@@ -32,7 +32,7 @@ const FEAT_PATH = wsPath("/projects/app/workspaces/feat");
 const FEAT = workspaceRefIn(APP, "feat");
 /** The scope a caller in (or naming) `feat` lists in. */
 const FEAT_SCOPE: PluginScope = {
-  workspace: { workspacePath: FEAT_PATH, projectRef: projectRefFor(APP), projectPath: APP },
+  workspace: { workspacePath: FEAT_PATH, projectRef: gitProjectRef(APP), projectPath: APP },
 };
 
 const resolveSchemas = {
@@ -48,7 +48,7 @@ class ResolveWorkspaceOp implements Operation<typeof resolveSchemas> {
     return {
       workspaceRef: FEAT,
       workspacePath: FEAT_PATH,
-      projectRef: projectRefFor(APP),
+      projectRef: gitProjectRef(APP),
       projectPath: APP,
       workspaceName: "feat",
       branch: "feat",

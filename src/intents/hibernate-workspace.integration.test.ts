@@ -61,7 +61,7 @@ import {
 import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
 import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import { workspaceSchema } from "./contract";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 
 const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;
@@ -411,7 +411,7 @@ describe("workspace:hibernate", () => {
 
   it("dispatches switch in foreground when the workspace was active", async () => {
     const candidate = {
-      projectRef: projectRefFor(PROJECT_PATH),
+      projectRef: gitProjectRef(PROJECT_PATH),
       projectName: "project",
       workspaceRef: WORKSPACE_REF,
       workspaceName: WORKSPACE_NAME,
@@ -593,7 +593,7 @@ describe("workspace:wake", () => {
     // Reopen dispatched with the resolved branch and the clean (post-clear)
     // metadata, via the existingWorkspace branch of workspace:open.
     expect(recorder.openPayload).toBeDefined();
-    expect(recorder.openPayload?.projectRef).toBe(projectRefFor(PROJECT_PATH));
+    expect(recorder.openPayload?.projectRef).toBe(gitProjectRef(PROJECT_PATH));
     expect(recorder.openPayload?.workspaceName).toBe(WORKSPACE_NAME);
     expect(recorder.openPayload?.existingWorkspace).toEqual({
       path: WORKSPACE_PATH,

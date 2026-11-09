@@ -143,7 +143,7 @@ import { createModalEdges } from "../modal-edges";
 import { WAKEUP_METADATA_KEY } from "../wakeup-module";
 import { getErrorMessage } from "../../shared/error-utils";
 import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
-import { makeWorkspaceRef, projectNameOf, projectRefOf } from "../../utils/ref";
+import { asProjectRef, makeWorkspaceRef, projectNameOf, projectRefOf } from "../../utils/ref";
 import { createWorkspaceStatusCache } from "../workspace-status-cache";
 import type { ProcessMonitorModule } from "../process-monitor/process-monitor-module";
 import { createRunningHooks, type RunningHook } from "./running-hooks";
@@ -284,13 +284,17 @@ function toLoggerName(name: string): LoggerName {
   return VALID_RENDERER_LOGGER_NAMES.has(name) ? (name as LoggerName) : "ui";
 }
 
-/** Validate `sidebar.collapsed-projects`: a list of project refs. */
+/**
+ * Validate `sidebar.collapsed-projects`: a list of project refs. A ref from
+ * before project types reads as the git ref it names, and is written back so
+ * the next time the list changes.
+ */
 function validateRefList(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const refs: string[] = [];
   for (const item of value) {
     if (typeof item !== "string") return undefined;
-    refs.push(item);
+    refs.push(asProjectRef(item) ?? item);
   }
   return refs;
 }

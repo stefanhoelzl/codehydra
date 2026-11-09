@@ -34,7 +34,7 @@ import { createBehavioralLogger } from "../boundaries/platform/logging.test-util
 import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
 import type { MockProcessRunner } from "../boundaries/platform/process.state-mock";
 import { wsPath, projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import { directoryHolders, type HolderScanCall } from "../boundaries/platform/process.state-mock";
 import type { WorkspaceRef } from "../intents/contract";
 import type { ProcessMonitorModule } from "./process-monitor/process-monitor-module";
@@ -110,7 +110,7 @@ function createFlushOperation(blockingPids: readonly number[]): Operation<Operat
     {
       hookContext: (ctx): FlushHookInput => ({
         intent: ctx.intent,
-        projectRef: projectRefFor(projPath("/projects/my-app")),
+        projectRef: gitProjectRef(projPath("/projects/my-app")),
         projectPath: projPath("/projects/my-app"),
         workspaceRef: workspaceRefIn(projPath("/projects/my-app"), "feature-1"),
         workspacePath: wsPath("/workspaces/feature-1"),

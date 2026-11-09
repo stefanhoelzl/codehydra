@@ -36,7 +36,8 @@ import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath } from "../shared/test-fixtures";
 import type { WorkspacePath, WorkspaceRef } from "../intents/contract";
-import { makeWorkspaceRef, projectRefFor, projectRefOf } from "../utils/ref";
+import { makeWorkspaceRef, projectRefOf } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 
 // =============================================================================
 // Test Constants
@@ -50,7 +51,7 @@ const WS_A = wsPath("/projects/app/workspaces/alpha");
 const WS_B = wsPath("/projects/app/workspaces/beta");
 const WS_C = wsPath("/projects/app/workspaces/gamma");
 
-const PROJECT_REF = projectRefFor(PROJECT_PATH);
+const PROJECT_REF = gitProjectRef(PROJECT_PATH);
 
 /** The name of the test workspace at `workspacePath`: its directory. */
 function nameOf(workspacePath: WorkspacePath): string {

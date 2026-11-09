@@ -106,8 +106,8 @@ vi.mock("./provider", () => ({
 // =============================================================================
 
 const WS_PATH = testPath("/workspace/feature-a").toNative();
-const WS_REF = workspaceRefSchema.parse("ch::local::/workspace::feature-a");
-const WS_REF_B = workspaceRefSchema.parse("ch::local::/workspace::feature-b");
+const WS_REF = workspaceRefSchema.parse("ch::local::git::/workspace::feature-a");
+const WS_REF_B = workspaceRefSchema.parse("ch::local::git::/workspace::feature-b");
 
 type ServerStartedHandler = (
   workspaceRef: WorkspaceRef,

@@ -444,8 +444,9 @@ them ignored.
 
 **Naming a target.** Every operation that can act on another workspace takes
 `workspace` (a name, `<project>::<name>`, or a workspace ref — not a path) and
-`project` (a name, a checkout path, an origin, or a project ref, to look the name
-up in). A name is looked up in the caller's project first, where a match
+`project` (a name, a checkout path, a git origin, `<type>::<identifier>`, or a
+project ref, to look the name up in). A full ref from before project types
+(`ch::local::<origin or path>`) is read as git. A name is looked up in the caller's project first, where a match
 wins; otherwise it must be unique across the other open projects (several →
 `usage`, none → `not-found`). `project` without `workspace` is `usage`. These
 two fields replace the former path-only `workspacePath` field — a breaking
@@ -1415,7 +1416,7 @@ type WorkspaceName = string & { readonly [WorkspaceNameBrand]: true };
 
 ```typescript
 interface Project {
-  readonly ref: ProjectRef; // Identity: ch::<machine>::<origin or path>
+  readonly ref: ProjectRef; // Identity: ch::<machine>::<type>::<identifier>
   readonly id: ProjectId;
   readonly name: string; // Folder name
   readonly path: string; // Absolute path
@@ -1633,7 +1634,7 @@ These variables are set when using the Claude agent provider.
 | `_CH_CLAUDE_SYSTEM_PROMPT` | Path to the composed CodeHydra system prompt (`codehydra-prompt-claude.md`), passed to Claude as `--append-system-prompt-file`. Shared by all workspaces (runtime bin dir); required, the wrapper refuses to launch without it. OpenCode gets its own file through `instructions` in `OPENCODE_CONFIG_CONTENT`, not an env var |
 | `_CH_BRIDGE_PORT`          | HTTP bridge server port for hook notifications                                                                                                                                                                                                                                                                                 |
 | `_CH_API_TOKEN`            | Token `ch` and `ch mcp` present when connecting to the API server                                                                                                                                                                                                                                                              |
-| `_CH_WORKSPACE`            | The workspace's ref (`ch::<machine>::<project>::<name>`), in every terminal of the workspace (the process monitor attributes processes by it): how `ch mcp` presents its workspace, how the Claude hooks name it to the bridge, and how the sidekick recognises the agent terminal                                             |
+| `_CH_WORKSPACE`            | The workspace's ref (`ch::<machine>::<type>::<identifier>::<name>`), in every terminal of the workspace (the process monitor attributes processes by it): how `ch mcp` presents its workspace, how the Claude hooks name it to the bridge, and how the sidekick recognises the agent terminal                                  |
 | `_CH_INITIAL_PROMPT_FILE`  | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper.                                                                                                                                                                                |
 
 ---

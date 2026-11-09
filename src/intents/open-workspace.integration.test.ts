@@ -77,7 +77,8 @@ import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 import type { WorkspaceLocator } from "../shared/api/types";
 import { projPath, wsPath, testPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 import type { WorkspacePath } from "./contract";
 
 // =============================================================================
@@ -85,7 +86,7 @@ import type { WorkspacePath } from "./contract";
 // =============================================================================
 
 const PROJECT_ROOT = projPath("/project");
-const PROJECT_REF = projectRefFor(PROJECT_ROOT);
+const PROJECT_REF = gitProjectRef(PROJECT_ROOT);
 /** Every open sets this in the workspace environment. */
 const REF_ENV = { [WORKSPACE_REF_ENV_VAR]: makeWorkspaceRef(PROJECT_REF, "feature-x") };
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
@@ -642,14 +643,14 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectRef: projectRefFor(projPath("/nonexistent/project")),
+          projectRef: gitProjectRef(projPath("/nonexistent/project")),
           workspaceName: "feature-x",
           base: "main",
         },
       };
 
       await expect(setup.dispatcher.dispatch(intent)).rejects.toThrow(
-        `Project not found: ${projectRefFor(projPath("/nonexistent/project"))}`
+        `Project not found: ${gitProjectRef(projPath("/nonexistent/project"))}`
       );
     });
   });
@@ -855,7 +856,7 @@ describe("OpenWorkspace Operation", () => {
           workspaceName: "my-ws",
           base: "develop",
           existingWorkspace,
-          projectRef: projectRefFor(customProjectPath),
+          projectRef: gitProjectRef(customProjectPath),
         },
       };
 
@@ -869,7 +870,7 @@ describe("OpenWorkspace Operation", () => {
       // Event names the provided project
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.projectRef).toBe(projectRefFor(customProjectPath));
+      expect(event.payload.projectRef).toBe(gitProjectRef(customProjectPath));
     });
   });
 
@@ -997,14 +998,14 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectRef: projectRefFor(projPath("/nonexistent/project")),
+          projectRef: gitProjectRef(projPath("/nonexistent/project")),
           workspaceName: "feature-x",
           base: "main",
         },
       };
 
       await expect(setup.dispatcher.dispatch(intent)).rejects.toThrow(
-        `Project not found: ${projectRefFor(projPath("/nonexistent/project"))}`
+        `Project not found: ${gitProjectRef(projPath("/nonexistent/project"))}`
       );
     });
   });

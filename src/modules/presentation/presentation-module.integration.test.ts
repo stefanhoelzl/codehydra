@@ -104,7 +104,8 @@ import {
   type ShowNotificationResult,
 } from "../../intents/show-notification";
 import { projPath, wsPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { makeWorkspaceRef } from "../../utils/ref";
+import { gitProjectRef } from "../git-project-ref";
 import type { ProjectPath, ProjectRef } from "../../intents/contract";
 
 // =============================================================================
@@ -113,7 +114,7 @@ import type { ProjectPath, ProjectRef } from "../../intents/contract";
 
 const PROJECT_ID = "alpha-12345678" as ProjectId;
 const PROJECT_PATH = projPath("/projects/alpha");
-const PROJECT_REF = projectRefFor(PROJECT_PATH);
+const PROJECT_REF = gitProjectRef(PROJECT_PATH);
 /** A row's snapshot key: its workspace ref. */
 const keyOf = (name: string): string => makeWorkspaceRef(PROJECT_REF, name);
 // Local copies of the sidebar-width default/floor (the source constants are no
@@ -208,14 +209,21 @@ function createFakeProcessMonitor() {
  * Minimal StateService mock: register() returns a stateful, store-backed
  * accessor (mirrors createMockConfig for state.json). The presenter registers
  * `sidebar.collapsed-projects` here; tests flip it via the toggle ui:event and
- * read it back through the accessor.
+ * read it back through the accessor. A value set before registering stands for
+ * what state.json held, and is validated as loading it would be.
  */
 function createMockStateService(): Pick<StateService, "register"> & {
   readonly values: ReadonlyMap<string, unknown>;
 } {
   const store = new Map<string, unknown>();
-  const register = (<T>(key: string, definition: { default: T }): PersistedAccessor<T> => {
+  const register = (<T>(
+    key: string,
+    definition: { default: T; validate?: (value: unknown) => T | undefined }
+  ): PersistedAccessor<T> => {
     if (!store.has(key)) store.set(key, definition.default);
+    else if (definition.validate) {
+      store.set(key, definition.validate(store.get(key)) ?? definition.default);
+    }
     return {
       name: key,
       default: definition.default,
@@ -328,7 +336,7 @@ function makeWorkspace(
 
 function makeProject(workspaces: Workspace[], options?: { remoteUrl?: string }): Project {
   return {
-    ref: projectRefFor(PROJECT_PATH, options?.remoteUrl),
+    ref: gitProjectRef(PROJECT_PATH, options?.remoteUrl),
     id: PROJECT_ID,
     name: "alpha",
     path: PROJECT_PATH,
@@ -400,7 +408,7 @@ async function openBeta(
   module: IntentModule,
   options: { hibernated: boolean; startupPath?: ProjectPath }
 ): Promise<void> {
-  const betaRef = projectRefFor(projPath("/projects/beta"));
+  const betaRef = gitProjectRef(projPath("/projects/beta"));
   await emit(module, EVENT_PROJECT_OPENED, {
     ...(options.startupPath !== undefined && { path: options.startupPath }),
     project: {
@@ -680,7 +688,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     const module = await startModule(deps);
 
     const project: Project = {
-      ref: projectRefFor(PROJECT_PATH),
+      ref: gitProjectRef(PROJECT_PATH),
       id: PROJECT_ID,
       name: "alpha",
       path: PROJECT_PATH,
@@ -1411,7 +1419,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspaceA]) });
 
     const otherId = "beta-87654321" as ProjectId;
-    const betaRef = projectRefFor(projPath("/projects/beta"));
+    const betaRef = gitProjectRef(projPath("/projects/beta"));
     const workspaceB: Workspace = {
       ref: makeWorkspaceRef(betaRef, "b"),
       projectId: otherId,
@@ -2064,7 +2072,7 @@ describe("PresentationModule - sidebar resize", () => {
     await emit(module, EVENT_PROJECT_CLOSED, { projectId: PROJECT_ID, projectRef: PROJECT_REF });
 
     expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: null } }]);
-    expect(stateValue(deps)).toEqual([projectRefFor(projPath("/projects/beta"))]);
+    expect(stateValue(deps)).toEqual([gitProjectRef(projPath("/projects/beta"))]);
   });
 
   it("orders hibernated (newest first), then automated, then awake by name", async () => {
@@ -3475,7 +3483,7 @@ describe("PresentationModule - shortcut navigation", () => {
     const deps = createDeps();
     const module = await withWorkspaces(deps, ["a"], "a");
     await openBeta(module, { hibernated: false });
-    const betaB = makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "b");
+    const betaB = makeWorkspaceRef(gitProjectRef(projPath("/projects/beta")), "b");
     const dispatched = recordDispatches(deps);
     const collapsed = (): boolean[] => lastSnapshot(deps).sidebar.projects.map((p) => p.collapsed);
 
@@ -3557,7 +3565,7 @@ describe("PresentationModule - shortcut navigation", () => {
     const deps = createDeps();
     const module = await withWorkspaces(deps, ["a"], "a");
     await openBeta(module, { hibernated: false });
-    const betaB = makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "b");
+    const betaB = makeWorkspaceRef(gitProjectRef(projPath("/projects/beta")), "b");
     const dispatched = recordDispatches(deps);
 
     await key(module, "down");
@@ -3642,7 +3650,7 @@ describe("PresentationModule - shortcut navigation", () => {
     const deps = createDeps();
     const module = await withWorkspaces(deps, ["a"], "a");
     await openBeta(module, { hibernated: false });
-    const betaB = makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "b");
+    const betaB = makeWorkspaceRef(gitProjectRef(projPath("/projects/beta")), "b");
     const dispatched = recordDispatches(deps);
 
     emitUiEvent(deps, { kind: "toggle-project-collapsed", projectId: PROJECT_ID });
@@ -4893,11 +4901,12 @@ describe("PresentationModule - startup screen", () => {
     expect(currentSystemDialog(deps).kind).toBe("panel");
   });
 
-  it("lands in an expanded project rather than a collapsed one above it", async () => {
+  it.each([
+    ["", PROJECT_REF],
+    [", collapsed by a ref from before project types", `ch::local::${PROJECT_PATH}`],
+  ])("lands in an expanded project rather than a collapsed one above it%s", async (_, saved) => {
     const deps = createDeps();
-    (deps.stateService.values as Map<string, unknown>).set("sidebar.collapsed-projects", [
-      PROJECT_REF,
-    ]);
+    (deps.stateService.values as Map<string, unknown>).set("sidebar.collapsed-projects", [saved]);
     const dispatched: Array<{ type: string; payload: unknown }> = [];
     deps.dispatcher = {
       dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
@@ -4920,8 +4929,9 @@ describe("PresentationModule - startup screen", () => {
     await openBeta(module, { hibernated: false, startupPath: BETA_PATH });
     await flush();
 
-    const betaB = makeWorkspaceRef(projectRefFor(BETA_PATH), "b");
+    const betaB = makeWorkspaceRef(gitProjectRef(BETA_PATH), "b");
     expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: betaB } }]);
+    expect(stateValue(deps)).toEqual([PROJECT_REF]);
   });
 
   it("lands on nothing when no expanded project has an awake row", async () => {

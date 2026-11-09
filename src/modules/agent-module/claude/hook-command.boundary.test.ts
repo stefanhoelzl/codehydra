@@ -68,7 +68,7 @@ function registrationFor(hookName: string) {
     handlerPath,
     interpreter: process.execPath,
     port: 1,
-    workspaceRef: "ch::local::/repo::main",
+    workspaceRef: "ch::local::git::/repo::main",
   });
   const hook = settings.hooks[hookName]![0]!.hooks[0]!;
   if (hook.type !== "command") throw new Error(`${hookName} is not registered as a command`);

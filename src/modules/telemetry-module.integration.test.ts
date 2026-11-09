@@ -40,7 +40,7 @@ import { createMockState, type MockStateService } from "../boundaries/platform/s
 import { z } from "zod/v4";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 
 // =============================================================================
 // Helpers
@@ -68,7 +68,7 @@ const NEW_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
   projectId: "project-1" as WorkspaceCreatedPayload["projectId"],
   workspaceName: "ws-1" as WorkspaceCreatedPayload["workspaceName"],
   workspaceRef: workspaceRefIn(projPath("/proj"), "ws-1"),
-  projectRef: projectRefFor(projPath("/proj")),
+  projectRef: gitProjectRef(projPath("/proj")),
   branch: "ws-1",
   metadata: {},
   workspaceUrl: "http://127.0.0.1:8080",

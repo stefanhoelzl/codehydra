@@ -66,7 +66,8 @@ import type { OperationName } from "../../api/names";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 import { projPath, wsPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
-import { projectRefFor, workspaceNameOf } from "../../utils/ref";
+import { workspaceNameOf } from "../../utils/ref";
+import { gitProjectRef } from "../git-project-ref";
 
 type StateEntry = {
   workspaceName: string;
@@ -116,7 +117,7 @@ class OpenProjectOp implements Operation<typeof openProjectSchemas> {
     const pathStr =
       ctx.intent.payload.path?.toString() ?? testPath("/home/user/projects/repo").toNative();
     return {
-      ref: projectRefFor(projPath(pathStr)),
+      ref: gitProjectRef(projPath(pathStr)),
       id: "project-1" as ProjectId,
       name: "repo",
       path: projPath(pathStr),
@@ -234,7 +235,7 @@ class ListProjectsOp implements Operation<typeof listProjectsSchemas> {
   async execute(): Promise<Project[]> {
     return [
       {
-        ref: projectRefFor(projPath(PROJECT_PATH)),
+        ref: gitProjectRef(projPath(PROJECT_PATH)),
         id: "project-1" as ProjectId,
         name: "repo",
         path: projPath(PROJECT_PATH),
@@ -266,7 +267,7 @@ class ResolveWorkspaceOp implements Operation<typeof resolveWsSchemas> {
     return {
       workspaceRef: found.ref,
       workspacePath: found.path,
-      projectRef: projectRefFor(projPath(PROJECT_PATH)),
+      projectRef: gitProjectRef(projPath(PROJECT_PATH)),
       projectPath: projPath(PROJECT_PATH),
       workspaceName: found.name,
       active: false,
@@ -586,7 +587,7 @@ describe("automations: workspace.create", () => {
       workspaceName: "ws-1",
       // The project's ref: PROJECT_PATH is toNative(), so it goes through projPath
       // (Path.toString(), forward slashes on every platform) as production does.
-      projectRef: projectRefFor(projPath(PROJECT_PATH)),
+      projectRef: gitProjectRef(projPath(PROJECT_PATH)),
     });
   });
 
@@ -636,7 +637,7 @@ describe("automations: workspace.create", () => {
         "gh/1": {
           workspaceName: "ws-1",
           createdAt: "2020-01-01T00:00:00Z",
-          projectRef: projectRefFor(testPath("/home/user/projects/closed").toString()),
+          projectRef: gitProjectRef(testPath("/home/user/projects/closed").toString()),
         },
       },
     });
@@ -660,7 +661,7 @@ describe("automations: workspace.create", () => {
       workspaceName: "ws-1",
       // The project's ref: PROJECT_PATH is toNative(), so it goes through projPath
       // (Path.toString(), forward slashes on every platform) as production does.
-      projectRef: projectRefFor(projPath(PROJECT_PATH)),
+      projectRef: gitProjectRef(projPath(PROJECT_PATH)),
     });
     expect(openWorkspaceOp.dispatched).toHaveLength(0);
     expect(getBasesOp.dispatched).toHaveLength(0); // no git fetch on the adopt path
@@ -1064,7 +1065,7 @@ describe("automations: workspace.create", () => {
 describe("migrateEntries", () => {
   it("turns each entry's project path into its project's ref, leaving unknown ones as they are", async () => {
     const lib = testPath("/code/lib").toString();
-    const libRef = projectRefFor(lib);
+    const libRef = gitProjectRef(lib);
     const { automations, state } = createSetup({
       existingEntries: {
         "gh/1": { workspaceName: "one", createdAt: "2026-01-01T00:00:00.000Z", projectPath: lib },
@@ -1094,6 +1095,38 @@ describe("migrateEntries", () => {
     expect(entriesOf(state)["gh/3"]).toEqual({
       workspaceName: "three",
       createdAt: "2026-01-01T00:00:00.000Z",
+    });
+  });
+
+  it("turns a project ref from before project types into the git ref it names", async () => {
+    const lib = testPath("/code/lib").toString();
+    const current = gitProjectRef(lib);
+    const { automations, state } = createSetup({
+      existingEntries: {
+        "gh/1": {
+          workspaceName: "one",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          projectRef: `ch::local::${lib}`,
+        },
+        "gh/2": {
+          workspaceName: "two",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          projectRef: current,
+        },
+      },
+    });
+
+    await automations.migrateEntries(new Map());
+
+    expect(entriesOf(state)["gh/1"]).toEqual({
+      workspaceName: "one",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      projectRef: current,
+    });
+    expect(entriesOf(state)["gh/2"]).toEqual({
+      workspaceName: "two",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      projectRef: current,
     });
   });
 });

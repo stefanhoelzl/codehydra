@@ -10,7 +10,7 @@
  *
  * Hook registrations:
  * - project:open  → prepare: offer git init for a non-repo directory
- * - project:open  → resolve: validate .git exists for local paths; type "git" + config
+ * - project:open  → resolve: validate .git exists for local paths; type "git", config + identifier
  * - app:ready     → restore: a saved git project → the project:open payload { path }
  * - project:close → resolve: look up the project's remoteUrl in its record
  * - project:close → close:   remove the project's worktrees directory when empty, and
@@ -23,7 +23,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { HookOutput } from "../intents/lib/operation";
 import { projectPathSchema } from "../intents/contract";
 import type { ProjectRef } from "../intents/contract";
-import { projectRefFor } from "../utils/ref";
+import { GIT_PROJECT_TYPE, gitProjectIdentifier, gitProjectRef } from "./git-project-ref";
 import { Path } from "../utils/path/path";
 import {
   managedClonePath,
@@ -61,9 +61,6 @@ import {
 // =============================================================================
 // Types
 // =============================================================================
-
-/** The project type name git projects are stored under. */
-export const GIT_PROJECT_TYPE = "git";
 
 /** A git project as its record describes it, with the badge color the record keeps. */
 export interface StoredProject extends ProjectConfig {
@@ -257,7 +254,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
   async function projectRefs(): Promise<ReadonlyMap<string, ProjectRef>> {
     const refs = new Map<string, ProjectRef>();
     for (const { project } of gitRecords(dirs(), await store.records())) {
-      refs.set(new Path(project.path).toString(), projectRefFor(project.path, project.remoteUrl));
+      refs.set(new Path(project.path).toString(), gitProjectRef(project.path, project.remoteUrl));
     }
     return refs;
   }
@@ -345,6 +342,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
               projectPath: path,
               type: GIT_PROJECT_TYPE,
               config: record?.config ?? newLocalConfig(path),
+              identifier: gitProjectIdentifier(path, remoteUrl),
               ...(remoteUrl !== undefined && { remoteUrl }),
             };
 

@@ -33,7 +33,8 @@ export const targetFields = {
     .min(1)
     .optional()
     .describe(
-      "Project to look the workspace name up in: its name, path, origin or full ref. " +
+      "Project to look the workspace name up in: its name, path, git origin, " +
+        "<type>::<identifier> or full ref. " +
         "Needs workspace."
     ),
 };

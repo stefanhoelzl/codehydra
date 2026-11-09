@@ -60,7 +60,7 @@ async function createdAgentSpec(
       // The dispatcher validates the result, so it has to be a real Workspace —
       // parsed rather than cast, so the branded fields are branded.
       return workspaceSchema.parse({
-        ref: "ch::local::/p::w",
+        ref: "ch::local::git::/p::w",
         projectId: "p",
         name: "w",
         branch: "w",

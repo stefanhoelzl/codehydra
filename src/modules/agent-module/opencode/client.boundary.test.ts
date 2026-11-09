@@ -712,7 +712,7 @@ describe("OpenCodeClient boundary tests", () => {
         async ({ port, cwd, step, waitFor }) => {
           const v2 = createV2Client({ baseUrl: `http://127.0.0.1:${port}` });
           const provider = new OpenCodeProvider(
-            workspaceRefSchema.parse("ch::local::/boundary::opencode"),
+            workspaceRefSchema.parse("ch::local::git::/boundary::opencode"),
             new Path(cwd),
             SILENT_LOGGER
           );

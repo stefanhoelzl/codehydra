@@ -30,7 +30,7 @@ import { createWindowTitleModule } from "./window-title-module";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { wsPath } from "../shared/test-fixtures";
 import type { WorkspacePath } from "../intents/contract";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 
 // =============================================================================
 // Minimal switch operation that emits workspace:switched
@@ -68,7 +68,7 @@ const minimalSwitchOperation: Operation<typeof minimalSwitchSchemas> = {
         ? {
             projectId: payload.projectId,
             projectName: payload.projectName,
-            projectRef: projectRefFor(projPath("/projects/test")),
+            projectRef: gitProjectRef(projPath("/projects/test")),
             workspaceName: payload.workspaceName,
             workspaceRef: workspaceRefIn(projPath("/projects/test"), payload.workspaceName),
             metadata: payload.metadata ?? {},
@@ -113,7 +113,7 @@ const minimalSetMetadataOperation: Operation<typeof minimalSetMetadataSchemas> =
       type: EVENT_METADATA_CHANGED,
       payload: {
         projectId: payload.projectId,
-        projectRef: projectRefFor(projPath("/projects/test")),
+        projectRef: gitProjectRef(projPath("/projects/test")),
         workspaceName: payload.workspaceName,
         workspaceRef: workspaceRefIn(projPath("/projects/test"), payload.workspaceName),
         key: payload.key,
