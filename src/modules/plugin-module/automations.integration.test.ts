@@ -67,7 +67,7 @@ import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 import { projPath, wsPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { workspaceNameOf } from "../../utils/ref";
-import { gitProjectRef } from "../git-project-ref";
+import { gitProjectRef } from "../git/ref";
 
 type StateEntry = {
   workspaceName: string;

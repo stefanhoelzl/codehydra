@@ -1,7 +1,8 @@
 // @vitest-environment node
 /**
- * Integration tests for LocalProjectModule: the git project type's
- * contributions, run together with the real project store they hand records to.
+ * Integration tests for the git module's project side for local paths and for
+ * every git project at restore and close, run together with the real project
+ * store it hands records to.
  *
  * Covered: prepare (git init offer), resolve (validation, type "git" + config,
  * remoteUrl from the record), restore (a saved git project → its open
@@ -9,54 +10,52 @@
  * projectRefs. The store's own behavior is in project-store-module.integration.test.ts.
  */
 
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./ref";
 import { describe, it, expect, vi } from "vitest";
 
-import {
-  createLocalProjectModule,
-  loadAllProjects,
-  type LocalProjectModuleDeps,
-} from "./local-project-module";
-import { createProjectStoreModule, type ProjectStoreModule } from "./project-store-module";
+import type { GitProjectModule } from "./module";
+import { loadAllProjects } from "./records";
+import { createTestGitModule } from "./git.test-utils";
+import { createProjectStoreModule, type ProjectStoreModule } from "../project-store-module";
 import {
   OPEN_PROJECT_OPERATION_ID,
   INTENT_OPEN_PROJECT,
   type ProjectTypeConfig,
-} from "../intents/open-project";
-import type { OpenProjectIntent } from "../intents/open-project";
-import type { schemas as openProjectSchemas } from "../intents/open-project";
+} from "../../intents/open-project";
+import type { OpenProjectIntent } from "../../intents/open-project";
+import type { schemas as openProjectSchemas } from "../../intents/open-project";
 import {
   CLOSE_PROJECT_OPERATION_ID,
   INTENT_CLOSE_PROJECT,
   type CloseHookInput,
   type CloseResolveHookInput,
-} from "../intents/close-project";
-import type { CloseProjectIntent } from "../intents/close-project";
-import type { schemas as closeProjectSchemas } from "../intents/close-project";
-import type { schemas as appReadySchemas } from "../intents/app-ready";
-import { APP_READY_OPERATION_ID } from "../intents/app-ready";
-import type { AppReadyIntent } from "../intents/app-ready";
-import { Path } from "../utils/path/path";
+} from "../../intents/close-project";
+import type { CloseProjectIntent } from "../../intents/close-project";
+import type { schemas as closeProjectSchemas } from "../../intents/close-project";
+import type { schemas as appReadySchemas } from "../../intents/app-ready";
+import { APP_READY_OPERATION_ID } from "../../intents/app-ready";
+import type { AppReadyIntent } from "../../intents/app-ready";
+import { Path } from "../../utils/path/path";
 import type {
   HookContext,
   ResolvedHooks,
   HookResult,
   HookOutput,
   OperationSchemas,
-} from "../intents/lib/operation";
-import type { IntentModule } from "../intents/lib/module";
-import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
-import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
-import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
-import { SILENT_LOGGER } from "../boundaries/platform/logging";
+} from "../../intents/lib/operation";
+import type { IntentModule } from "../../intents/lib/module";
+import { createFileSystemMock, directory } from "../../boundaries/platform/filesystem.state-mock";
+import { createMockDialogManager } from "../presentation/dialog-manager.state-mock";
+import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
+import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import {
   managedClonePath,
   managedProjectDirName,
   projectDirName,
-} from "../boundaries/platform/paths";
+} from "../../boundaries/platform/paths";
 import nodePath from "path";
-import { projPath, testPath } from "../shared/test-fixtures";
-import type { ProjectPath } from "../intents/contract";
+import { projPath, testPath } from "../../shared/test-fixtures";
+import type { ProjectPath } from "../../intents/contract";
 
 // =============================================================================
 // Test Constants
@@ -92,8 +91,18 @@ function hooksOf<S extends OperationSchemas>(
         const hookHandler = module.hooks?.[operationId]?.[hookPointId];
         if (!hookHandler) continue;
         try {
-          const output = await hookHandler.handler(ctx);
-          const result = (output as HookOutput<T> | undefined)?.result;
+          const invoked = hookHandler.handler(ctx);
+          let output: HookOutput<T> | void;
+          if (typeof invoked === "object" && invoked !== null && Symbol.asyncIterator in invoked) {
+            // A streaming handler (resolve): drain it, as the dispatcher does.
+            const gen = invoked as AsyncGenerator<unknown, HookOutput<T> | void, void>;
+            let next = await gen.next();
+            while (!next.done) next = await gen.next();
+            output = next.value;
+          } else {
+            output = (await invoked) as HookOutput<T> | void;
+          }
+          const result = output?.result;
           if (result !== undefined && result !== null) results.push(result);
         } catch (error) {
           errors.push(error as Error);
@@ -105,7 +114,7 @@ function hooksOf<S extends OperationSchemas>(
 }
 
 interface TestSetup {
-  module: ReturnType<typeof createLocalProjectModule>;
+  module: GitProjectModule;
   store: ProjectStoreModule;
   /** Only the git module's handlers. */
   openHooks: ResolvedHooks<typeof openProjectSchemas>;
@@ -117,9 +126,13 @@ interface TestSetup {
     close: ResolvedHooks<typeof closeProjectSchemas>;
   };
   fs: MockFs;
-  gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
+  gitWorktreeProvider: { validateRepository: ReturnType<typeof vi.fn> };
   dialogManager: ReturnType<typeof createMockDialogManager>;
-  gitClient: LocalProjectModuleDeps["gitClient"];
+  gitClient: {
+    isRepositoryRoot: ReturnType<typeof vi.fn>;
+    init: ReturnType<typeof vi.fn>;
+    clone: ReturnType<typeof vi.fn>;
+  };
   notifications: ReturnType<typeof createMockNotificationManager>;
 }
 
@@ -136,6 +149,7 @@ function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0
   const gitClient = {
     isRepositoryRoot: vi.fn().mockResolvedValue(true),
     init: vi.fn().mockResolvedValue(undefined),
+    clone: vi.fn().mockResolvedValue(undefined),
   };
 
   const store = createProjectStoreModule({
@@ -144,16 +158,19 @@ function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0
     platform: "linux",
     logger: SILENT_LOGGER,
   });
-  const module = createLocalProjectModule({
+  const module = createTestGitModule({
     projectsDir: PROJECTS_DIR,
-    remotesDir: () => REMOTES_DIR,
+    workspacesRoot: {
+      remotesDir: () => new Path(REMOTES_DIR),
+      workspacesDir: () => testPath("/workspaces"),
+      previousWorkspacesDirs: () => [],
+    },
     fs,
     store,
     gitWorktreeProvider,
     ui: dialogManager.ui,
     dispatcher: notifications.dispatcher,
     gitClient,
-    logger: SILENT_LOGGER,
   });
 
   return {
@@ -270,7 +287,7 @@ function restore(
 // Tests
 // =============================================================================
 
-describe("LocalProjectModule Integration", () => {
+describe("Git module: local projects, restore and close", () => {
   // ---------------------------------------------------------------------------
   // project:open → resolve
   // ---------------------------------------------------------------------------
@@ -295,15 +312,16 @@ describe("LocalProjectModule Integration", () => {
       expect(gitWorktreeProvider.validateRepository).toHaveBeenCalledWith(new Path(PROJECT_PATH));
     });
 
-    it("skips for git URL payloads", async () => {
-      const { openHooks, gitWorktreeProvider } = createTestSetup();
+    it("clones a git URL payload rather than validating it as a local path", async () => {
+      const { openHooks, gitWorktreeProvider, gitClient } = createTestSetup();
 
       const { results, errors } = await openHooks.collect("resolve", {
         intent: openGitIntent(REPO_URL),
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toEqual([{}]);
+      expect(results).toEqual([expect.objectContaining({ config: { remoteUrl: REPO_URL } })]);
+      expect(gitClient.clone).toHaveBeenCalled();
       expect(gitWorktreeProvider.validateRepository).not.toHaveBeenCalled();
     });
 
@@ -738,7 +756,7 @@ describe("LocalProjectModule Integration", () => {
         intent: openLocalIntent(PROJECT_PATH),
       });
 
-      await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull());
+      await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull(), { interval: 1 });
       dialogManager.lastHandle!.emitEvent({
         dialogId: dialogManager.lastHandle!.id,
         actionId: "init",
@@ -762,7 +780,7 @@ describe("LocalProjectModule Integration", () => {
         intent: openLocalIntent(PROJECT_PATH),
       });
 
-      await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull());
+      await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull(), { interval: 1 });
       dialogManager.lastHandle!.emitEvent({
         dialogId: dialogManager.lastHandle!.id,
         actionId: "cancel",
@@ -784,7 +802,7 @@ describe("LocalProjectModule Integration", () => {
         intent: openLocalIntent(PROJECT_PATH),
       });
 
-      await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull());
+      await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull(), { interval: 1 });
       dialogManager.lastHandle!.emitDismiss();
 
       const { results, errors } = await preparePromise;

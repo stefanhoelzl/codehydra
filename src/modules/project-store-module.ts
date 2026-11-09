@@ -16,7 +16,7 @@
  * - app:ready     → load-projects: every saved project's { type, config }
  * - list-projects → list-projects: every open project
  *
- * The type modules (for now only git: local-project-module, remote-project-module)
+ * The type modules (for now only git: `git/module.ts`)
  * resolve a project at open, turn a saved project back into an open payload at
  * restore, and clean up their own on-disk state at close.
  */

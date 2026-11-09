@@ -6,7 +6,7 @@
  * through notification:show with the correct config.
  */
 
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import { describe, it, expect, beforeEach } from "vitest";
 import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
 import type { WorkspaceCreateFailedEvent } from "../intents/open-workspace";

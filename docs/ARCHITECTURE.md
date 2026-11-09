@@ -79,7 +79,7 @@ e.g. `ch::local::git::github.com/org/codehydra::feature/x`.
 
 - **machine**: only `local` exists today.
 - **type**: the project type that owns the project (`^[a-z][a-z0-9-]*$`); `git` is the only one.
-- **identifier**: what the type names the project by, derived by the type's module from its config and reported as `identifier` on `project:open`'s `resolve` hook. Core never derives it. Git (`src/modules/git-project-ref.ts`) names a project with a remote URL on record (a managed clone) by its normalized origin (`normalizeGitUrl`), any other by its checkout path (`Path`-normalized, so lowercased on Windows). Neither changes when CodeHydra moves a clone or the workspaces root. The project store refuses to open a second project with a ref an open one has.
+- **identifier**: what the type names the project by, derived by the type's module from its config and reported as `identifier` on `project:open`'s `resolve` hook. Core never derives it. Git (`src/modules/git/ref.ts`) names a project with a remote URL on record (a managed clone) by its normalized origin (`normalizeGitUrl`), any other by its checkout path (`Path`-normalized, so lowercased on Windows). Neither changes when CodeHydra moves a clone or the workspaces root. The project store refuses to open a second project with a ref an open one has.
 - **name**: the workspace's name, fixed at creation (see Workspace names above), independent of the branch checked out later. It never contains `:`.
 
 A ref is read as `ch`, the machine and the type, then the identifier up to the last `::`; the identifier is kept verbatim and never escaped, since a checkout path may contain anything. A ref therefore cannot say on its own whether it names a project or a workspace: the reader always knows which kind it expects (`parseProjectRef` / `parseWorkspaceRef`).
@@ -145,7 +145,7 @@ Projects can be created by cloning from a git URL. A "remote" (managed) project 
 
 **Key differences from local projects:**
 
-- **URL-named record**: the record's git config holds `remoteUrl` (and, like every record, the project's badge `color`); the path is derived from it (`managedClonePath` in `src/boundaries/platform/paths.ts`), so nothing stored names the clone's location and the clone can move. A record is written this way only when the clone sits exactly where its URL derives; otherwise it keeps `{path, remoteUrl}` under the path-named directory (`src/modules/local-project-module.ts`)
+- **URL-named record**: the record's git config holds `remoteUrl` (and, like every record, the project's badge `color`); the path is derived from it (`managedClonePath` in `src/boundaries/platform/paths.ts`), so nothing stored names the clone's location and the clone can move. A record is written this way only when the clone sits exactly where its URL derives; otherwise it keeps `{path, remoteUrl}` under the path-named directory (`src/modules/git/records.ts`)
 - **Ref by origin**: the project's [ref](#refs) uses the normalized origin, not the path
 - **Duplicate detection**: Cloning the same URL returns the existing clone (the clone directory is derived from the normalized URL); a URL that is a path on this machine is refused ("Open the folder instead")
 - **Deletion option**: When closing a remote project, users can optionally delete the clone and its project directories
@@ -1697,14 +1697,14 @@ User: Click "Open Project"
   → System folder picker
   → IPC: api:project:open → project:open intent dispatched (payload.initial = true)
   → OpenProjectOperation runs "prepare" hook point (local paths only):
-      → LocalProjectModule: offer git init for a non-repo directory
-      → GitWorktreeWorkspaceModule: offer the repo's unmanaged worktrees for
-        adoption (only when payload.initial — startup restore and automation
-        re-run this same intent and must not raise a dialog). Cancel aborts the add.
-  → OpenProjectOperation runs "open" hook point:
-      → LocalProjectModule: validate git repository, discover worktrees
-      → (or RemoteProjectModule: clone from URL)
-      → both report the project's type ("git") and its config
+      → GitProjectModule: offer git init for a non-repo directory, then the
+        repo's unmanaged worktrees for adoption (only when payload.initial —
+        startup restore and automation re-run this same intent and must not
+        raise a dialog). Cancel aborts the add.
+  → OpenProjectOperation runs "resolve" hook point:
+      → GitProjectModule: validate the git repository (or clone from URL), and
+        report the project's type ("git") and its config
+  → "discover": GitProjectModule hands the project's worktrees to the registry
   → "register": ProjectStoreModule assigns the id and badge color, saves the record
   → Emits project:opened domain event (every row; awake ones loading)
   → If nothing is active: switch to the first awake workspace (sidebar order)
@@ -1733,7 +1733,7 @@ User: Click [+], fill dialog, click OK
   → IPC: api:workspace:create → workspace:open intent dispatched
   → OpenWorkspaceOperation runs hook points:
       → "create": WorkspaceRegistryModule refuses a taken name, then
-                  GitWorktreeWorkspaceModule creates git worktree and hands
+                  GitProjectModule creates git worktree and hands
                   it to the registry, which writes its metadata file
       → "provision": PluginModule runs the plugins' after-worktree-created
       → "prepare": PluginModule runs the plugins' before-workspace-opened
@@ -1754,9 +1754,8 @@ User: Click [x] on project row
       → Dispatches workspace:delete { removeWorktree: false } per workspace (runtime teardown)
       → Runs "close" hook point:
           → ProjectStoreModule: drop the project, remove its record (frees its color)
-          → LocalProjectModule: remove the empty workspaces dir; delete the project's
-            own directory if removeLocalRepo and the project has no remoteUrl
-          → (or RemoteProjectModule: delete cloned dir if removeLocalRepo)
+          → GitProjectModule: remove the empty workspaces dir; with removeLocalRepo
+            delete the project's own directory, or its clone if it has a remoteUrl
       → Emits project:closed domain event → UiIpcModule → sendToUI → Renderer
   (NO files or git data deleted unless removeLocalRepo is true; that flag
    implies removeAll, so the per-workspace deletes become full worktree

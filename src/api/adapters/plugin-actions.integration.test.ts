@@ -11,7 +11,7 @@ import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
-import { gitProjectRef } from "../../modules/git-project-ref";
+import { gitProjectRef } from "../../modules/git/ref";
 import { OperationRegistry } from "../registry";
 import { defineEntry, type OperationContext } from "../types";
 import { OPERATION_NAMES } from "../names";

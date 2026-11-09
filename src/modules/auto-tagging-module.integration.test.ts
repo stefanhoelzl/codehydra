@@ -47,7 +47,7 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { createAutoTaggingModule } from "./auto-tagging-module";
 import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, WorkspaceRef } from "../intents/contract";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;

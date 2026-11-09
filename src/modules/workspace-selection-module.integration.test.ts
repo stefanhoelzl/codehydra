@@ -37,7 +37,7 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath } from "../shared/test-fixtures";
 import type { WorkspacePath, WorkspaceRef } from "../intents/contract";
 import { makeWorkspaceRef, projectRefOf } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 
 // =============================================================================
 // Test Constants

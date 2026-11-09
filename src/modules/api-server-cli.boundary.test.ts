@@ -14,7 +14,7 @@ import { OperationRegistry } from "../api/registry";
 import { defineEntry } from "../api/types";
 import { workspacePathSchema, type WorkspacePath, type WorkspaceRef } from "../intents/contract";
 import { asWorkspaceRef, makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import type { ClientEvent } from "../api/events";
 import type { DomainEvent } from "../intents/lib/types";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";

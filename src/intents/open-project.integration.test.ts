@@ -77,7 +77,7 @@ import type {
   WorkspaceRef,
 } from "./contract";
 import { makeWorkspaceRef } from "../utils/ref";
-import { GIT_PROJECT_TYPE, gitProjectIdentifier, gitProjectRef } from "../modules/git-project-ref";
+import { GIT_PROJECT_TYPE, gitProjectIdentifier, gitProjectRef } from "../modules/git/ref";
 
 // =============================================================================
 // Test Helpers

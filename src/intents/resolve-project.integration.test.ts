@@ -26,7 +26,7 @@ import type { HookContext, HookOutput } from "./lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { projPath } from "../shared/test-fixtures";
 import type { ProjectRef } from "./contract";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 
 // =============================================================================
 // Test Constants

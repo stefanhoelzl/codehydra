@@ -3,7 +3,7 @@
  * Integration tests for the core project store: records, ids, badge colors and
  * the open-project map, for projects of any type. The store reads no project
  * type's config; the git type's contributions are covered in
- * local-project-module.integration.test.ts.
+ * git/project.integration.test.ts.
  */
 
 import { describe, it, expect } from "vitest";
@@ -48,7 +48,7 @@ import { createFileSystemMock, directory } from "../boundaries/platform/filesyst
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { managedProjectDirName, projectDirName } from "../boundaries/platform/paths";
 import { Path } from "../utils/path/path";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import { projPath, testPath } from "../shared/test-fixtures";
 import type { ProjectPath } from "../intents/contract";
 

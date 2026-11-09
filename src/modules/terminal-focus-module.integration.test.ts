@@ -41,7 +41,7 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath } from "../shared/test-fixtures";
 import { createTerminalFocusModule } from "./terminal-focus-module";
 import { makeWorkspaceRef, workspaceNameOf } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import type { WorkspaceRef } from "../intents/contract";
 
 const PROJECT = gitProjectRef(projPath("/projects/test"));

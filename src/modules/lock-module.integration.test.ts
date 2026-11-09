@@ -25,7 +25,7 @@ import type { DomainEvent } from "../intents/lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import type { WorkspaceRef } from "../intents/contract";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import type { LockKey, LockTakeOptions } from "../api/entries/deps";
 import { ApiError } from "../api/errors";
 import { projPath, wsPath } from "../shared/test-fixtures";

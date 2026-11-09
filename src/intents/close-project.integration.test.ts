@@ -63,7 +63,7 @@ import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { Path } from "../utils/path/path";
 import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 
 // =============================================================================
 // Test Helpers

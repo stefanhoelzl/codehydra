@@ -40,7 +40,7 @@ import { createMockState, type MockStateService } from "../boundaries/platform/s
 import { z } from "zod/v4";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 
 // =============================================================================
 // Helpers

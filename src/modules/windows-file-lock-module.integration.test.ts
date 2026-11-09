@@ -34,7 +34,7 @@ import { createBehavioralLogger } from "../boundaries/platform/logging.test-util
 import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
 import type { MockProcessRunner } from "../boundaries/platform/process.state-mock";
 import { wsPath, projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import { directoryHolders, type HolderScanCall } from "../boundaries/platform/process.state-mock";
 import type { WorkspaceRef } from "../intents/contract";
 import type { ProcessMonitorModule } from "./process-monitor/process-monitor-module";

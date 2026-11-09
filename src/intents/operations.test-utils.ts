@@ -40,7 +40,7 @@ import { SwitchWorkspaceOperation, SWITCH_WORKSPACE_OPERATION_ID } from "./switc
 import type { SwitchWorkspaceHookResult } from "./switch-workspace";
 import type { WorkspacePath, ProjectPath } from "./contract";
 import { makeWorkspaceRef } from "../utils/ref";
-import { GIT_PROJECT_TYPE, gitProjectRef } from "../modules/git-project-ref";
+import { GIT_PROJECT_TYPE, gitProjectRef } from "../modules/git/ref";
 import { looksLikePath } from "../api/workspace-lookup";
 import type { ProjectRef, WorkspaceRef } from "./contract";
 import { workspacePathSchema } from "./contract";

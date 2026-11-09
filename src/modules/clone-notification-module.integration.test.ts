@@ -24,7 +24,7 @@ import {
 } from "./presentation/notification-manager.state-mock";
 import type { Project, ProjectId } from "../shared/api/types";
 import { projPath } from "../shared/test-fixtures";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 
 const A = "https://github.com/baltech-ag/Bros2FW";
 const B = "https://github.com/someone-else/Bros2FW";

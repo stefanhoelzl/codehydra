@@ -41,7 +41,7 @@ import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { WorkspacePath } from "../intents/contract";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import { AsyncLogScopeStore, ScopedLogger } from "../boundaries/platform/log-scope";
 import type { LogContext, Logger, LogScope } from "../boundaries/platform/logging-types";
 

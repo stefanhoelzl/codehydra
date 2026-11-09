@@ -30,7 +30,7 @@ import { createWindowTitleModule } from "./window-title-module";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { wsPath } from "../shared/test-fixtures";
 import type { WorkspacePath } from "../intents/contract";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 
 // =============================================================================
 // Minimal switch operation that emits workspace:switched

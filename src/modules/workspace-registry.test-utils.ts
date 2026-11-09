@@ -9,7 +9,7 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { projectPathSchema } from "../intents/contract";
 import { testPath } from "../shared/test-fixtures";
 import { Path } from "../utils/path/path";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import {
   createWorkspaceRegistryModule,
   type WorkspaceRegistryModule,

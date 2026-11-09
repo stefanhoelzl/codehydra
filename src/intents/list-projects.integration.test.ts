@@ -26,7 +26,7 @@ import type { Project, ProjectId } from "../shared/api/types";
 import type { DiscoveredWorkspace, ProjectPath, WorkspaceName } from "./contract";
 import { Path } from "../utils/path/path";
 import { projPath, wsPath } from "../shared/test-fixtures";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 
 // =============================================================================
 // Test Constants

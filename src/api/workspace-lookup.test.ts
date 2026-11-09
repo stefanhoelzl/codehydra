@@ -14,7 +14,7 @@ import {
   type ProjectLocation,
 } from "./workspace-lookup";
 import { makeProjectRef, makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 
 const REPO = gitProjectRef("/repo");
 const OTHER = gitProjectRef("/other");

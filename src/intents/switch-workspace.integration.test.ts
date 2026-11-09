@@ -46,7 +46,7 @@ import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath, WorkspaceRef } from "./contract";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 import { Path } from "../utils/path/path";
 
 // =============================================================================
@@ -238,7 +238,7 @@ function createTestSetup(opts?: {
 
 /**
  * A stable, opaque project ID for a path. Not production's format
- * (local-project-module's `<name>-<sha256 prefix>`): the switch operation only
+ * (the project store's `<name>-<sha256 prefix>`): the switch operation only
  * passes the ID through, so any value unique per path will do.
  */
 function fakeProjectId(path: string): ProjectId {

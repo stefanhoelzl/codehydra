@@ -35,7 +35,7 @@ import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 import { INTENT_GET_LAUNCH_OPTIONS } from "../intents/agent-launch-options";
 import { wsPath, projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 
 // =============================================================================
 // Fixtures

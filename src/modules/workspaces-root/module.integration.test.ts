@@ -53,7 +53,7 @@ import {
   ROOT_STATE_KEY,
 } from "./module";
 import { workspacesDirUnder } from "./workspaces-root";
-import { gitProjectRef } from "../git-project-ref";
+import { gitProjectRef } from "../git/ref";
 
 const DATA = testPath("/data");
 const NEW_ROOT = testPath("/devdrive/ch");

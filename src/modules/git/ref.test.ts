@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { gitProjectIdentifier, gitProjectRef } from "./git-project-ref";
+import { gitProjectIdentifier, gitProjectRef } from "./ref";
 
 const isWindows = process.platform === "win32";
 

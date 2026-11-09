@@ -38,7 +38,7 @@ import { wsPath, testPath, projPath } from "../shared/test-fixtures";
 import { createMinimalStartOperation } from "./api-server.test-utils";
 import type { WorkspaceName } from "../intents/contract";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 
 const PROJECT_REF = gitProjectRef(projPath("/test/project"));
 const FEATURE_REF = makeWorkspaceRef(PROJECT_REF, "feature-1");

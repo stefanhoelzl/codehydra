@@ -78,7 +78,7 @@ import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 import type { WorkspaceLocator } from "../shared/api/types";
 import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "../modules/git-project-ref";
+import { gitProjectRef } from "../modules/git/ref";
 import type { WorkspacePath } from "./contract";
 
 // =============================================================================

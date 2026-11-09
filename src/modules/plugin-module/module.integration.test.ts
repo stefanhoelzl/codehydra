@@ -100,7 +100,7 @@ import type { Config } from "../../boundaries/platform/config";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import type { HookOutputSink } from "./output-sink";
 import { makeWorkspaceRef } from "../../utils/ref";
-import { gitProjectRef } from "../git-project-ref";
+import { gitProjectRef } from "../git/ref";
 import type { ProjectRef } from "../../intents/contract";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 

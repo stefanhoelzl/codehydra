@@ -35,7 +35,7 @@ import { EVENT_WORKSPACE_DELETED } from "../delete-workspace";
 import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../delete-workspace";
 import type { ProjectId, ProjectRef, WorkspaceName } from "../contract";
 import { projectPathSchema } from "../contract";
-import { gitProjectRef } from "../../modules/git-project-ref";
+import { gitProjectRef } from "../../modules/git/ref";
 
 /** Options for `createMinimalOperation`. */
 export interface MinimalOperationOptions<TResult = void, THookResult = unknown, TFrame = unknown> {

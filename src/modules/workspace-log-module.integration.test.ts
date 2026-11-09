@@ -12,7 +12,7 @@ import type { DomainEvent } from "../intents/lib/types";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { EVENT_WORKSPACE_CREATE_FAILED, EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
 import { makeWorkspaceRef } from "../utils/ref";
-import { gitProjectRef } from "./git-project-ref";
+import { gitProjectRef } from "./git/ref";
 import type { WorkspaceRef } from "../intents/contract";
 import { testPath } from "../shared/test-fixtures";
 import {

@@ -4,10 +4,12 @@
  * dispatcher with the fake project type (plain folders, no git) as the only
  * project type: what a second type gets from the registry for one module. The
  * fake type names no metadata location, so its workspaces' metadata files go
- * under the project's record directory, on an in-memory filesystem.
+ * under the project's record directory, on an in-memory filesystem. The last
+ * block registers the git module next to it, which must leave the fake
+ * type's projects alone.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 import { z } from "zod/v4";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import type { Dispatcher } from "../intents/lib/dispatcher";
@@ -57,6 +59,14 @@ import { projPath, wsPath } from "../shared/test-fixtures";
 import { DEFAULT_METADATA_DIR, type WorkspaceRegistryModule } from "./workspace-registry-module";
 import { createTestWorkspaceRegistry, TEST_PROJECT_DIR } from "./workspace-registry.test-utils";
 import type { MockFileSystemBoundary } from "../boundaries/platform/filesystem.state-mock";
+import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../intents/get-workspace-status";
+import { GET_PROJECT_BASES_OPERATION_ID } from "../intents/get-project-bases";
+import type { GitProjectModule } from "./git/module";
+import {
+  createMockGitWorktreeProvider,
+  createTestGitModule,
+  type MockGitWorktreeProvider,
+} from "./git/git.test-utils";
 import { Path } from "../utils/path/path";
 import {
   createFakeProjectType,
@@ -170,7 +180,15 @@ interface Setup {
   fs: MockFileSystemBoundary;
 }
 
-function createSetup(): Setup {
+/** The git module registered next to the fake type, with every git dependency a spy. */
+interface GitNextToFake {
+  module: GitProjectModule;
+  provider: MockGitWorktreeProvider;
+  gitClient: { isRepositoryRoot: Mock; init: Mock; clone: Mock };
+  fs: { readdir: Mock; rm: Mock };
+}
+
+function createSetup(options: { withGit?: boolean } = {}): Setup & { git?: GitNextToFake } {
   const dispatcher = createMockDispatcher();
   dispatcher.registerOperation(openProjectOperation);
   dispatcher.registerOperation(openWorkspaceOperation);
@@ -183,7 +201,21 @@ function createSetup(): Setup {
   const fake = createFakeProjectType(registry);
   dispatcher.registerModule(registry);
   dispatcher.registerModule(fake.module);
-  return { dispatcher, fake, registry, fs };
+  if (!options.withGit) return { dispatcher, fake, registry, fs };
+
+  const git = {
+    provider: createMockGitWorktreeProvider(),
+    gitClient: { isRepositoryRoot: vi.fn(), init: vi.fn(), clone: vi.fn() },
+    fs: { readdir: vi.fn(), rm: vi.fn() },
+  };
+  const module = createTestGitModule({
+    registry,
+    gitWorktreeProvider: git.provider,
+    gitClient: git.gitClient,
+    fs: git.fs,
+  });
+  dispatcher.registerModule(module);
+  return { dispatcher, fake, registry, fs, git: { ...git, module } };
 }
 
 async function run<T>(dispatcher: Dispatcher, type: string, payload: unknown): Promise<T> {
@@ -640,5 +672,79 @@ describe("WorkspaceRegistryModule", () => {
 
       expect(output.result).toEqual({ metadata: { name: "fresh", title: "renamed by agent" } });
     });
+  });
+});
+
+// =============================================================================
+// Next to git: the git module is one module of the same shape, and leaves a
+// project of another type alone on every hook point they share.
+// =============================================================================
+
+describe("the fake type next to the git type", () => {
+  /** Every git dependency the module could reach for a project, untouched. */
+  function expectGitUntouched(git: GitNextToFake): void {
+    for (const spy of [
+      ...Object.values(git.provider),
+      ...Object.values(git.gitClient),
+      ...Object.values(git.fs),
+    ]) {
+      expect(spy).not.toHaveBeenCalled();
+    }
+  }
+
+  it("runs a fake project's whole lifecycle without git acting on it", async () => {
+    const { dispatcher, fake, git } = createSetup({ withGit: true });
+    fake.addFolder(PROJECT, "alpha");
+
+    await openProject(dispatcher, PROJECT);
+    await create(dispatcher, PROJECT, "fresh");
+    expect(await listNames(dispatcher, PROJECT)).toEqual(["alpha", "fresh"]);
+    expect(await remove(dispatcher, refOf(PROJECT, "alpha"))).toEqual({});
+    await run(dispatcher, INTENT_CLOSE_PROJECT, { projectPath: PROJECT });
+
+    expect(fake.created).toEqual(["fresh"]);
+    expect(fake.folders(PROJECT)).toEqual(["fresh"]);
+    expectGitUntouched(git!);
+  });
+
+  it("answers no git status, bases or preflight for a fake project", async () => {
+    const { dispatcher, fake, git } = createSetup({ withGit: true });
+    const path = fake.addFolder(PROJECT, "alpha");
+    await openProject(dispatcher, PROJECT);
+    const hooks = git!.module.hooks!;
+    const workspaceRef = refOf(PROJECT, "alpha");
+    const projectRef = fakeProjectRef(PROJECT);
+    const intent = { type: "test", payload: { removeWorktree: true, keepBranch: false } };
+
+    const outputs = await Promise.all([
+      hooks[GET_WORKSPACE_STATUS_OPERATION_ID]!["get"]!.handler({
+        intent,
+        workspaceRef,
+        workspacePath: path.toString(),
+        closing: null,
+      } as HookContext),
+      hooks[GET_PROJECT_BASES_OPERATION_ID]!["list"]!.handler({
+        intent,
+        projectRef,
+        projectPath: PROJECT,
+      } as HookContext),
+      hooks[GET_PROJECT_BASES_OPERATION_ID]!["refresh"]!.handler({
+        intent,
+        projectRef,
+        projectPath: PROJECT,
+      } as HookContext),
+      hooks[DELETE_WORKSPACE_OPERATION_ID]!["preflight"]!.handler({
+        intent,
+        projectRef,
+        projectPath: PROJECT,
+        workspaceRef,
+        workspacePath: path.toString(),
+      } as HookContext),
+    ]);
+
+    for (const output of outputs) {
+      expect((output as HookOutput<unknown> | undefined)?.result).toBeUndefined();
+    }
+    expectGitUntouched(git!);
   });
 });
