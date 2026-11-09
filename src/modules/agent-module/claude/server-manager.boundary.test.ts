@@ -36,6 +36,12 @@ import {
 /** A whole scenario is ~0.7s; the slowest (a background workflow's full life) ~7s. */
 const SCENARIO_TIMEOUT_MS = 90_000;
 
+/**
+ * How long after the prompt-suggestion fork's request to wait for its hook. Up
+ * to 2.1.319 it lands within a second; from 2.1.321 there is none to wait for.
+ */
+const FORK_HOOK_GRACE_MS = 1_500;
+
 describe("a plain turn", () => {
   let run: ScenarioRun;
   beforeAll(async () => {
@@ -224,17 +230,24 @@ describe("a prompt-suggestion fork while a background sub-agent runs (TUI)", () 
   // parked the workspace idle, and — no Post hook ever following the denied
   // call — every busy signal from the still-working sub-agents was swallowed.
   // The fork only runs in the interactive TUI, hence the mode.
+  //
+  // The fork's PreToolUse is not a signal the status needs — it is noise the
+  // bridge must ignore — and since 2.1.321 Claude no longer sends it. So the
+  // scenario waits for the fork to RUN (its request reaching the mock), not
+  // for its hook; when the hook does come (2.1.319 and earlier) it is checked.
   let run: ScenarioRun;
   const isForkAsk = (record: HookRecord): boolean =>
     record.hook === "PreToolUse" && record.toolName === "AskUserQuestion";
   beforeAll(async () => {
-    // Both, in either order: the fork starts the moment the turn ends, and each
-    // hook is a process of its own, so the fork's PreToolUse can reach the
-    // bridge before the Stop that preceded it (it does, now and then, on
-    // Windows, where process startup is slow).
+    // The main Stop and the fork, in either order: the fork starts the moment
+    // the turn ends, so its PreToolUse can reach the bridge before the Stop
+    // that preceded it. Once the fork has asked the model, give its hook (if
+    // this Claude sends one) a moment to land — well inside the sub-agent's 5s.
     run = await runScenario("suggestionfork", {
       mode: "tui",
-      until: (r) => seen(r, "Stop") && r.some(isForkAsk),
+      until: (r, progress) =>
+        seen(r, "Stop") &&
+        (r.some(isForkAsk) || (progress.suggestionForkAgeMs ?? 0) > FORK_HOOK_GRACE_MS),
     });
   }, SCENARIO_TIMEOUT_MS);
 
@@ -246,9 +259,9 @@ describe("a prompt-suggestion fork while a background sub-agent runs (TUI)", () 
     expect(after).toBe(before);
   });
 
-  it("the fork's AskUserQuestion does not park the workspace", () => {
-    const forkAsk = run.records.find(isForkAsk);
-    expect(forkAsk?.after).toBe("busy");
+  it("the fork's AskUserQuestion, if Claude sends it, does not park the workspace", () => {
+    const parked = run.records.filter((record) => isForkAsk(record) && record.after !== "busy");
+    expect(parked).toEqual([]);
   });
 
   it("the workspace is still busy once both have landed", () => {
