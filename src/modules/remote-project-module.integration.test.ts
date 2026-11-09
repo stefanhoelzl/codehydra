@@ -171,6 +171,9 @@ describe("RemoteProjectModule Integration", () => {
       const projectPath = result.projectPath;
       expect(projectPath).toContain("repo");
       expect(result.remoteUrl).toBe("https://github.com/org/repo.git");
+      // A git project, stored by its URL alone: its path derives from it
+      expect(result.type).toBe("git");
+      expect(result.config).toEqual({ remoteUrl: "https://github.com/org/repo.git" });
 
       // Verify clone was called
       expect(gitClient).toHaveClonedRepository(projectPath!);
@@ -199,6 +202,8 @@ describe("RemoteProjectModule Integration", () => {
       expect(result).toBeDefined();
       expect(result!.projectPath).toBe(gitPath.toString());
       expect(result!.remoteUrl).toBe(url);
+      expect(result!.type).toBe("git");
+      expect(result!.config).toEqual({ remoteUrl: url });
 
       // No clone should have happened
       expect(gitClient.$.repositories.size).toBe(0);

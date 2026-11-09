@@ -1,9 +1,10 @@
 /**
  * RemoteProjectModule - Handles remote (URL-cloned) project filesystem concerns.
  *
- * No internal state. No persistence. Delegates project state ownership to
- * LocalProjectModule. Responsible only for cloning repos on open and cleaning
- * up clone directories on close.
+ * No internal state. No persistence. The project store owns project state and
+ * records; this module is the git type's contribution for URL opens. Responsible
+ * only for cloning repos on open (reporting type "git", config { remoteUrl })
+ * and cleaning up clone directories on close.
  *
  * Hook contributions:
  * - open-project / resolve: clone URL or return existing clone path
@@ -29,10 +30,24 @@ import { notify } from "./presentation/notification-card";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 import { defineHooks } from "../intents/declarations";
+import { GIT_PROJECT_TYPE } from "./local-project-module";
 
 // =============================================================================
 // Factory
 // =============================================================================
+
+/**
+ * A managed clone, resolved: its path, its origin, and the git config it is
+ * stored with — only the URL, its path derives from it (see LocalProjectModule).
+ */
+function resolved(gitPath: Path, remoteUrl: string): ResolveHookResult {
+  return {
+    projectPath: projectPathSchema.parse(gitPath.toString()),
+    remoteUrl,
+    type: GIT_PROJECT_TYPE,
+    config: { remoteUrl },
+  };
+}
 
 export function createRemoteProjectModule(deps: {
   readonly fs: Pick<FileSystemBoundary, "readdir" | "rm">;
@@ -82,12 +97,7 @@ export function createRemoteProjectModule(deps: {
                 url: expanded,
                 existingPath: gitPath.toString(),
               });
-              return {
-                result: {
-                  projectPath: projectPathSchema.parse(gitPath.toString()),
-                  remoteUrl: expanded,
-                },
-              };
+              return { result: resolved(gitPath, expanded) };
             } catch {
               // Not found — clone
             }
@@ -103,15 +113,10 @@ export function createRemoteProjectModule(deps: {
               });
             });
 
-            // No saveProject call — LocalProjectModule.register handles persistence
-            // with remoteUrl from context
+            // No persistence here — the project store's register saves the
+            // type and config this result reports
 
-            return {
-              result: {
-                projectPath: projectPathSchema.parse(gitPath.toString()),
-                remoteUrl: expanded,
-              },
-            };
+            return { result: resolved(gitPath, expanded) };
           },
         },
       },

@@ -918,6 +918,43 @@ describe("OpenProjectOperation", () => {
     void projectState;
   });
 
+  it("hands the type and config resolve reported to register", async () => {
+    const dispatcher = createMockDispatcher();
+    dispatcher.registerOperation(new OpenProjectOperation());
+
+    const config = { path: new Path(PROJECT_PATH).toString(), extra: { n: 1 } };
+    const registered: RegisterHookInput[] = [];
+    dispatcher.registerModule({
+      name: "typed-project",
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          resolve: {
+            handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
+              const { path } = (ctx.intent as OpenProjectIntent).payload;
+              if (!path) return { result: {} };
+              return { result: { projectPath: projPath(path), type: "some-type", config } };
+            },
+          },
+          register: {
+            handler: async (ctx: HookContext): Promise<HookOutput<RegisterHookResult>> => {
+              const input = ctx as RegisterHookInput;
+              registered.push(input);
+              return { result: { projectId: testProjectId(input.projectPath), name: "p" } };
+            },
+          },
+        },
+      },
+    });
+
+    await dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
+
+    expect(registered).toHaveLength(1);
+    expect(registered[0]!.type).toBe("some-type");
+    expect(registered[0]!.config).toEqual(config);
+  });
+
   it("test 4: returns existing project if URL already cloned", async () => {
     const harness = createTestHarness({
       findByRemoteUrlResult: PROJECT_PATH,

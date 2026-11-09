@@ -2,8 +2,8 @@
  * OpenProjectOperation - Orchestrates project opening.
  *
  * Runs 3 sequential hook points using collect() for isolated contexts:
- * 1. "resolve": clone if URL, validate git → ResolveHookResult
- * 2. "register": generate ID, store state, persist → RegisterHookResult
+ * 1. "resolve": clone if URL, validate git; the project's type + config → ResolveHookResult
+ * 2. "register": generate ID, store state, persist type + config → RegisterHookResult
  * 3. "discover": find existing workspaces → DiscoverHookResult
  *
  * The operation mediates data flow between hook points — only pure data
@@ -102,12 +102,31 @@ export const prepareHookResultSchema = z
   })
   .readonly();
 
+/**
+ * A project type's name (e.g. "git"). The project store files each project
+ * under it and routes the project back to that type's module.
+ */
+export const projectTypeSchema = z.string().min(1);
+
+/**
+ * A project type's own description of a project. Opaque to core: the project
+ * store persists it and hands it back, and only the type's module reads it.
+ */
+export const projectTypeConfigSchema = z.record(z.string(), z.unknown()).readonly();
+
+export type ProjectType = z.infer<typeof projectTypeSchema>;
+export type ProjectTypeConfig = z.infer<typeof projectTypeConfigSchema>;
+
 /** Result returned by handlers on the "resolve" hook point. */
 export const resolveHookResultSchema = z
   .object({
     /** Optional when using collect() — handler may skip via self-selection. */
     projectPath: projectPathSchema.optional(),
     remoteUrl: z.string().optional(),
+    /** The project's type, from the module that resolved it. */
+    type: projectTypeSchema.optional(),
+    /** That type's opaque description of the project, persisted by the project store. */
+    config: projectTypeConfigSchema.optional(),
     /** If true, the project is already open — skip workspace:open and event emission. */
     alreadyOpen: z.boolean().optional(),
   })
@@ -153,6 +172,9 @@ const registerEnrichmentSchema = z.object({
   projectPath: projectPathSchema,
   projectRef: projectRefSchema,
   remoteUrl: z.string().optional(),
+  /** The type and config the "resolve" hook reported; the project store persists them. */
+  type: projectTypeSchema.optional(),
+  config: projectTypeConfigSchema.optional(),
 });
 
 /** Runtime whole-context validation schema for "register". */
@@ -378,6 +400,8 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
     throwHookErrors(resolveErrors, "project:open resolve hooks failed");
     const projectPath = onlyDefined(resolveResults, "projectPath", "project:open resolve");
     const resolvedRemoteUrl = onlyDefined(resolveResults, "remoteUrl", "project:open resolve");
+    const projectType = onlyDefined(resolveResults, "type", "project:open resolve");
+    const projectConfig = onlyDefined(resolveResults, "config", "project:open resolve");
     let alreadyOpen = resolveResults.some((r) => r.alreadyOpen);
     if (!projectPath) {
       throw new Error("Resolve hook did not provide projectPath");
@@ -392,6 +416,8 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       projectPath,
       projectRef,
       ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
+      ...(projectType !== undefined && { type: projectType }),
+      ...(projectConfig !== undefined && { config: projectConfig }),
     };
     const { results: registerResults, errors: registerErrors } = await ctx.hooks.collect(
       "register",

@@ -1,28 +1,28 @@
 /**
- * LocalProjectModule - Sole owner of project state and persistence for ALL projects.
+ * LocalProjectModule - The git project type's contributions for projects opened
+ * from a local path, and for every git project at restore and close.
  *
- * Manages internal state (projects map), persists project configs to disk,
- * and responds to resolve hook points across operations.
+ * The project store (project-store-module) owns what is common to every
+ * project: records, ids, badge colors, the open-project map. This module adds
+ * what is git's: a git project's record config is `{ path }` for a local
+ * project, `{ remoteUrl }` for a managed clone (its path derived from the URL),
+ * or `{ path, remoteUrl }` for a clone that is not where its URL derives.
  *
  * Hook registrations:
- * - resolve-project: shared project resolution (projectPath → projectId + projectName)
- * - project:open  → resolve:  validate .git exists for local paths
- * - project:open  → register: generate ID, persist, add to internal state (all projects)
- * - project:close → resolve:  look up projectPath in config to get remoteUrl
- * - project:close → close:    remove from internal state and config (all projects),
- *                             and delete the project's own directory for a local
- *                             project closed with removeLocalRepo (the remote
- *                             branch of that flag belongs to RemoteProjectModule)
- * - app:start     → start:    load ALL saved project configs
+ * - project:open  → prepare: offer git init for a non-repo directory
+ * - project:open  → resolve: validate .git exists for local paths; type "git" + config
+ * - app:ready     → restore: a saved git project → the project:open payload { path }
+ * - project:close → resolve: look up the project's remoteUrl in its record
+ * - project:close → close:   remove the project's worktrees directory when empty, and
+ *                            delete the project's own directory for a local project
+ *                            closed with removeLocalRepo (the remote branch of that
+ *                            flag belongs to RemoteProjectModule)
  */
 
-import * as crypto from "node:crypto";
-import { normalize } from "node:path";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookOutput } from "../intents/lib/operation";
-import type { ProjectId } from "../shared/api/types";
 import { projectPathSchema } from "../intents/contract";
-import type { ProjectPath, ProjectRef } from "../intents/contract";
+import type { ProjectRef } from "../intents/contract";
 import { projectRefFor } from "../utils/ref";
 import { Path } from "../utils/path/path";
 import {
@@ -31,17 +31,15 @@ import {
   projectDirName,
 } from "../boundaries/platform/paths";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
-import type { SupportedPlatform } from "../boundaries/platform/platform-info";
 import type { Logger } from "../boundaries/platform/logging";
 import type { ProjectConfig } from "../shared/types/project";
-import { PROJECT_COLOR_COUNT } from "../shared/ui-state";
-import { ProjectStoreError, getErrorMessage } from "../shared/errors/service-errors";
+import { getErrorMessage } from "../shared/errors/service-errors";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import {
   OPEN_PROJECT_OPERATION_ID,
   type PrepareHookResult,
+  type ProjectTypeConfig,
   type ResolveHookResult,
-  type RegisterHookResult,
 } from "../intents/open-project";
 import type { UiPresenter } from "./presentation/presentation-module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
@@ -52,52 +50,24 @@ import {
   type CloseResolveHookResult,
   type CloseHookResult,
 } from "../intents/close-project";
-import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../intents/app-ready";
-import {
-  RESOLVE_PROJECT_OPERATION_ID,
-  type ResolveHookResult as ResolveProjectHookResult,
-} from "../intents/resolve-project";
-import {
-  LIST_PROJECTS_OPERATION_ID,
-  type ListProjectsHookResult,
-  type ListProjectsHookEntry,
-} from "../intents/list-projects";
+import { APP_READY_OPERATION_ID, type RestoreProjectResult } from "../intents/app-ready";
 import { defineHooks } from "../intents/declarations";
+import {
+  loadProjectRecords,
+  type ProjectStoreModule,
+  type StoredRecord,
+} from "./project-store-module";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-/**
- * Internal representation of a project tracked by this module.
- * No remoteUrl — LocalProjectModule is unaware of remote concerns.
- */
-export interface LocalProject {
-  readonly ref: ProjectRef;
-  readonly id: ProjectId;
-  readonly name: string;
-  readonly path: Path;
-  /** Index into the sidebar's badge palette (see assignColor). */
-  readonly color: number;
-}
+/** The project type name git projects are stored under. */
+export const GIT_PROJECT_TYPE = "git";
 
-/** A project record as stored: the config plus the badge color it was given, if any. */
+/** A git project as its record describes it, with the badge color the record keeps. */
 export interface StoredProject extends ProjectConfig {
   readonly color?: number;
-}
-
-/**
- * The badge color for a project being opened: the one its record keeps, unless
- * another open project has it by now; else the lowest index none has. With
- * every color taken, they repeat in order.
- */
-export function assignColor(kept: number | undefined, taken: readonly number[]): number {
-  const isFree = (index: number): boolean => !taken.includes(index);
-  if (kept !== undefined && kept >= 0 && kept < PROJECT_COLOR_COUNT && isFree(kept)) return kept;
-  for (let index = 0; index < PROJECT_COLOR_COUNT; index++) {
-    if (isFree(index)) return index;
-  }
-  return taken.length % PROJECT_COLOR_COUNT;
 }
 
 /**
@@ -110,58 +80,18 @@ export interface LocalProjectModuleDeps {
    * Read on every use: the workspaces root it lives in is settled at startup.
    */
   readonly remotesDir: () => string;
-  readonly fs: Pick<
-    FileSystemBoundary,
-    "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm"
-  >;
+  readonly fs: Pick<FileSystemBoundary, "rm">;
+  readonly store: Pick<ProjectStoreModule, "records" | "isOpen">;
   readonly gitWorktreeProvider: Pick<GitWorktreeProvider, "validateRepository">;
   readonly ui: Pick<UiPresenter, "dialog">;
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
   readonly gitClient: Pick<IGitClient, "isRepositoryRoot" | "init">;
-  /** Host platform: project ids are case-folded on Windows. */
-  readonly platform: SupportedPlatform;
   readonly logger: Logger;
 }
 
 // =============================================================================
-// Private ID Generation
+// Git records
 // =============================================================================
-
-function normalizePathForId(absolutePath: string, platform: SupportedPlatform): string {
-  let normalized = normalize(absolutePath);
-  normalized = normalized.replace(/\\/g, "/");
-  normalized = normalized.replace(/\/+/g, "/");
-  if (normalized.length > 1 && normalized.endsWith("/")) {
-    normalized = normalized.slice(0, -1);
-  }
-  if (platform === "win32") {
-    normalized = normalized.toLowerCase();
-  }
-  return normalized;
-}
-
-/**
- * A project's id: its sanitized basename plus a hash of its normalized path.
- * Case-folded on Windows, whose paths are case-insensitive. Persisted (it names
- * the project's screenshot directory), so the derivation must not change.
- */
-export function generateProjectId(absolutePath: string, platform: SupportedPlatform): ProjectId {
-  const normalizedPath = normalizePathForId(absolutePath, platform);
-  const basename = normalizedPath.split("/").pop() ?? "";
-  const safeName =
-    basename
-      .replace(/[^a-zA-Z0-9]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "root";
-  const hash = crypto.createHash("sha256").update(normalizedPath).digest("hex").slice(0, 8);
-  return `${safeName}-${hash}` as ProjectId;
-}
-
-// =============================================================================
-// Private Persistence Helpers
-// =============================================================================
-
-type ProjectFs = LocalProjectModuleDeps["fs"];
 
 /** Where project records and managed clones live. */
 export interface StoreDirs {
@@ -186,7 +116,7 @@ export function isManaged(
 }
 
 /**
- * The directory a project's record belongs in: a managed project's is named
+ * The directory a git project's record is in: a managed project's is named
  * after its URL, so the record survives the clone moving; every other
  * project's is named after its path.
  */
@@ -197,179 +127,88 @@ function recordDirName(dirs: StoreDirs, projectPath: string, remoteUrl?: string)
 }
 
 /**
- * Parse one record. A managed project's record holds its URL and the path is
- * derived from it; a local project's holds its path. Either may hold the badge
- * color it was given; a record without one (or with a bad one) gets one at open.
+ * Read a git record's config. A managed project's holds its URL and the path is
+ * derived from it; a local project's holds its path.
  */
-function parseRecord(dirs: StoreDirs, content: string): StoredProject | undefined {
-  const parsed: unknown = JSON.parse(content);
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  const record = parsed as { path?: unknown; remoteUrl?: unknown; color?: unknown };
-  const remoteUrl = typeof record.remoteUrl === "string" ? record.remoteUrl : undefined;
-  const color = Number.isInteger(record.color) ? (record.color as number) : undefined;
-  const extras = {
-    ...(remoteUrl !== undefined && { remoteUrl }),
-    ...(color !== undefined && { color }),
-  };
-
-  if (typeof record.path === "string") {
-    const path = projectPathSchema.parse(new Path(record.path).toString());
-    return { path, ...extras };
-  }
-  if (remoteUrl !== undefined) {
-    const path = projectPathSchema.parse(managedClonePath(dirs.remotesDir, remoteUrl).toString());
-    return { path, ...extras };
+function parseGitConfig(
+  dirs: StoreDirs,
+  config: ProjectTypeConfig
+): { path: ProjectConfig["path"]; remoteUrl?: string } | undefined {
+  const remoteUrl = typeof config.remoteUrl === "string" ? config.remoteUrl : undefined;
+  const extras = remoteUrl !== undefined ? { remoteUrl } : {};
+  try {
+    if (typeof config.path === "string") {
+      return { path: projectPathSchema.parse(new Path(config.path).toString()), ...extras };
+    }
+    if (remoteUrl !== undefined) {
+      const path = managedClonePath(dirs.remotesDir, remoteUrl).toString();
+      return { path: projectPathSchema.parse(path), ...extras };
+    }
+  } catch {
+    // An unusable path - not a project
   }
   return undefined;
 }
 
-export async function saveProject(
-  fs: ProjectFs,
-  dirs: StoreDirs,
-  projectPath: ProjectPath,
-  remoteUrl?: string,
-  color?: number
-): Promise<void> {
-  const normalizedPath = projectPathSchema.parse(new Path(projectPath).toString());
-  const managed = remoteUrl !== undefined && isManaged(dirs, normalizedPath, remoteUrl);
-  const projectDir = new Path(dirs.projectsDir, recordDirName(dirs, normalizedPath, remoteUrl));
-  const configPath = new Path(projectDir, "config.json");
-
-  const record = {
-    ...(managed
-      ? { remoteUrl }
-      : { path: normalizedPath, ...(remoteUrl !== undefined && { remoteUrl }) }),
-    ...(color !== undefined && { color }),
-  };
-
-  try {
-    await fs.mkdir(projectDir);
-    await fs.writeFile(configPath, JSON.stringify(record, null, 2));
-  } catch (error: unknown) {
-    throw new ProjectStoreError(`Failed to save project: ${getErrorMessage(error)}`);
-  }
+/** A git record, read: the project it describes and the config it holds verbatim. */
+interface GitRecord {
+  readonly project: StoredProject;
+  readonly config: ProjectTypeConfig;
 }
 
+function gitRecords(dirs: StoreDirs, records: readonly StoredRecord[]): readonly GitRecord[] {
+  const result: GitRecord[] = [];
+  for (const record of records) {
+    if (record.type !== GIT_PROJECT_TYPE) continue;
+    const parsed = parseGitConfig(dirs, record.config);
+    if (!parsed) continue;
+    const project = record.color !== undefined ? { ...parsed, color: record.color } : parsed;
+    result.push({ project, config: record.config });
+  }
+  return result;
+}
+
+/** Every saved git project. For the workspaces root, which moves managed clones. */
 export async function loadAllProjects(
-  fs: ProjectFs,
+  fs: Pick<FileSystemBoundary, "readdir" | "readFile">,
   dirs: StoreDirs
 ): Promise<readonly StoredProject[]> {
-  const results: StoredProject[] = [];
-
-  let entries;
-  try {
-    entries = await fs.readdir(dirs.projectsDir);
-  } catch {
-    // Directory doesn't exist or other error - nothing stored
-    return [];
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory) continue;
-    const configPath = new Path(dirs.projectsDir, entry.name, "config.json");
-    try {
-      const stored = parseRecord(dirs, await fs.readFile(configPath));
-      if (stored) results.push(stored);
-    } catch {
-      // Skip invalid entries (ENOENT, malformed JSON, invalid path, etc.)
-      continue;
-    }
-  }
-
-  return results;
+  return gitRecords(dirs, await loadProjectRecords(fs, dirs.projectsDir)).map(
+    (record) => record.project
+  );
 }
 
-async function getProjectConfig(
-  fs: ProjectFs,
-  dirs: StoreDirs,
-  projectPath: string
-): Promise<StoredProject | undefined> {
-  const normalizedPath = new Path(projectPath).toString();
-
-  // First, try the path-hashed location (every local project)
-  const configPath = new Path(dirs.projectsDir, projectDirName(normalizedPath), "config.json");
-  try {
-    const stored = parseRecord(dirs, await fs.readFile(configPath));
-    if (stored?.path === normalizedPath) return stored;
-  } catch {
-    // Not there - try scanning all records
-  }
-
-  // Fallback: scan every record. A managed project's lives in a URL-named
-  // directory and yields its path only once parsed.
-  const allConfigs = await loadAllProjects(fs, dirs);
-  return allConfigs.find((config) => config.path === normalizedPath);
-}
-
-/**
- * Remove a record directory's config.json, then its workspaces directory and
- * itself — each only if empty. A workspaces directory still holding worktrees
- * is evidence of a failed deletion, worth keeping.
- */
-async function removeRecordDir(fs: ProjectFs, projectDir: Path): Promise<void> {
-  try {
-    await fs.unlink(new Path(projectDir, "config.json"));
-  } catch {
-    // Not there - the directory may still hold an empty workspaces dir
-  }
-  try {
-    await fs.rm(new Path(projectDir, "workspaces"));
-  } catch {
-    // ENOTEMPTY (workspaces exist) or ENOENT (doesn't exist) - that's fine
-  }
-  try {
-    await fs.rm(projectDir);
-  } catch {
-    // ENOTEMPTY or ENOENT - that's fine
-  }
-}
-
-async function removeProject(
-  fs: ProjectFs,
-  dirs: StoreDirs,
-  projectPath: string,
-  remoteUrl?: string
-): Promise<void> {
-  // A managed project's record sits apart from its worktrees, which stay in
-  // the path-named directory: clean both.
-  const recordDir = recordDirName(dirs, projectPath, remoteUrl);
-  const pathDir = projectDirName(projectPath);
-  for (const dirName of new Set([recordDir, pathDir])) {
-    await removeRecordDir(fs, new Path(dirs.projectsDir, dirName));
-  }
+/** The git config a project at this path is stored with when it has no record yet. */
+function newLocalConfig(projectPath: string): ProjectTypeConfig {
+  return { path: new Path(projectPath).toString() };
 }
 
 // =============================================================================
 // Module Factory
 // =============================================================================
 
-/**
- * Create a LocalProjectModule that owns project state and persistence for ALL projects.
- *
- * @param deps - FileSystemBoundary for persistence, GitWorktreeProvider for .git validation
- * @returns IntentModule with hook handlers for project:open, project:close, app:start
- */
-/** The local-project module, plus what it knows of every project it has a record of. */
+/** The local-project module, plus what it knows of every git project with a record. */
 export interface LocalProjectModule extends IntentModule {
   /**
-   * The ref of every project with a record, by its normalized path — open or
-   * not. For a migration turning stored project paths into refs, which needs to
-   * know whether each one was cloned (named by its origin) or is a checkout.
+   * The ref of every git project with a record, by its normalized path — open
+   * or not. For a migration turning stored project paths into refs, which needs
+   * to know whether each one was cloned (named by its origin) or is a checkout.
    */
   projectRefs(): Promise<ReadonlyMap<string, ProjectRef>>;
-  /** An open project's badge color (see assignColor); undefined if it is not open. */
-  projectColor(projectRef: ProjectRef): number | undefined;
 }
 
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalProjectModule {
-  const { projectsDir, remotesDir, fs, gitWorktreeProvider, ui, dispatcher, gitClient, logger } =
+  const { projectsDir, remotesDir, fs, store, gitWorktreeProvider, ui, dispatcher, gitClient } =
     deps;
+  const { logger } = deps;
   const dirs = (): StoreDirs => ({ projectsDir, remotesDir: remotesDir() });
 
-  /** Internal state: all projects keyed by normalized path string. */
-  // Keyed by the branded project path, so a key can be handed straight back to the
-  // contract (e.g. the list-projects hook result) without re-minting the brand.
-  const projects = new Map<ProjectPath, LocalProject>();
+  /** The record of the git project at this path, if it has one. */
+  async function findRecord(projectPath: string): Promise<GitRecord | undefined> {
+    const normalizedPath = new Path(projectPath).toString();
+    const records = gitRecords(dirs(), await store.records());
+    return records.find((record) => record.project.path === normalizedPath);
+  }
 
   /**
    * Delete a local project's own directory. Best-effort: by the time the
@@ -395,40 +234,38 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
     }
   }
 
-  async function projectRefs(): Promise<ReadonlyMap<string, ProjectRef>> {
-    const refs = new Map<string, ProjectRef>();
-    for (const config of await loadAllProjects(fs, dirs())) {
-      refs.set(new Path(config.path).toString(), projectRefFor(config.path, config.remoteUrl));
+  /**
+   * Remove the path-named directory a git project's worktrees live in, each
+   * part only if empty. A workspaces directory still holding worktrees is
+   * evidence of a failed deletion, worth keeping. The project store removes
+   * the record itself.
+   */
+  async function removeWorkspacesDir(projectPath: string): Promise<void> {
+    const projectDir = new Path(projectsDir, projectDirName(projectPath));
+    try {
+      await fs.rm(new Path(projectDir, "workspaces"));
+    } catch {
+      // ENOTEMPTY (workspaces exist) or ENOENT (doesn't exist) - that's fine
     }
-    return refs;
+    try {
+      await fs.rm(projectDir);
+    } catch {
+      // ENOTEMPTY (the record is still there) or ENOENT - that's fine
+    }
   }
 
-  function projectColor(projectRef: ProjectRef): number | undefined {
-    for (const project of projects.values()) {
-      if (project.ref === projectRef) return project.color;
+  async function projectRefs(): Promise<ReadonlyMap<string, ProjectRef>> {
+    const refs = new Map<string, ProjectRef>();
+    for (const { project } of gitRecords(dirs(), await store.records())) {
+      refs.set(new Path(project.path).toString(), projectRefFor(project.path, project.remoteUrl));
     }
-    return undefined;
+    return refs;
   }
 
   return {
     name: "local-project",
     projectRefs,
-    projectColor,
     hooks: defineHooks({
-      // resolve-project -> resolve (single registration replaces 5 per-operation hooks)
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx): Promise<HookOutput<ResolveProjectHookResult>> => {
-            const { projectRef } = ctx;
-            for (const [projectPath, project] of projects) {
-              if (project.ref !== projectRef) continue;
-              return { result: { projectId: project.id, projectPath, projectName: project.name } };
-            }
-            return { result: {} };
-          },
-        },
-      },
-
       [OPEN_PROJECT_OPERATION_ID]: {
         // prepare: offer git init for non-git directories
         prepare: {
@@ -440,7 +277,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
             if (git || !path) return { result: {} };
 
             // Already open — skip
-            if (projects.has(path)) return { result: {} };
+            if (store.isOpen(path)) return { result: {} };
 
             // The contract carries the path as plain data; git operations take a `Path`.
             const pathObj = new Path(path);
@@ -489,7 +326,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
           },
         },
 
-        // resolve: validate .git exists for local paths
+        // resolve: validate .git exists for local paths; report type "git" and its config
         resolve: {
           handler: async (ctx): Promise<HookOutput<ResolveHookResult>> => {
             const { intent } = ctx;
@@ -500,108 +337,57 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
               return { result: {} };
             }
 
-            // Check persisted config for remoteUrl (restores icon on startup)
-            const config = await getProjectConfig(fs, dirs(), path);
-            const remoteUrl = config?.remoteUrl;
+            // The record, if any: its remoteUrl restores a clone's ref and icon,
+            // and its config is handed back as is, so the store finds the record.
+            const record = await findRecord(path);
+            const remoteUrl = record?.project.remoteUrl;
+            const resolved = {
+              projectPath: path,
+              type: GIT_PROJECT_TYPE,
+              config: record?.config ?? newLocalConfig(path),
+              ...(remoteUrl !== undefined && { remoteUrl }),
+            };
 
             // Already open — skip validation, signal short-circuit
-            if (projects.has(path)) {
-              return {
-                result: {
-                  projectPath: path,
-                  alreadyOpen: true,
-                  ...(remoteUrl !== undefined && { remoteUrl }),
-                },
-              };
+            if (store.isOpen(path)) {
+              return { result: { ...resolved, alreadyOpen: true } };
             }
 
             await gitWorktreeProvider.validateRepository(new Path(path));
 
-            return {
-              result: {
-                projectPath: path,
-                ...(remoteUrl !== undefined && { remoteUrl }),
-              },
-            };
+            return { result: resolved };
           },
         },
+      },
 
-        // register: generate ID, persist, add to internal state (all projects)
-        register: {
-          handler: async (ctx): Promise<HookOutput<RegisterHookResult>> => {
-            const { projectPath: projectPathStr, projectRef, remoteUrl } = ctx;
-
-            const projectPath = new Path(projectPathStr);
-            const normalizedKey = projectPathSchema.parse(projectPath.toString());
-            const projectId = generateProjectId(projectPathStr, deps.platform);
-
-            // Already in state — return alreadyOpen without re-persisting
-            if (projects.has(normalizedKey)) {
-              return { result: { projectId, name: projectPath.basename, alreadyOpen: true } };
+      [APP_READY_OPERATION_ID]: {
+        // restore: reopen a saved git project by its path
+        restore: {
+          handler: async (ctx): Promise<HookOutput<RestoreProjectResult>> => {
+            if (ctx.type !== GIT_PROJECT_TYPE) return { result: {} };
+            const parsed = parseGitConfig(dirs(), ctx.config);
+            if (!parsed) {
+              logger.warn("Skipping a git project record without a usable path or URL");
+              return { result: {} };
             }
-
-            const existingConfig = await getProjectConfig(fs, dirs(), projectPathStr);
-            // A record keeps its badge color while no other open project has it.
-            // Picked and added to internal state with no await in between:
-            // startup opens the saved projects in parallel.
-            const color = assignColor(
-              existingConfig?.color,
-              [...projects.values()].map((project) => project.color)
-            );
-            projects.set(normalizedKey, {
-              ref: projectRef,
-              id: projectId,
-              name: projectPath.basename,
-              path: projectPath,
-              color,
-            });
-
-            // Persist to store if new, or if its color changed
-            if (!existingConfig || existingConfig.color !== color) {
-              try {
-                await saveProject(
-                  fs,
-                  dirs(),
-                  projectPathStr,
-                  existingConfig?.remoteUrl ?? remoteUrl,
-                  color
-                );
-              } catch (error: unknown) {
-                projects.delete(normalizedKey);
-                throw error;
-              }
-            }
-
-            return { result: { projectId, name: projectPath.basename } };
+            return { result: { payload: { path: parsed.path } } };
           },
         },
       },
 
       [CLOSE_PROJECT_OPERATION_ID]: {
-        // resolve: look up projectPath in config to get remoteUrl
+        // resolve: look up the record to get remoteUrl
         resolve: {
           handler: async (ctx): Promise<HookOutput<CloseResolveHookResult>> => {
-            const { projectPath } = ctx;
-
-            // Look up config to get remoteUrl
-            const config = await getProjectConfig(fs, dirs(), projectPath);
-
-            return {
-              result: {
-                ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
-              },
-            };
+            const remoteUrl = (await findRecord(ctx.projectPath))?.project.remoteUrl;
+            return { result: remoteUrl !== undefined ? { remoteUrl } : {} };
           },
         },
 
-        // close: remove from internal state and config (all projects)
+        // close: clean up the project's own directories (the store removes its record)
         close: {
           handler: async (ctx): Promise<HookOutput<CloseHookResult>> => {
             const { projectPath, removeLocalRepo, remoteUrl } = ctx;
-
-            // Remove from internal state
-            const normalizedKey = projectPathSchema.parse(new Path(projectPath).toString());
-            projects.delete(normalizedKey);
 
             if (removeLocalRepo && remoteUrl) {
               // Remote project with removeLocalRepo: force-delete its directories —
@@ -629,45 +415,10 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
               if (removeLocalRepo) {
                 await removeLocalDirectory(projectPath);
               }
-
-              // Normal removal: remove config.json and empty dirs
-              try {
-                await removeProject(fs, dirs(), projectPath, remoteUrl);
-              } catch {
-                // Fail silently
-              }
+              await removeWorkspacesDir(projectPath);
             }
 
-            return { result: { otherProjectsExist: projects.size > 0 } };
-          },
-        },
-      },
-
-      [APP_READY_OPERATION_ID]: {
-        // load-projects: load all saved project configs
-        "load-projects": {
-          handler: async (): Promise<HookOutput<LoadProjectsResult>> => {
-            const stored = await loadAllProjects(fs, dirs());
-            const projectPaths = stored.map((config) => config.path);
-            return { result: { projectPaths } };
-          },
-        },
-      },
-
-      // list-projects -> list-projects
-      [LIST_PROJECTS_OPERATION_ID]: {
-        "list-projects": {
-          handler: async (): Promise<HookOutput<ListProjectsHookResult>> => {
-            const entries: ListProjectsHookEntry[] = [];
-            for (const [key, project] of projects) {
-              entries.push({
-                ref: project.ref,
-                projectId: project.id,
-                name: project.name,
-                path: key,
-              });
-            }
-            return { result: { projects: entries } };
+            return { result: {} };
           },
         },
       },

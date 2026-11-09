@@ -30,12 +30,8 @@ import { getErrorMessage } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
 import { extractRepoName } from "../../utils/url-utils";
 import { managedClonePath } from "../../boundaries/platform/paths";
-import {
-  generateProjectId,
-  isManaged,
-  loadAllProjects,
-  type StoreDirs,
-} from "../local-project-module";
+import { isManaged, loadAllProjects, type StoreDirs } from "../local-project-module";
+import { generateProjectId } from "../project-store-module";
 import { remotesDirUnder, workspacesDirUnder } from "./workspaces-root";
 
 export interface MigrationDeps {

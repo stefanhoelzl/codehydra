@@ -18,7 +18,8 @@ import {
   APP_READY_OPERATION_ID,
   EVENT_APP_STARTED,
 } from "./app-ready";
-import type { AppReadyIntent, LoadProjectsResult } from "./app-ready";
+import type { AppReadyIntent, LoadProjectsResult, RestoreProjectResult } from "./app-ready";
+import { defineHooks } from "./declarations";
 import { INTENT_OPEN_PROJECT } from "./open-project";
 import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "./lib/module";
@@ -46,18 +47,47 @@ function createTestState(): TestState {
   };
 }
 
-function createProjectModule(projectPaths: readonly string[]): IntentModule {
+/** The project type the test restorer answers for. */
+const TEST_TYPE = "test";
+
+/** A store stand-in: saved projects of `type`, each described by its path. */
+function createProjectModule(projectPaths: readonly string[], type = TEST_TYPE): IntentModule {
   return {
     name: "test",
     hooks: {
       [APP_READY_OPERATION_ID]: {
         "load-projects": {
           handler: async (): Promise<HookOutput<LoadProjectsResult>> => {
-            return { result: { projectPaths: projectPaths.map(projPath) } };
+            return {
+              result: { projects: projectPaths.map((path) => ({ type, config: { path } })) },
+            };
           },
         },
       },
     },
+  };
+}
+
+/**
+ * A type module stand-in: restores saved projects of TEST_TYPE by their path,
+ * and throws for one whose config says so.
+ */
+function createRestorerModule(): IntentModule {
+  return {
+    name: "test-restorer",
+    hooks: defineHooks({
+      [APP_READY_OPERATION_ID]: {
+        restore: {
+          handler: async (ctx): Promise<HookOutput<RestoreProjectResult>> => {
+            if (ctx.type !== TEST_TYPE) return { result: {} };
+            if (ctx.config.broken === true) throw new Error("Unreadable record");
+            const path = ctx.config.path;
+            if (typeof path !== "string") return { result: {} };
+            return { result: { payload: { path: projPath(path) } } };
+          },
+        },
+      },
+    }),
   };
 }
 
@@ -104,7 +134,7 @@ function createTestSetup(
   );
   dispatcher.registerOperation(stub);
 
-  for (const m of modules) dispatcher.registerModule(m);
+  for (const m of [createRestorerModule(), ...modules]) dispatcher.registerModule(m);
 
   return { dispatcher };
 }
@@ -167,6 +197,47 @@ describe("AppReady Operation", () => {
       const stub = createProjectOpenStub(state, { failForPath: testPath("/invalid").toString() });
       const { dispatcher } = createTestSetup(
         [createProjectModule([testPath("/invalid").toNative(), testPath("/valid").toNative()])],
+        stub
+      );
+
+      await dispatcher.dispatch(appReadyIntent());
+
+      expect(state.openedProjectPaths).toEqual([testPath("/valid").toString()]);
+    });
+
+    it("skips a saved project of a type no module restores", async () => {
+      const state = createTestState();
+      const stub = createProjectOpenStub(state);
+      const { dispatcher } = createTestSetup(
+        [
+          createProjectModule([testPath("/unknown").toNative()], "unknown-type"),
+          createProjectModule([testPath("/known").toNative()]),
+        ],
+        stub
+      );
+
+      await dispatcher.dispatch(appReadyIntent());
+
+      expect(state.openedProjectPaths).toEqual([testPath("/known").toString()]);
+    });
+
+    it("skips a saved project whose restore fails, without aborting the rest", async () => {
+      const state = createTestState();
+      const stub = createProjectOpenStub(state);
+      const broken: IntentModule = {
+        name: "broken-store",
+        hooks: {
+          [APP_READY_OPERATION_ID]: {
+            "load-projects": {
+              handler: async (): Promise<HookOutput<LoadProjectsResult>> => ({
+                result: { projects: [{ type: TEST_TYPE, config: { broken: true } }] },
+              }),
+            },
+          },
+        },
+      };
+      const { dispatcher } = createTestSetup(
+        [broken, createProjectModule([testPath("/valid").toNative()])],
         stub
       );
 
