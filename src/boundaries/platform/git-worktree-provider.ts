@@ -3,7 +3,10 @@
  *
  * Unlike the per-project pattern, this provider manages multiple projects through internal
  * registries. Methods that previously used a bound projectRoot now accept it as a parameter.
- * Metadata methods resolve projectRoot from the workspace registry automatically.
+ * Workspace metadata is held by the core workspace registry; this provider reads
+ * and writes a worktree's metadata file only before the registry holds it
+ * (discovery, migration, adoption) and tells where the file lives
+ * (`metadataFileOf`).
  *
  * All consumers call methods on this provider directly, passing projectRoot per call.
  */
@@ -24,10 +27,15 @@ import {
 } from "../../shared/errors/service-errors";
 import { sanitizeWorkspaceName, unsanitizeWorkspaceName } from "./paths";
 import { toError } from "../../shared/error-utils";
-import { encodeTag, isValidMetadataKey, tagKey } from "../../shared/api/types";
+import { encodeTag, tagKey } from "../../shared/api/types";
 import type { FileSystemBoundary } from "./filesystem";
 import type { Logger } from "./logging";
-import { WorkspaceMetadataStore, type Metadata } from "./workspace-metadata-store";
+import {
+  METADATA_FILE_NAME,
+  readMetadataFile,
+  writeMetadataFile,
+  type Metadata,
+} from "./workspace-metadata-store";
 import { Path } from "../../utils/path/path";
 
 /**
@@ -156,7 +164,7 @@ export const EXTERNAL_TAG_VALUE = encodeTag({
  *
  * Maintains two internal registries:
  * - Project registry: Maps projectRoot -> { workspacesDir }
- * - Workspace registry: Maps workspacePath -> projectRoot (for metadata resolution)
+ * - Workspace registry: Maps workspacePath -> projectRoot (for countUnmergedCommits)
  *
  *
  * All paths are handled using the Path class for normalized, cross-platform handling.
@@ -178,11 +186,8 @@ export class GitWorktreeProvider {
   /** Map of normalized project root strings to project registration data */
   private readonly projectRegistry: Map<string, ProjectRegistration> = new Map();
 
-  /** Map of normalized workspace path strings to project root Path (for metadata resolution) */
+  /** Map of normalized workspace path strings to project root Path (for countUnmergedCommits) */
   private readonly workspaceRegistry: Map<string, Path> = new Map();
-
-  /** Every registered workspace's metadata, held in memory and in its metadata file. */
-  private readonly metadataStore: WorkspaceMetadataStore;
 
   /**
    * Keys a workspace migrated from the legacy git config gets when its config has
@@ -200,7 +205,6 @@ export class GitWorktreeProvider {
     this.gitClient = gitClient;
     this.fileSystemLayer = fileSystemLayer;
     this.logger = logger;
-    this.metadataStore = new WorkspaceMetadataStore(fileSystemLayer, logger);
     this.migrationDefaults = migrationDefaults;
   }
 
@@ -239,7 +243,6 @@ export class GitWorktreeProvider {
     for (const [workspaceKey, registeredRoot] of this.workspaceRegistry) {
       if (registeredRoot.toString() === projectRootStr) {
         this.workspaceRegistry.delete(workspaceKey);
-        this.metadataStore.forget(new Path(workspaceKey));
       }
     }
   }
@@ -256,21 +259,6 @@ export class GitWorktreeProvider {
       );
     }
     return registration;
-  }
-
-  /**
-   * Resolve project root from workspace path using the workspace registry.
-   * @throws WorkspaceError if workspace is not registered
-   */
-  private resolveProjectRoot(workspacePath: Path): Path {
-    const projectRoot = this.workspaceRegistry.get(workspacePath.toString());
-    if (!projectRoot) {
-      throw new WorkspaceError(
-        `Workspace not registered: ${workspacePath.toString()}. ` +
-          `The project may not be open or the workspace was not discovered.`
-      );
-    }
-    return projectRoot;
   }
 
   /**
@@ -352,7 +340,7 @@ export class GitWorktreeProvider {
   private async loadMetadataFile(worktreePath: Path): Promise<LoadedMetadata> {
     let file: Path;
     try {
-      file = WorkspaceMetadataStore.fileIn(await this.gitClient.getWorktreeGitDir(worktreePath));
+      file = await this.metadataFileOf(worktreePath);
     } catch (error: unknown) {
       this.logger
         .scoped({ path: worktreePath.toString() })
@@ -360,7 +348,7 @@ export class GitWorktreeProvider {
       return { file: null, metadata: null };
     }
     try {
-      return { file, metadata: await this.metadataStore.read(file) };
+      return { file, metadata: await readMetadataFile(this.fileSystemLayer, this.logger, file) };
     } catch (error: unknown) {
       this.logger
         .scoped({ path: file.toString() })
@@ -380,8 +368,8 @@ export class GitWorktreeProvider {
    * for one) create worktrees of the same repo as scratch space, and those must not
    * surface as workspaces.
    *
-   * Loads every managed workspace's metadata file into memory. A managed worktree
-   * without one is migrated from the legacy `branch.<b>.codehydra.*` git config:
+   * Reads every managed workspace's metadata file; the workspaces come back with
+   * it, for the core registry to hold. A managed worktree without one is migrated from the legacy `branch.<b>.codehydra.*` git config:
    * its file is written (`migrationDefaults` fill the keys its config lacks; with
    * neither, the file is still written, as the migration record), then the migrated
    * branches' config sections are removed.
@@ -414,7 +402,7 @@ export class GitWorktreeProvider {
 
     const workspaces: Workspace[] = [];
     const migrations: { path: Path; file: Path; branch: string | null; metadata: Metadata }[] = [];
-    const unnamed: { path: Path; name: string }[] = [];
+    const unnamed: { path: Path; file: Path; metadata: Metadata }[] = [];
     candidates.forEach((wt, index) => {
       const { file, metadata: fromFile } = loaded[index]!;
       const fromLegacy = wt.branch ? legacy.get(wt.branch) : undefined;
@@ -428,19 +416,16 @@ export class GitWorktreeProvider {
         return;
       }
 
-      // Register workspace in the workspace registry for metadata resolution
+      // Register workspace in the workspace registry (its project root, for unmerged counts)
       this.ensureWorkspaceRegistered(wt.path, projectRoot);
       const name = metadata[NAME_METADATA_KEY] ?? legacyWorkspaceName(wt.branch, wt.name, own);
       if (file !== null) {
         if (fromFile === null) {
           metadata = { ...this.migrationDefaults(), ...metadata, [NAME_METADATA_KEY]: name };
           migrations.push({ path: wt.path, file, branch: wt.branch, metadata });
-        } else {
-          this.metadataStore.track(wt.path, file, metadata);
-          if (metadata[NAME_METADATA_KEY] === undefined) {
-            metadata = { ...metadata, [NAME_METADATA_KEY]: name };
-            unnamed.push({ path: wt.path, name });
-          }
+        } else if (metadata[NAME_METADATA_KEY] === undefined) {
+          metadata = { ...metadata, [NAME_METADATA_KEY]: name };
+          unnamed.push({ path: wt.path, file, metadata });
         }
       }
 
@@ -455,20 +440,21 @@ export class GitWorktreeProvider {
     if (migrations.length > 0) {
       await this.migrateLegacyMetadata(projectRoot, migrations, legacy);
     }
-    await Promise.all(unnamed.map(({ path, name }) => this.recordName(path, name)));
+    await Promise.all(unnamed.map((entry) => this.recordName(entry)));
     return workspaces;
   }
 
   /**
-   * Record the name a workspace from before names were recorded goes by. Best
-   * effort: until it lands, discovery derives the same name again.
+   * Record the name a workspace from before names were recorded goes by, before
+   * the registry holds its metadata. Best effort: until it lands, discovery
+   * derives the same name again.
    */
-  private async recordName(workspacePath: Path, name: string): Promise<void> {
+  private async recordName(entry: { path: Path; file: Path; metadata: Metadata }): Promise<void> {
     try {
-      await this.metadataStore.set(workspacePath, NAME_METADATA_KEY, name);
+      await writeMetadataFile(this.fileSystemLayer, entry.file, entry.metadata);
     } catch (error: unknown) {
       this.logger
-        .scoped({ path: workspacePath.toString() })
+        .scoped({ path: entry.path.toString() })
         .warn("Failed to record workspace name", { error: getErrorMessage(error) });
     }
   }
@@ -493,11 +479,10 @@ export class GitWorktreeProvider {
     await Promise.all(
       migrations.map(async ({ path, file, branch, metadata }) => {
         try {
-          await this.metadataStore.initialize(path, file, metadata);
+          await writeMetadataFile(this.fileSystemLayer, file, metadata);
           if (branch !== null) migrated.add(branch);
         } catch (error: unknown) {
-          // Still usable this session: the write is retried on the next set.
-          this.metadataStore.track(path, file, metadata);
+          // Still usable this session: the next metadata write writes every key.
           this.logger
             .scoped({ path: path.toString() })
             .warn("Failed to write migrated workspace metadata", {
@@ -605,10 +590,8 @@ export class GitWorktreeProvider {
     let metadata: Record<string, string>;
     let name: string;
     try {
-      const file = WorkspaceMetadataStore.fileIn(
-        await this.gitClient.getWorktreeGitDir(worktreePath)
-      );
-      const existing = (await this.metadataStore.read(file)) ?? {};
+      const file = await this.metadataFileOf(worktreePath);
+      const existing = (await readMetadataFile(this.fileSystemLayer, this.logger, file)) ?? {};
       name =
         existing[NAME_METADATA_KEY] ?? legacyWorkspaceName(branch, worktreePath.basename, false);
       metadata = {
@@ -616,7 +599,7 @@ export class GitWorktreeProvider {
         [EXTERNAL_TAG_METADATA_KEY]: EXTERNAL_TAG_VALUE,
         [NAME_METADATA_KEY]: name,
       };
-      await this.metadataStore.initialize(worktreePath, file, metadata);
+      await writeMetadataFile(this.fileSystemLayer, file, metadata);
     } catch (error: unknown) {
       const message = getErrorMessage(error, "Unknown error");
       throw new WorkspaceError(
@@ -634,7 +617,14 @@ export class GitWorktreeProvider {
     };
   }
 
-  async listBases(projectRoot: Path): Promise<readonly BaseInfo[]> {
+  /**
+   * @param recordedBase The base a workspace recorded in its metadata (held by the
+   *   core registry), by worktree path
+   */
+  async listBases(
+    projectRoot: Path,
+    recordedBase: (worktreePath: Path) => string | undefined = () => undefined
+  ): Promise<readonly BaseInfo[]> {
     const branches = await this.gitClient.listBranches(projectRoot);
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
 
@@ -645,7 +635,7 @@ export class GitWorktreeProvider {
     for (const wt of worktrees) {
       if (wt.branch) {
         branchesWithWorktrees.add(wt.branch);
-        const recorded = this.metadataStore.get(wt.path)?.base;
+        const recorded = recordedBase(wt.path);
         if (recorded) recordedBases.set(wt.branch, recorded);
       }
     }
@@ -875,21 +865,7 @@ export class GitWorktreeProvider {
     // Register workspace in the workspace registry
     this.ensureWorkspaceRegistered(worktreePath, projectRoot);
 
-    // Record the base in the new worktree's metadata file (non-critical - log
-    // warning on failure; the file is created by the next metadata write)
-    try {
-      const file = WorkspaceMetadataStore.fileIn(
-        await this.gitClient.getWorktreeGitDir(worktreePath)
-      );
-      await this.metadataStore.initialize(worktreePath, file, {
-        base: baseBranch,
-        [NAME_METADATA_KEY]: name,
-      });
-    } catch (error: unknown) {
-      const message = getErrorMessage(error, "Unknown error");
-      this.logger.warn("Failed to save base branch metadata", { branch: name, error: message });
-    }
-
+    // The metadata to record: the core registry writes it (see trackCreated).
     return {
       name,
       path: worktreePath,
@@ -1057,7 +1033,6 @@ export class GitWorktreeProvider {
 
     // Remove workspace from registry
     this.workspaceRegistry.delete(workspacePath.toString());
-    this.metadataStore.forget(workspacePath);
 
     return {
       workspaceRemoved: true,
@@ -1110,7 +1085,11 @@ export class GitWorktreeProvider {
     }
   }
 
-  async countUnmergedCommits(workspacePath: Path): Promise<number> {
+  /**
+   * @param recordedBase The base the workspace recorded in its metadata; the
+   *   project's default base when it recorded none
+   */
+  async countUnmergedCommits(workspacePath: Path, recordedBase?: string): Promise<number> {
     try {
       const branch = await this.gitClient.getCurrentBranch(workspacePath);
       if (!branch) return 0;
@@ -1118,7 +1097,7 @@ export class GitWorktreeProvider {
       const projectRoot = this.workspaceRegistry.get(workspacePath.toString());
       if (!projectRoot) return 0;
 
-      let base = this.metadataStore.get(workspacePath)?.base;
+      let base = recordedBase;
       if (!base) {
         base = await this.defaultBase(projectRoot);
       }
@@ -1311,59 +1290,8 @@ export class GitWorktreeProvider {
     return { removedCount, failedPaths };
   }
 
-  /**
-   * The metadata the store holds for a registered workspace, loading its file on
-   * first use (a workspace whose file could not be written at creation, say).
-   * @throws WorkspaceError if the workspace is not registered or not a worktree
-   */
-  private async heldMetadata(workspacePath: Path): Promise<Metadata> {
-    this.resolveProjectRoot(workspacePath);
-    const held = this.metadataStore.get(workspacePath);
-    if (held) return held;
-
-    let file: Path;
-    try {
-      file = WorkspaceMetadataStore.fileIn(await this.gitClient.getWorktreeGitDir(workspacePath));
-    } catch {
-      throw new WorkspaceError(
-        `Workspace not found: ${workspacePath.toString()}`,
-        "WORKSPACE_NOT_FOUND"
-      );
-    }
-    const metadata = (await this.metadataStore.read(file)) ?? {};
-    this.metadataStore.track(workspacePath, file, metadata);
-    return metadata;
-  }
-
-  /**
-   * Set a metadata value for a workspace. Replaces the workspace's metadata file;
-   * works on any worktree, detached HEAD included.
-   *
-   * @param workspacePath Absolute path to the workspace
-   * @param key Metadata key (see `isValidMetadataKey`)
-   * @param value Value to set, or null to delete the key
-   * @throws WorkspaceError with code "INVALID_METADATA_KEY" if key format invalid
-   */
-  async setMetadata(workspacePath: Path, key: string, value: string | null): Promise<void> {
-    // Validate key format
-    if (!isValidMetadataKey(key)) {
-      throw new WorkspaceError(
-        `Invalid metadata key '${key}': must start with a letter, contain only letters, digits, and hyphens, and not end with a hyphen`,
-        "INVALID_METADATA_KEY"
-      );
-    }
-
-    await this.heldMetadata(workspacePath);
-    await this.metadataStore.set(workspacePath, key, value);
-  }
-
-  /**
-   * Get all metadata for a workspace, every tier included. Served from memory.
-   *
-   * @param workspacePath Absolute path to the workspace
-   * @returns The workspace's metadata record
-   */
-  async getMetadata(workspacePath: Path): Promise<Readonly<Record<string, string>>> {
-    return { ...(await this.heldMetadata(workspacePath)) };
+  /** A worktree's metadata file, in its private git directory (`.git/worktrees/<id>/`). */
+  async metadataFileOf(worktreePath: Path): Promise<Path> {
+    return new Path(await this.gitClient.getWorktreeGitDir(worktreePath), METADATA_FILE_NAME);
   }
 }

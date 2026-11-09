@@ -2,8 +2,8 @@
 /**
  * Integration tests for MetadataModule through the Dispatcher.
  *
- * Tests verify the full dispatch pipeline: intent -> operation -> hook -> provider,
- * using real GitWorktreeProvider with behavioral mocks for git client and filesystem.
+ * Tests verify the full dispatch pipeline: intent -> operation -> hook -> registry,
+ * using the real core workspace registry on an in-memory filesystem.
  *
  * The module under test is createMetadataModule (the extracted hook handler).
  * Resolve-project and resolve-workspace are inline stubs.
@@ -19,10 +19,7 @@ import { GetMetadataOperation, INTENT_GET_METADATA } from "../intents/get-metada
 import type { GetMetadataIntent } from "../intents/get-metadata";
 import { registerTestInfrastructure } from "../intents/operations.test-utils";
 import { createMetadataModule } from "./metadata-module";
-import { createMockGitClient } from "../boundaries/platform/git-client.state-mock";
-import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
-import { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
-import { SILENT_LOGGER } from "../boundaries/platform/logging";
+import { createTestWorkspaceRegistry, holdTestWorkspace } from "./workspace-registry.test-utils";
 import { Path } from "../utils/path/path";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
@@ -41,41 +38,15 @@ const WORKSPACES_DIR = testPath("/workspaces");
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  mockClient: ReturnType<typeof createMockGitClient>;
   projectId: ProjectId;
   workspaceName: WorkspaceName;
   workspaceRef: WorkspaceRef;
 }
 
-function createTestSetup(): TestSetup {
-  const mockFs = createFileSystemMock({
-    entries: {
-      [WORKSPACES_DIR.toString()]: directory(),
-    },
-  });
-
-  const mockClient = createMockGitClient({
-    fileSystem: mockFs,
-    repositories: {
-      [PROJECT_ROOT.toString()]: {
-        branches: ["main", "feature-x"],
-        currentBranch: "main",
-        worktrees: [
-          {
-            name: "feature-x",
-            path: projPath(new Path(WORKSPACES_DIR, "feature-x").toString()),
-            branch: "feature-x",
-          },
-        ],
-      },
-    },
-  });
-
-  const gitWorktreeProvider = new GitWorktreeProvider(mockClient, mockFs, SILENT_LOGGER);
-  gitWorktreeProvider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
-
+async function createTestSetup(): Promise<TestSetup> {
   const workspacePath = new Path(WORKSPACES_DIR, "feature-x");
-  gitWorktreeProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
+  const { registry } = createTestWorkspaceRegistry();
+  await holdTestWorkspace(registry, PROJECT_ROOT, workspacePath);
 
   const projectId = "project-ea0135bc" as ProjectId;
   const workspaceName = "feature-x" as WorkspaceName;
@@ -93,12 +64,11 @@ function createTestSetup(): TestSetup {
   });
 
   // Module under test
-  const metadataModule = createMetadataModule({ gitWorktreeProvider });
+  const metadataModule = createMetadataModule({ registry });
   dispatcher.registerModule(metadataModule);
 
   return {
     dispatcher,
-    mockClient,
     projectId,
     workspaceName,
     workspaceRef: workspaceRefIn(PROJECT_ROOT.toString(), workspaceName),
@@ -111,7 +81,7 @@ function createTestSetup(): TestSetup {
 
 describe("MetadataModule Integration", () => {
   it("set then get returns correct metadata (round-trip)", async () => {
-    const { dispatcher, workspaceRef } = createTestSetup();
+    const { dispatcher, workspaceRef } = await createTestSetup();
 
     const setIntent: SetMetadataIntent = {
       type: INTENT_SET_METADATA,
@@ -129,7 +99,7 @@ describe("MetadataModule Integration", () => {
   });
 
   it("set with null value deletes key", async () => {
-    const { dispatcher, workspaceRef } = createTestSetup();
+    const { dispatcher, workspaceRef } = await createTestSetup();
 
     // Set a value first
     await dispatcher.dispatch({

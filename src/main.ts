@@ -758,11 +758,23 @@ const getAvailableAgents = async (): Promise<readonly AgentInfo[]> => {
   return agents;
 };
 
+const projectStoreModule = createProjectStoreModule({
+  projectsDir: pathProvider.dataPath("projects").toString(),
+  fs: fileSystemLayer,
+  platform,
+  logger: lifecycleLogger,
+});
+// The core workspace registry: every open workspace and its metadata, whatever its project type.
+const workspaceRegistryModule = createWorkspaceRegistryModule({
+  fs: fileSystemLayer,
+  logger: lifecycleLogger,
+  projectDir: (projectRef) => projectStoreModule.projectDir(projectRef),
+});
 const metadataModule = createMetadataModule({
-  gitWorktreeProvider,
+  registry: workspaceRegistryModule,
 });
 const workspaceAgentResolverModule = createWorkspaceAgentResolverModule({
-  gitWorktreeProvider,
+  registry: workspaceRegistryModule,
   agentConfig,
   logger: loggingService.createLogger("agent-resolver"),
 });
@@ -864,12 +876,6 @@ const workspacesRootModule = createWorkspacesRootModule({
   logger: loggingService.createLogger("workspaces-root"),
 });
 const workspacesRoot = workspacesRootModule.root;
-const projectStoreModule = createProjectStoreModule({
-  projectsDir: pathProvider.dataPath("projects").toString(),
-  fs: fileSystemLayer,
-  platform,
-  logger: lifecycleLogger,
-});
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
   remotesDir: () => workspacesRoot.remotesDir().toString(),
@@ -888,7 +894,6 @@ const remoteProjectModule = createRemoteProjectModule({
   logger: lifecycleLogger,
   dispatcher,
 });
-const workspaceRegistryModule = createWorkspaceRegistryModule();
 const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   gitWorktreeProvider,
   workspacesRoot,

@@ -259,6 +259,12 @@ export interface ProjectStoreModule extends IntentModule {
   isOpen(projectPath: string): boolean;
   /** An open project's badge color (see assignColor); undefined if it is not open. */
   projectColor(projectRef: ProjectRef): number | undefined;
+  /**
+   * The directory an open project's record lives in; undefined if it is not open.
+   * Other core state about the project may live there too (the workspace
+   * registry's metadata files): the directory goes only once it is empty.
+   */
+  projectDir(projectRef: ProjectRef): Path | undefined;
 }
 
 export function createProjectStoreModule(deps: ProjectStoreModuleDeps): ProjectStoreModule {
@@ -300,6 +306,12 @@ export function createProjectStoreModule(deps: ProjectStoreModuleDeps): ProjectS
     projectColor(projectRef) {
       for (const project of projects.values()) {
         if (project.ref === projectRef) return project.color;
+      }
+      return undefined;
+    },
+    projectDir(projectRef) {
+      for (const project of projects.values()) {
+        if (project.ref === projectRef) return new Path(projectsDir, project.dirName);
       }
       return undefined;
     },

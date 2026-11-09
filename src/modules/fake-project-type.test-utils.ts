@@ -2,9 +2,11 @@
  * A fake project type for tests: plain folders held in memory, no git.
  *
  * It is the whole of what a second project type has to write to get resolve,
- * switch, list and close from the core workspace registry: one module that
- * tells the registry what discovery and creation found and when a workspace is
- * gone. Every workspace of a project is the folder `<project>/<name>`.
+ * switch, list, close and metadata from the core workspace registry: one module
+ * that tells the registry what discovery and creation found and when a
+ * workspace is gone. Every workspace of a project is the folder
+ * `<project>/<name>`. It names no metadata location, so the registry keeps its
+ * workspaces' metadata under the project's record directory.
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -81,7 +83,7 @@ export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectT
               };
               const found = [...foldersOf(ctx.projectPath).values()];
               registry.openProject(project);
-              for (const ws of found) registry.track(project, ws);
+              await Promise.all(found.map((ws) => registry.track(project, ws)));
               return { result: { workspaces: toDiscoveredWorkspaces(found) } };
             },
           },
@@ -104,8 +106,10 @@ export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectT
               if (ctx.fresh) {
                 foldersOf(ctx.projectPath).set(ws.name, ws);
                 created.push(ws.name);
+                await registry.trackCreated(project, ws);
+              } else {
+                await registry.track(project, ws);
               }
-              registry.track(project, ws);
               return {
                 result: {
                   workspacePath: workspacePathSchema.parse(ws.path.toString()),

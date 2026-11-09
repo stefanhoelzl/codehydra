@@ -394,6 +394,30 @@ describe("ProjectStoreModule", () => {
     });
   });
 
+  describe("projectDir", () => {
+    it("is an open project's record directory, wherever its record lives", async () => {
+      const setup = createSetup();
+      await register(setup, PATH_A);
+      await register(setup, PATH_B, { config: { remoteUrl: REPO_URL }, remoteUrl: REPO_URL });
+
+      expect(setup.store.projectDir(gitProjectRef(PATH_A))).toEqual(
+        new Path(PROJECTS_DIR, dirOf(PATH_A))
+      );
+      expect(setup.store.projectDir(gitProjectRef(PATH_B, REPO_URL))).toEqual(
+        new Path(PROJECTS_DIR, managedProjectDirName(REPO_URL))
+      );
+    });
+
+    it("is undefined once the project closes", async () => {
+      const setup = createSetup();
+      await register(setup, PATH_A);
+
+      await close(setup, PATH_A);
+
+      expect(setup.store.projectDir(gitProjectRef(PATH_A))).toBeUndefined();
+    });
+  });
+
   describe("resolve-project and list-projects", () => {
     it("resolves and lists open projects only", async () => {
       const setup = createSetup();
