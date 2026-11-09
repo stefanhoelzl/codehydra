@@ -73,8 +73,8 @@ function createMockServerManager(): ClaudeCodeServerManager {
 }
 
 const WS_PATH = testPath("/workspace/feature-a").toNative();
-const WS_REF = workspaceRefSchema.parse("ch::local::/test::ws");
-const WS_REF_B = workspaceRefSchema.parse("ch::local::/test::ws-b");
+const WS_REF = workspaceRefSchema.parse("ch::local::git::/test::ws");
+const WS_REF_B = workspaceRefSchema.parse("ch::local::git::/test::ws-b");
 
 // =============================================================================
 // Tests

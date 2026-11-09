@@ -89,14 +89,15 @@ import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { Config } from "../../boundaries/platform/config";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import type { HookOutputSink } from "./output-sink";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { makeWorkspaceRef } from "../../utils/ref";
+import { gitProjectRef } from "../git-project-ref";
 import type { ProjectRef } from "../../intents/contract";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
-const PROJECT_REF = projectRefFor(PROJECT_ROOT);
+const PROJECT_REF = gitProjectRef(PROJECT_ROOT);
 const WORKSPACE_REF = makeWorkspaceRef(PROJECT_REF, "feature-x");
 const WORKSPACE_URL = "http://127.0.0.1:25448/?folder=/workspaces/feature-x";
 const HOME = testPath("/home");
@@ -978,6 +979,8 @@ describe("trust", () => {
         [`workspace:${gone}:b`]: false,
         [`workspace:${PROJECT_REF}:d`]: true,
         "local:c": false,
+        // A ref from before project types names a git project.
+        [`project:ch::local::${new Path(PROJECT_ROOT).toString()}:f`]: true,
         // Already current: left alone.
         "remote:acme:e": false,
       },
@@ -993,6 +996,7 @@ describe("trust", () => {
       // An answer whose project has no record keeps its path; the project asks afresh.
       [`project:${gone}:b`]: false,
       [`project:${PROJECT_REF}:d`]: true,
+      [`project:${PROJECT_REF}:f`]: true,
       // Before sources, a local plugin was the default folder's.
       "local:default:c": false,
       "remote:acme:e": false,

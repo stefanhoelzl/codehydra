@@ -25,7 +25,7 @@ import { assertCompiledScript } from "../modules/agent-module/wrapper-boundary-t
 
 const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../dist/bin/ch.cjs");
 const TOKEN = "test-token";
-const WORKSPACE = "ch::local::/repo::feature";
+const WORKSPACE = "ch::local::git::/repo::feature";
 
 let http: HttpServer | undefined;
 let io: Server | undefined;

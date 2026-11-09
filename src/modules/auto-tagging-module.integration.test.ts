@@ -47,7 +47,7 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { createAutoTaggingModule } from "./auto-tagging-module";
 import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, WorkspaceRef } from "../intents/contract";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
@@ -221,7 +221,7 @@ function openIntent(payload: Partial<OpenWorkspacePayload> = {}): OpenWorkspaceI
   return {
     type: INTENT_OPEN_WORKSPACE,
     payload: {
-      projectRef: projectRefFor(PROJECT_ROOT),
+      projectRef: gitProjectRef(PROJECT_ROOT),
       workspaceName: "feature-x",
       base: "main",
       ...payload,

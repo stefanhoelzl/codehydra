@@ -33,7 +33,7 @@ import { testPath } from "../../../shared/test-fixtures";
 import { workspaceRefSchema } from "../../../intents/contract";
 
 /** The ref every workspace in these tests is started with. */
-const WORKSPACE_REF = workspaceRefSchema.parse("ch::local::/test::workspace");
+const WORKSPACE_REF = workspaceRefSchema.parse("ch::local::git::/test::workspace");
 
 /**
  * Send a hook to the bridge server.

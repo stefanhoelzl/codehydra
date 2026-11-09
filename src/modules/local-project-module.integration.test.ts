@@ -9,7 +9,7 @@
  * projectRefs. The store's own behavior is in project-store-module.integration.test.ts.
  */
 
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import { describe, it, expect, vi } from "vitest";
 
 import {
@@ -211,11 +211,11 @@ function openGitIntent(url: string): OpenProjectIntent {
 }
 
 function closeIntent(projectPath: ProjectPath): CloseProjectIntent {
-  return { type: INTENT_CLOSE_PROJECT, payload: { projectRef: projectRefFor(projectPath) } };
+  return { type: INTENT_CLOSE_PROJECT, payload: { projectRef: gitProjectRef(projectPath) } };
 }
 
 function closeResolveCtx(projectPath: ProjectPath): CloseResolveHookInput {
-  return { intent: closeIntent(projectPath), projectRef: projectRefFor(projectPath), projectPath };
+  return { intent: closeIntent(projectPath), projectRef: gitProjectRef(projectPath), projectPath };
 }
 
 function closeInput(
@@ -224,7 +224,7 @@ function closeInput(
 ): CloseHookInput {
   return {
     intent: closeIntent(projectPath),
-    projectRef: projectRefFor(projectPath),
+    projectRef: gitProjectRef(projectPath),
     projectPath: projPath(new Path(projectPath).toString()),
     ...(options.remoteUrl !== undefined && { remoteUrl: options.remoteUrl }),
     removeLocalRepo: options.removeLocalRepo,
@@ -249,7 +249,7 @@ async function open(setup: TestSetup, path: ProjectPath): Promise<void> {
   const register = await setup.both.open.collect("register", {
     intent: openLocalIntent(path),
     projectPath,
-    projectRef: projectRefFor(projectPath, resolved.remoteUrl),
+    projectRef: gitProjectRef(projectPath, resolved.remoteUrl),
     ...(resolved.remoteUrl !== undefined && { remoteUrl: resolved.remoteUrl }),
     ...(resolved.type !== undefined && { type: resolved.type }),
     ...(resolved.config !== undefined && { config: resolved.config }),
@@ -289,6 +289,7 @@ describe("LocalProjectModule Integration", () => {
           projectPath: projPath(new Path(PROJECT_PATH).toString()),
           type: "git",
           config: { path: new Path(PROJECT_PATH).toString() },
+          identifier: new Path(PROJECT_PATH).toString(),
         },
       ]);
       expect(gitWorktreeProvider.validateRepository).toHaveBeenCalledWith(new Path(PROJECT_PATH));
@@ -335,6 +336,7 @@ describe("LocalProjectModule Integration", () => {
           remoteUrl: REPO_URL,
           type: "git",
           config: { path: new Path(PROJECT_PATH).toString(), remoteUrl: REPO_URL },
+          identifier: "github.com/user/repo",
         },
       ]);
     });
@@ -401,7 +403,7 @@ describe("LocalProjectModule Integration", () => {
       });
       const pathRecord = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH), "config.json");
       expect(setup.fs.$.entries.has(new Path(pathRecord).toString())).toBe(false);
-      expect(setup.store.projectColor(projectRefFor(MANAGED_PATH, REPO_URL))).toBe(0);
+      expect(setup.store.projectColor(gitProjectRef(MANAGED_PATH, REPO_URL))).toBe(0);
     });
   });
 
@@ -654,8 +656,8 @@ describe("LocalProjectModule Integration", () => {
       const refs = await setup.module.projectRefs();
 
       expect(Object.fromEntries(refs)).toEqual({
-        [new Path(PROJECT_PATH).toString()]: projectRefFor(PROJECT_PATH),
-        [new Path(MANAGED_PATH).toString()]: projectRefFor(MANAGED_PATH, REPO_URL),
+        [new Path(PROJECT_PATH).toString()]: gitProjectRef(PROJECT_PATH),
+        [new Path(MANAGED_PATH).toString()]: gitProjectRef(MANAGED_PATH, REPO_URL),
       });
     });
 

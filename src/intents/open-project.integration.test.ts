@@ -76,11 +76,22 @@ import type {
   WorkspacePath,
   WorkspaceRef,
 } from "./contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef } from "../utils/ref";
+import { GIT_PROJECT_TYPE, gitProjectIdentifier, gitProjectRef } from "../modules/git-project-ref";
 
 // =============================================================================
 // Test Helpers
 // =============================================================================
+
+/** What the git modules' resolve reports for a project at this path. */
+function gitResolved(projectPath: ProjectPath, remoteUrl?: string): ResolveHookResult {
+  return {
+    projectPath,
+    type: GIT_PROJECT_TYPE,
+    identifier: gitProjectIdentifier(projectPath, remoteUrl),
+    ...(remoteUrl !== undefined && { remoteUrl }),
+  };
+}
 
 function extractWorkspaceName(path: string): string {
   const parts = path.split("/");
@@ -317,7 +328,7 @@ function createTestHarness(options?: {
     return discovered && project
       ? {
           projectPath: project.path,
-          projectRef: projectRefFor(project.path, project.remoteUrl),
+          projectRef: gitProjectRef(project.path, project.remoteUrl),
           workspaceName: discovered.name,
           metadata: discovered.metadata,
         }
@@ -329,7 +340,7 @@ function createTestHarness(options?: {
       ? {
           projectId: testProjectId(project.path),
           projectName: project.name,
-          projectRef: projectRefFor(project.path, project.remoteUrl),
+          projectRef: gitProjectRef(project.path, project.remoteUrl),
         }
       : undefined;
   };
@@ -356,7 +367,7 @@ function createTestHarness(options?: {
       if (
         entry &&
         makeWorkspaceRef(
-          entry.projectRef ?? projectRefFor(entry.projectPath),
+          entry.projectRef ?? gitProjectRef(entry.projectPath),
           entry.workspaceName
         ) === workspaceRef
       ) {
@@ -368,7 +379,7 @@ function createTestHarness(options?: {
   /** The path of an open project, by its ref. */
   const projectPathOf = (projectRef: ProjectRef): ProjectPath => {
     const project = projectState.registeredProjects.find(
-      (p) => projectRefFor(p.path, p.remoteUrl) === projectRef
+      (p) => gitProjectRef(p.path, p.remoteUrl) === projectRef
     );
     if (project === undefined) throw new Error(`Unknown project ${projectRef}`);
     return project.path;
@@ -394,7 +405,7 @@ function createTestHarness(options?: {
             }
 
             await gitWorktreeProvider.validateRepository(path);
-            return { result: { projectPath: projPath(path.toString()) } };
+            return { result: gitResolved(projPath(path.toString())) };
           },
         },
       },
@@ -420,7 +431,7 @@ function createTestHarness(options?: {
             const remoteUrl = git;
             const existing = await projectStore.findByRemoteUrl(remoteUrl);
             if (existing) {
-              return { result: { projectPath: existing, remoteUrl } };
+              return { result: gitResolved(existing, remoteUrl) };
             }
 
             const gitPath = testPath("/test/cloned", "repo");
@@ -430,7 +441,7 @@ function createTestHarness(options?: {
             });
             projectStoreState.configs.set(gitPath.toString(), { remoteUrl });
 
-            return { result: { projectPath: projPath(gitPath.toString()), remoteUrl } };
+            return { result: gitResolved(projPath(gitPath.toString()), remoteUrl) };
           },
         },
       },
@@ -654,7 +665,7 @@ function createTestHarness(options?: {
               result: {
                 workspaceRef: project
                   ? {
-                      ref: makeWorkspaceRef(projectRefFor(project.path, project.remoteUrl), name),
+                      ref: makeWorkspaceRef(gitProjectRef(project.path, project.remoteUrl), name),
                       projectId: testProjectId(project.path),
                       workspaceName: name as WorkspaceName,
                     }
@@ -838,7 +849,7 @@ describe("OpenProjectOperation", () => {
               const intent = ctx.intent as OpenProjectIntent;
               const { path } = intent.payload;
               if (!path) return { result: {} };
-              return { result: { projectPath: projPath(path.toString()), alreadyOpen: true } };
+              return { result: { ...gitResolved(projPath(path.toString())), alreadyOpen: true } };
             },
           },
         },
@@ -932,7 +943,14 @@ describe("OpenProjectOperation", () => {
             handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
               const { path } = (ctx.intent as OpenProjectIntent).payload;
               if (!path) return { result: {} };
-              return { result: { projectPath: projPath(path), type: "some-type", config } };
+              return {
+                result: {
+                  projectPath: projPath(path),
+                  type: "some-type",
+                  config,
+                  identifier: "p-1",
+                },
+              };
             },
           },
           register: {
@@ -1287,7 +1305,7 @@ describe("OpenProjectOperation", () => {
               const intent = ctx.intent as OpenProjectIntent;
               const { path } = intent.payload;
               if (!path) return { result: {} };
-              return { result: { projectPath: projPath(path.toString()), alreadyOpen: true } };
+              return { result: { ...gitResolved(projPath(path.toString())), alreadyOpen: true } };
             },
           },
           register: {

@@ -156,7 +156,7 @@ One line each; the full text is where the arrow points.
 - **Project** — a git repository (container, not viewable); local path or cloned from URL → docs/ARCHITECTURE.md (Core Concepts)
 - **Workspace** — a git worktree CodeHydra manages (created by it or adopted), shown in the embedded VSCodium; **named once** at creation, never derived from its path → docs/ARCHITECTURE.md (Core Concepts)
 - **Remote Project** — a project cloned from a git URL and identified by it → docs/ARCHITECTURE.md (Core Concepts)
-- **Ref** — the one identity of a workspace/project (`ch::<machine>::<project>[::<name>]`); build with `makeWorkspaceRef`/`projectRefFor`, never by hand → docs/ARCHITECTURE.md (Core Concepts)
+- **Ref** — the one identity of a workspace/project (`ch::<machine>::<type>::<identifier>[::<name>]`); build with `makeWorkspaceRef`/`makeProjectRef` (git: `gitProjectRef`), never by hand → docs/ARCHITECTURE.md (Core Concepts)
 - **UI View** — the app's single WebContentsView; workspaces are VSCodium iframes inside it → docs/ARCHITECTURE.md
 - **Intent dispatcher** — every operation is an intent run through hook modules → `src/intents/AGENTS.md`, docs/INTENTS.md
 - **Operation registry** — single source of truth for every operation the outside world reaches; adapters map it exhaustively → `src/api/AGENTS.md`

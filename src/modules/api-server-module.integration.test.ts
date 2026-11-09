@@ -37,9 +37,10 @@ import { COMMAND_TIMEOUT_MS } from "../shared/api-protocol";
 import { wsPath, testPath, projPath } from "../shared/test-fixtures";
 import { createMinimalStartOperation } from "./api-server.test-utils";
 import type { WorkspaceName } from "../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 
-const PROJECT_REF = projectRefFor(projPath("/test/project"));
+const PROJECT_REF = gitProjectRef(projPath("/test/project"));
 const FEATURE_REF = makeWorkspaceRef(PROJECT_REF, "feature-1");
 
 // =============================================================================

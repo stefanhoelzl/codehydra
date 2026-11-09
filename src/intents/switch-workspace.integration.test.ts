@@ -46,7 +46,7 @@ import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath, WorkspaceRef } from "./contract";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 import { Path } from "../utils/path/path";
 
 // =============================================================================
@@ -191,7 +191,7 @@ function createTestSetup(opts?: {
               for (const project of appState.projects) {
                 for (const ws of project.workspaces) {
                   candidates.push({
-                    projectRef: projectRefFor(project.path),
+                    projectRef: gitProjectRef(project.path),
                     projectName: project.name,
                     workspaceRef: wsRef(ws.path),
                     workspaceName: ws.path.slice(ws.path.lastIndexOf("/") + 1),
@@ -300,7 +300,7 @@ describe("SwitchWorkspace Operation", () => {
       expect(event.payload).toEqual({
         projectId: fakeProjectId(TEST_PROJECT_PATH),
         projectName: TEST_PROJECT_NAME,
-        projectRef: projectRefFor(TEST_PROJECT_PATH),
+        projectRef: gitProjectRef(TEST_PROJECT_PATH),
         workspaceName: TEST_WORKSPACE_NAME,
         workspaceRef: wsRef(TEST_WORKSPACE_PATH),
         metadata: {},
@@ -505,7 +505,7 @@ describe("SwitchWorkspace Operation", () => {
             "find-candidates": {
               handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => ({
                 result: {
-                  excludedProjects: [projectRefFor(createMultiWorkspaceProject().path)],
+                  excludedProjects: [gitProjectRef(createMultiWorkspaceProject().path)],
                 },
               }),
             },

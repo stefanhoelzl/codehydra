@@ -40,10 +40,11 @@ import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath } from "../shared/test-fixtures";
 import { createTerminalFocusModule } from "./terminal-focus-module";
-import { makeWorkspaceRef, projectRefFor, workspaceNameOf } from "../utils/ref";
+import { makeWorkspaceRef, workspaceNameOf } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import type { WorkspaceRef } from "../intents/contract";
 
-const PROJECT = projectRefFor(projPath("/projects/test"));
+const PROJECT = gitProjectRef(projPath("/projects/test"));
 const WS = makeWorkspaceRef(PROJECT, "alpha");
 const OTHER = makeWorkspaceRef(PROJECT, "beta");
 

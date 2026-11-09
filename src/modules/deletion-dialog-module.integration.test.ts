@@ -32,7 +32,8 @@ import type { DeletionProgress } from "../shared/api/types";
 import type { WorkspaceName, ProjectId } from "../shared/api/types";
 import type { DialogConfig } from "../shared/dialog-types";
 import { testPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 
 // =============================================================================
 // Test Helpers
@@ -65,7 +66,7 @@ function cancelRoleButtonId(config: DialogConfig): string | undefined {
 // Test Constants
 // =============================================================================
 
-const PROJECT_REF = projectRefFor(testPath("/projects").toString());
+const PROJECT_REF = gitProjectRef(testPath("/projects").toString());
 const WS_PATH_A = makeWorkspaceRef(PROJECT_REF, "workspace-a");
 const WS_PATH_B = makeWorkspaceRef(PROJECT_REF, "workspace-b");
 const WS_NAME_A = "workspace-a" as WorkspaceName;

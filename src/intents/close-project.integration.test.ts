@@ -62,7 +62,8 @@ import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { Path } from "../utils/path/path";
 import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 
 // =============================================================================
 // Test Helpers
@@ -82,7 +83,7 @@ const WORKSPACE_A_PATH = wsPath("/test/project/workspaces/feature-a");
 const WORKSPACE_A_NAME = "feature-a" as WorkspaceName;
 const WORKSPACE_B_PATH = wsPath("/test/project/workspaces/feature-b");
 const WORKSPACE_B_NAME = "feature-b" as WorkspaceName;
-const PROJECT_REF = projectRefFor(PROJECT_PATH);
+const PROJECT_REF = gitProjectRef(PROJECT_PATH);
 const WORKSPACE_A_REF = makeWorkspaceRef(PROJECT_REF, WORKSPACE_A_NAME);
 const WORKSPACE_B_REF = makeWorkspaceRef(PROJECT_REF, WORKSPACE_B_NAME);
 
@@ -151,7 +152,7 @@ function createTestHarness(options?: {
   const project: Project | undefined = options?.projectNotFound
     ? undefined
     : {
-        ref: projectRefFor(PROJECT_PATH),
+        ref: gitProjectRef(PROJECT_PATH),
         id: PROJECT_ID,
         path: PROJECT_PATH,
         name: "test-project",
@@ -544,7 +545,7 @@ describe("CloseProjectOperation", () => {
   it("test 13: close with an unknown project throws", async () => {
     const harness = createTestHarness({ projectNotFound: true });
     const intent = buildCloseIntent({
-      projectRef: projectRefFor(projPath("/nonexistent/project")),
+      projectRef: gitProjectRef(projPath("/nonexistent/project")),
     });
 
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Project not found");
@@ -710,13 +711,13 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
 
     await expect(
       harness.dispatcher.dispatch(
-        buildCloseIntent({ projectRef: projectRefFor(projPath("/nonexistent/project")) })
+        buildCloseIntent({ projectRef: gitProjectRef(projPath("/nonexistent/project")) })
       )
     ).rejects.toThrow("Project not found");
 
     expect(closeFailed).toHaveLength(1);
     expect((closeFailed[0] as ProjectCloseFailedEvent).payload).toEqual({
-      projectRef: projectRefFor(projPath("/nonexistent/project")),
+      projectRef: gitProjectRef(projPath("/nonexistent/project")),
     });
   });
 

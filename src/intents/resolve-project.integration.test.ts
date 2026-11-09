@@ -26,14 +26,14 @@ import type { HookContext, HookOutput } from "./lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { projPath } from "../shared/test-fixtures";
 import type { ProjectRef } from "./contract";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
 const PROJECT_PATH = projPath("/projects/my-app");
-const PROJECT_REF = projectRefFor(PROJECT_PATH);
+const PROJECT_REF = gitProjectRef(PROJECT_PATH);
 const PROJECT_ID = "my-app-12345678" as ProjectId;
 const PROJECT_NAME = "my-app";
 

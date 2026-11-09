@@ -79,7 +79,8 @@ import { createMockNotificationManager } from "./presentation/notification-manag
 import type { MockNotificationManager } from "./presentation/notification-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
-import { makeWorkspaceRef, parseProjectRef, projectRefFor, projectRefOf } from "../utils/ref";
+import { makeWorkspaceRef, parseProjectRef, projectRefOf } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import { wsPath, projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
 import type {
   WorkspacePath,
@@ -126,7 +127,7 @@ const openProjectOperation = createMinimalOperation<DiscoverHookResult>(
   {
     hookContext: (ctx) => {
       const { projectPath } = ctx.intent.payload as { projectPath: ProjectPath };
-      return { intent: ctx.intent, projectPath, projectRef: projectRefFor(projectPath) };
+      return { intent: ctx.intent, projectPath, projectRef: gitProjectRef(projectPath) };
     },
   }
 );
@@ -153,7 +154,7 @@ const openWorkspaceOperation = createMinimalOperation<CreateHookResult>(
       // The real operation resolves the project; a checkout's ref carries its path.
       const { projectRef } = ctx.intent.payload as { projectRef?: ProjectRef };
       const projectPath =
-        projectRef !== undefined ? (parseProjectRef(projectRef)?.project ?? "") : "";
+        projectRef !== undefined ? (parseProjectRef(projectRef)?.identifier ?? "") : "";
       return {
         intent: ctx.intent,
         projectPath,
@@ -794,7 +795,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
     it("contributes the project's workspaces to the close resolve hook", async () => {
       const { dispatcher, provider, module } = setup;
       const projectPath = projPath("/projects/my-app");
-      const projectRef = projectRefFor(projectPath);
+      const projectRef = gitProjectRef(projectPath);
       provider.discover.mockResolvedValue([
         makeWorkspace("feature-1", projPath(projectPath)),
         makeWorkspace("feature-2", projPath(projectPath)),
@@ -852,7 +853,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           payload: {
             workspaceName: "new-feature",
             base: "origin/main",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
           },
         };
 
@@ -890,7 +891,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           payload: {
             workspaceName: "Feat",
             base: "origin/main",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
           },
         };
 
@@ -915,7 +916,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           payload: {
             workspaceName: "existing-ws",
             base: "origin/main",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
             existingWorkspace: {
               path: wsPath("/workspaces/existing-ws"),
               name: "existing-ws",
@@ -962,7 +963,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "auto-base",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
           },
         };
 
@@ -991,7 +992,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "no-base",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
           },
         };
 
@@ -1016,7 +1017,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           payload: {
             workspaceName: "focus-test-1",
             base: "main",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
           },
         };
 
@@ -1045,7 +1046,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           payload: {
             workspaceName: "explicit-base",
             base: "develop",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
           },
         };
 
@@ -1074,7 +1075,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           payload: {
             workspaceName: "existing-ws",
             base: "origin/main",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
             existingWorkspace: {
               path: wsPath("/workspaces/existing-ws"),
               name: "existing-ws",
@@ -1104,7 +1105,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "existing-ws",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
             existingWorkspace: {
               path: wsPath("/workspaces/existing-ws"),
               name: "existing-ws",
@@ -1129,7 +1130,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "detached-ws",
-            projectRef: projectRefFor(projectPath),
+            projectRef: gitProjectRef(projectPath),
             existingWorkspace: {
               path: wsPath("/workspaces/detached-ws"),
               name: "detached-ws",
@@ -1186,7 +1187,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(result).toMatchObject({
           workspaceRef,
           workspacePath: wsPath(`${projectPath}/.worktrees/feature-1`),
-          projectRef: projectRefFor(projectPath),
+          projectRef: gitProjectRef(projectPath),
           workspaceName: "feature-1",
         });
       });
@@ -1758,7 +1759,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         type: "workspace:open",
         payload: {
           workspaceName: ws2.name,
-          projectRef: projectRefFor(projectPath),
+          projectRef: gitProjectRef(projectPath),
           existingWorkspace: {
             path: wsPath(ws2.path.toString()),
             name: ws2.name,
@@ -1915,7 +1916,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           projectId: "test-project" as ProjectId,
           workspaceName: "unknown" as WorkspaceName,
           workspaceRef: workspaceRefIn("/nonexistent", "workspace"),
-          projectRef: projectRefFor("/nonexistent"),
+          projectRef: gitProjectRef("/nonexistent"),
           key: "auto-workspace.tracked",
           value: "true",
         },

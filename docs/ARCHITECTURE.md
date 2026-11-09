@@ -71,23 +71,26 @@ The name is therefore never the path basename: `feature/x` lives in the director
 A ref is the one identity a workspace or project has (`src/utils/ref.ts`):
 
 ```
-ch::<machine>::<project>            ProjectRef
-ch::<machine>::<project>::<name>    WorkspaceRef
+ch::<machine>::<type>::<identifier>            ProjectRef
+ch::<machine>::<type>::<identifier>::<name>    WorkspaceRef
 ```
 
-e.g. `ch::local::github.com/org/codehydra::feature/x`.
+e.g. `ch::local::git::github.com/org/codehydra::feature/x`.
 
 - **machine**: only `local` exists today.
-- **project**: a project with a remote URL on record (a managed clone) is named by its normalized origin (`normalizeGitUrl`); any other project by its checkout path (`Path`-normalized, so lowercased on Windows). Neither changes when CodeHydra moves a clone or the workspaces root.
+- **type**: the project type that owns the project (`^[a-z][a-z0-9-]*$`); `git` is the only one.
+- **identifier**: what the type names the project by, derived by the type's module from its config and reported as `identifier` on `project:open`'s `resolve` hook. Core never derives it. Git (`src/modules/git-project-ref.ts`) names a project with a remote URL on record (a managed clone) by its normalized origin (`normalizeGitUrl`), any other by its checkout path (`Path`-normalized, so lowercased on Windows). Neither changes when CodeHydra moves a clone or the workspaces root. The project store refuses to open a second project with a ref an open one has.
 - **name**: the workspace's name, fixed at creation (see Workspace names above), independent of the branch checked out later. It never contains `:`.
 
-A ref is split at its first and its last `::`; the project part between them is kept verbatim and never escaped, since a checkout path may contain anything. A ref therefore cannot say on its own whether it names a project or a workspace: the reader always knows which kind it expects (`parseProjectRef` / `parseWorkspaceRef`).
+A ref is read as `ch`, the machine and the type, then the identifier up to the last `::`; the identifier is kept verbatim and never escaped, since a checkout path may contain anything. A ref therefore cannot say on its own whether it names a project or a workspace: the reader always knows which kind it expects (`parseProjectRef` / `parseWorkspaceRef`).
 
-There is one canonical spelling per workspace, so refs are compared with `===` and used as `Map` keys. Intents, events, IPC payloads and module maps carry refs, typed as the zod-branded `WorkspaceRef` / `ProjectRef` (`src/intents/contract.ts`). Build them only with `makeWorkspaceRef` / `projectRefFor` (or `makeProjectRef`), never by hand.
+Refs from before project types (`ch::<machine>::<project>[::<name>]`) are read as git: their project part is an origin or an absolute path, so it holds a `/` and its first segment never matches the type pattern. They are input only — `asProjectRef` / `asWorkspaceRef` return today's form, so every ref accepted from outside (`--workspace` / `--project`, MCP, the API, plugin actions, a Claude hook's `X-CH-Workspace`) is canonical before it is compared. The state.json values that hold refs are rewritten when read: `plugins.state` trust keys and `auto-workspaces` entries by the plugin module's startup migration, `sidebar.collapsed-projects` by its validation.
+
+There is one canonical spelling per workspace, so refs are compared with `===` and used as `Map` keys. Intents, events, IPC payloads and module maps carry refs, typed as the zod-branded `WorkspaceRef` / `ProjectRef` (`src/intents/contract.ts`). Build them only with `makeWorkspaceRef` / `makeProjectRef` (git: `gitProjectRef`), never by hand.
 
 An operation resolves a ref once (`workspace:resolve` / `project:resolve`); its hook contexts then carry the record's `workspacePath` / `projectPath` beside the ref, for the handlers that touch files or processes.
 
-Short forms (`test-0`, `app::test-0`, a project path or origin) are input only, resolved where the field says which kind it is (`splitWorkspaceReference`). Agents get their workspace's ref as `_CH_WORKSPACE`; plugin hooks get `workspace` / `project` refs in their input beside the paths (`src/modules/plugin-module/hook-map.ts`).
+Short forms (`test-0`, `app::test-0`, a project path, `<type>::<identifier>`, or an origin — naming no type, so git) are input only, resolved against the open projects where the field says which kind it is (`splitWorkspaceReference`, `splitTypedProjectReference`). Agents get their workspace's ref as `_CH_WORKSPACE`; plugin hooks get `workspace` / `project` refs in their input beside the paths (`src/modules/plugin-module/hook-map.ts`).
 
 ### Worktree Discovery Logic
 

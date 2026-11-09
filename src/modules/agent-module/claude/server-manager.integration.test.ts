@@ -429,7 +429,9 @@ describe("ClaudeCodeServerManager integration", () => {
       const statusChangesB = captureStatus(refOf(b));
 
       await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(b) });
-      await sendHook(port, "UserPromptSubmit", { workspaceRef: "ch::local::/elsewhere::other" });
+      await sendHook(port, "UserPromptSubmit", {
+        workspaceRef: "ch::local::git::/elsewhere::other",
+      });
 
       expect(statusChangesA).toEqual([]);
       expect(statusChangesB).toEqual(["busy"]);

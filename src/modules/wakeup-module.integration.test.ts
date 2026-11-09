@@ -53,7 +53,7 @@ import {
 import type { Project, ProjectId, WorkspaceName } from "../shared/api/types";
 import type { WorkspaceRef } from "../intents/contract";
 import { projPath, wsPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import { createPollModule } from "./poll-module";
 import { createWakeupModule, WAKEUP_METADATA_KEY, WAKEUP_TAG_KEY } from "./wakeup-module";
 import type { ScriptRequest, ScriptRunner } from "./scripts/script-runner";
@@ -64,7 +64,7 @@ import { Path } from "../utils/path/path";
 
 const MINUTE = 60_000;
 const PROJECT_PATH = projPath(testPath("/projects/repo").toString());
-const PROJECT_REF = projectRefFor(PROJECT_PATH);
+const PROJECT_REF = gitProjectRef(PROJECT_PATH);
 
 interface StoredWorkspace {
   readonly name: string;

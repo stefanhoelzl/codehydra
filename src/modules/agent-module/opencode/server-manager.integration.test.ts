@@ -213,7 +213,7 @@ describe("OpenCodeServerManager integration", () => {
     it("keeps CodeHydra's own variables over a clashing key", async () => {
       await serverManager.startServer(refOf(WS), new Path(WS), {
         binary: TEST_BINARY,
-        env: { _CH_WORKSPACE: "ch::local::/elsewhere::other" },
+        env: { _CH_WORKSPACE: "ch::local::git::/elsewhere::other" },
       });
 
       expect(lastSpawnEnv()._CH_WORKSPACE).toBe(TEST_WORKSPACE_REF);

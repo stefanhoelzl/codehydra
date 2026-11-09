@@ -81,6 +81,7 @@ import { looksLikeGitUrl, matchOpenProject } from "../../utils/project-reference
 import { CREATE_ACTION, type AutomationItem, type CreateItem } from "./items";
 import { safeJsonParse } from "./util";
 import { projectPathSchema, type ProjectRef, type WorkspaceRef } from "../../intents/contract";
+import { asProjectRef } from "../../utils/ref";
 
 // =============================================================================
 // State
@@ -262,7 +263,8 @@ export interface Automations<S extends AutomationSource = AutomationSource> {
   handle(source: S, items: readonly unknown[]): Promise<readonly string[]>;
   /**
    * Turn the projects tracking entries recorded by path, as versions before
-   * refs did, into refs. Before `start`.
+   * refs did, into refs, and refs from before project types into the git refs
+   * they name. Before `start`.
    */
   migrateEntries(refsByPath: ReadonlyMap<string, ProjectRef>): Promise<void>;
   /**
@@ -772,7 +774,12 @@ export function createAutomations<S extends AutomationSource>(
     let changed = false;
     const next: AutoWorkspaceEntries = {};
     for (const [key, entry] of Object.entries(current)) {
-      const ref = entry.projectPath === undefined ? undefined : refOfPath(entry.projectPath);
+      const ref =
+        entry.projectPath !== undefined
+          ? refOfPath(entry.projectPath)
+          : entry.projectRef !== undefined
+            ? currentForm(entry.projectRef)
+            : undefined;
       if (ref === undefined) {
         next[key] = entry;
         continue;
@@ -787,6 +794,12 @@ export function createAutomations<S extends AutomationSource>(
     if (!changed) return;
     entries = next;
     await stateAccessor.set(next);
+
+    /** A ref from before project types as the git ref it names; undefined when already current. */
+    function currentForm(ref: string): ProjectRef | undefined {
+      const current = asProjectRef(ref);
+      return current === null || current === ref ? undefined : current;
+    }
 
     function refOfPath(path: string): ProjectRef | undefined {
       try {

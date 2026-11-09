@@ -7,7 +7,7 @@ import { workspacePathSchema, projectPathSchema } from "../intents/contract";
 import { Path } from "../utils/path/path";
 import { tmpdir } from "node:os";
 import type { ProjectPath, WorkspacePath, WorkspaceRef } from "../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeProjectRef, makeWorkspaceRef } from "../utils/ref";
 
 // =============================================================================
 // Branded path helpers (tests)
@@ -142,7 +142,8 @@ export function wsPath(p: string): WorkspacePath {
  * same value the code under test registers the project with.
  */
 export function workspaceRefIn(projectPath: string, name: string): WorkspaceRef {
-  return makeWorkspaceRef(projectRefFor(projectPath), name);
+  // A git checkout's ref (see modules/git-project-ref.ts, which the renderer cannot import)
+  return makeWorkspaceRef(makeProjectRef("git", new Path(projectPath).toString()), name);
 }
 
 /**

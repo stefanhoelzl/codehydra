@@ -98,7 +98,8 @@ import {
 import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
 import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath, ProjectRef, WorkspaceRef } from "./contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 
 // =============================================================================
 // Test Helpers
@@ -118,7 +119,7 @@ const WORKSPACE_PATH = wsPath("/test/project/workspaces/feature-a");
 const WORKSPACE_NAME = "feature-a" as WorkspaceName;
 
 const WORKSPACE_PATH_B = wsPath("/test/project/workspaces/feature-b");
-const PROJECT_REF = projectRefFor(PROJECT_PATH);
+const PROJECT_REF = gitProjectRef(PROJECT_PATH);
 const WORKSPACE_REF = makeWorkspaceRef(PROJECT_REF, WORKSPACE_NAME);
 const WORKSPACE_REF_B = makeWorkspaceRef(PROJECT_REF, "feature-b");
 
@@ -405,7 +406,7 @@ function createTestHarness(options?: {
   };
   /** The path of a test project, by its ref. */
   const projectPathOfRef = async (ref: ProjectRef): Promise<ProjectPath | undefined> => {
-    const project = (await appState.getAllProjects()).find((p) => projectRefFor(p.path) === ref);
+    const project = (await appState.getAllProjects()).find((p) => gitProjectRef(p.path) === ref);
     return project === undefined ? undefined : projPath(project.path);
   };
 
@@ -422,7 +423,7 @@ function createTestHarness(options?: {
             const project = appState.findProjectForWorkspace(wsPath);
             if (!project) return { result: {} };
             const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName;
-            const projectRef = projectRefFor(project.path);
+            const projectRef = gitProjectRef(project.path);
             return {
               result: {
                 workspaceRef: makeWorkspaceRef(projectRef, workspaceName),
@@ -454,7 +455,7 @@ function createTestHarness(options?: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
             const { projectRef } = ctx as { projectRef: ProjectRef } & HookContext;
             const allProjects = await appState.getAllProjects();
-            const project = allProjects.find((p) => projectRefFor(p.path) === projectRef);
+            const project = allProjects.find((p) => gitProjectRef(p.path) === projectRef);
             return {
               result: project
                 ? {
@@ -725,7 +726,7 @@ function createTestHarness(options?: {
               for (const ws of project.workspaces) {
                 const workspaceName = ws.path.slice(ws.path.lastIndexOf("/") + 1);
                 candidates.push({
-                  projectRef: projectRefFor(project.path),
+                  projectRef: gitProjectRef(project.path),
                   projectName: project.name,
                   workspaceRef: workspaceRefIn(project.path, workspaceName),
                   workspaceName,
@@ -1790,7 +1791,7 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
         if (dispatchedIntent.type === INTENT_RESOLVE_PROJECT) {
           return {
             projectId: PROJECT_ID,
-            projectRef: projectRefFor(PROJECT_PATH),
+            projectRef: gitProjectRef(PROJECT_PATH),
             projectName: "test-project",
           };
         }

@@ -59,7 +59,7 @@ import { isValidHookName, type ClaudeCodeHookName } from "./types";
 import type { AgentMessage, AgentActivity } from "../types";
 
 /** The ref the boundary tests' one workspace goes by, in its hooks and the manager alike. */
-const BOUNDARY_WORKSPACE_REF = workspaceRefSchema.parse("ch::local::/boundary/repo::main");
+const BOUNDARY_WORKSPACE_REF = workspaceRefSchema.parse("ch::local::git::/boundary/repo::main");
 
 /** The shipped hook handler. Built by `pnpm build:wrappers`. */
 const HOOK_HANDLER_PATH = resolve(__dirname, "../../../../dist/bin/claude-code-hook-handler.cjs");

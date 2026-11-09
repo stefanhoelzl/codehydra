@@ -11,7 +11,8 @@ import type { AppendOutputRequest } from "../shared/api-protocol";
 import type { DomainEvent } from "../intents/lib/types";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { EVENT_WORKSPACE_CREATE_FAILED, EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import type { WorkspaceRef } from "../intents/contract";
 import { testPath } from "../shared/test-fixtures";
 import {
@@ -20,7 +21,7 @@ import {
   WORKSPACE_LOG_CHANNEL,
 } from "./workspace-log-module";
 
-const PROJECT = projectRefFor(testPath("/repos/proj").toString());
+const PROJECT = gitProjectRef(testPath("/repos/proj").toString());
 const WS = makeWorkspaceRef(PROJECT, "feat");
 const TARGET: LogScope = {
   project: "proj",

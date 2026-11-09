@@ -6,8 +6,10 @@
  *
  * - a workspace: its full ref; `<project>::<name>`; or a bare name, looked up in
  *   the caller's own project first
- * - a project: its full ref; its name; the path of a checkout; or the origin of
- *   a managed clone — the short forms of the project part of a ref
+ * - a project: its full ref; its name; its path; `<type>::<identifier>`; or,
+ *   naming no type and so meaning git, the origin of a managed clone
+ *
+ * A full ref from before project types (`ch::local::<project>`) is read as git.
  *
  * `ch` also knows the directory it was run in, which is not a reference: the
  * workspace containing it is the caller's own. That lookup has to happen without
@@ -20,8 +22,10 @@ import { Path } from "../utils/path/path";
 import {
   asProjectRef,
   asWorkspaceRef,
+  DEFAULT_PROJECT_TYPE,
   isRef,
   parseProjectRef,
+  splitTypedProjectReference,
   splitWorkspaceReference,
 } from "../utils/ref";
 import { normalizeGitUrl } from "../utils/url-utils";
@@ -196,7 +200,8 @@ export function resolveWorkspaceReference(
 /**
  * Resolve a project reference to its ref.
  *
- * A full ref is taken at its word. A path, an origin or a name must match an
+ * A full ref is taken at its word (one from before project types read as git).
+ * A path, a `<type>::<identifier>`, a git origin or a name must match an
  * open project — a name exactly one. Opening a project from a location is
  * `project.open`'s job, not a lookup's.
  */
@@ -220,13 +225,27 @@ function findProject(
   reference: string
 ): ProjectLocation | LookupError {
   if (isRef(reference)) {
-    const match = projects.find((project) => project.ref === reference);
+    const ref = asProjectRef(reference);
+    const match = projects.find((project) => project.ref === ref);
     return match ?? { error: `No open project ${reference}`, category: "not-found" };
   }
   if (looksLikePath(reference)) {
     const target = new Path(reference);
     const match = projects.find((project) => target.equals(new Path(project.path)));
     return match ?? { error: `No open project at "${reference}"`, category: "not-found" };
+  }
+
+  // `<type>::<identifier>` names a project of that type exactly
+  const parts = new Map(projects.map((project) => [project, parseProjectRef(project.ref)]));
+  const types = new Set([...parts.values()].flatMap((part) => (part ? [part.type] : [])));
+  const typed = splitTypedProjectReference(reference, types);
+  if (typed !== null) {
+    const match = projects.find(
+      (project) =>
+        parts.get(project)?.type === typed.type &&
+        parts.get(project)?.identifier === typed.identifier
+    );
+    return match ?? { error: `No open project named "${reference}"`, category: "not-found" };
   }
 
   const byName = projects.filter((project) => project.name === reference);
@@ -240,13 +259,13 @@ function findProject(
     };
   }
 
-  // An origin (`github.com/org/repo`, or any URL git accepts) names a managed
-  // clone, whose ref carries its normalized origin.
+  // Naming no type means git: an origin (`github.com/org/repo`, or any URL git
+  // accepts) names a managed clone, whose identifier is its normalized origin.
   const origin = normalizeGitUrl(reference);
-  const byOrigin = projects.find((project) => {
-    const parts = parseProjectRef(project.ref);
-    return parts?.kind === "managed" && parts.project === origin;
-  });
+  const byOrigin = projects.find(
+    (project) =>
+      parts.get(project)?.type === DEFAULT_PROJECT_TYPE && parts.get(project)?.identifier === origin
+  );
   return byOrigin ?? { error: `No open project named "${reference}"`, category: "not-found" };
 }
 

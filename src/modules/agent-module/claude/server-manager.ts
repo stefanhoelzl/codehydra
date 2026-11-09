@@ -30,7 +30,7 @@ import type {
 } from "../types";
 import { AgentUnreachableError } from "../types";
 import { errorCode, getErrorMessage, toError } from "../../../shared/error-utils";
-import { workspaceNameOf } from "../../../utils/ref";
+import { asWorkspaceRef, workspaceNameOf } from "../../../utils/ref";
 import { ConditionWaiters } from "../wait-until";
 import { inboxPayload } from "./inbox-message";
 import { Path } from "../../../utils/path/path";
@@ -945,13 +945,14 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     // A hook names its workspace by ref (the `X-CH-Workspace` header of an HTTP
     // hook, or `_CH_WORKSPACE` added by the hook handler). A ref that is not
-    // tracked here is not routed anywhere.
-    const workspaceRef = payload.workspaceRef as WorkspaceRef | undefined;
-    const state = workspaceRef !== undefined ? this.workspaces.get(workspaceRef) : undefined;
-    if (workspaceRef === undefined || state === undefined) {
+    // tracked here is not routed anywhere; one from before project types is read
+    // as the git ref it names.
+    const workspaceRef = asWorkspaceRef(payload.workspaceRef ?? "");
+    const state = workspaceRef === null ? undefined : this.workspaces.get(workspaceRef);
+    if (workspaceRef === null || state === undefined) {
       this.logger.silly("Hook received for unknown workspace", {
         hookName,
-        workspaceRef: workspaceRef ?? null,
+        workspaceRef: payload.workspaceRef ?? null,
       });
       return;
     }

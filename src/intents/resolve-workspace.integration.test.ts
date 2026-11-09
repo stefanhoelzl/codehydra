@@ -30,14 +30,15 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { WorkspaceName } from "../shared/api/types";
 import { wsPath, projPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
 const PROJECT_PATH = projPath("/projects/my-app");
-const PROJECT_REF = projectRefFor(PROJECT_PATH);
+const PROJECT_REF = gitProjectRef(PROJECT_PATH);
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const WORKSPACE_NAME = "feature-x" as WorkspaceName;
 const WORKSPACE_REF = makeWorkspaceRef(PROJECT_REF, WORKSPACE_NAME);

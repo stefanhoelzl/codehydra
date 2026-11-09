@@ -48,7 +48,7 @@ import { createFileSystemMock, directory } from "../boundaries/platform/filesyst
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { managedProjectDirName, projectDirName } from "../boundaries/platform/paths";
 import { Path } from "../utils/path/path";
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import { projPath, testPath } from "../shared/test-fixtures";
 import type { ProjectPath } from "../intents/contract";
 
@@ -125,7 +125,7 @@ function register(
   return setup.open.collect("register", {
     intent: { type: INTENT_OPEN_PROJECT, payload: { path } },
     projectPath: path,
-    projectRef: projectRefFor(path, remoteUrl),
+    projectRef: gitProjectRef(path, remoteUrl),
     ...(remoteUrl !== undefined && { remoteUrl }),
     type,
     config,
@@ -134,8 +134,8 @@ function register(
 
 function close(setup: Setup, path: ProjectPath): ReturnType<Setup["close"]["collect"]> {
   return setup.close.collect("close", {
-    intent: { type: INTENT_CLOSE_PROJECT, payload: { projectRef: projectRefFor(path) } },
-    projectRef: projectRefFor(path),
+    intent: { type: INTENT_CLOSE_PROJECT, payload: { projectRef: gitProjectRef(path) } },
+    projectRef: gitProjectRef(path),
     projectPath: path,
     removeLocalRepo: false,
   } satisfies CloseHookInput);
@@ -185,6 +185,19 @@ describe("ProjectStoreModule", () => {
       });
     });
 
+    it("refuses a second open project with the same ref, and saves nothing for it", async () => {
+      const setup = createSetup();
+      await register(setup, PATH_A, { remoteUrl: REPO_URL });
+
+      const { errors } = await register(setup, PATH_B, { remoteUrl: REPO_URL });
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.message).toContain(gitProjectRef(PATH_A, REPO_URL));
+      expect(readRecord(setup.fs, dirOf(PATH_B))).toBeUndefined();
+      expect(setup.store.isOpen(PATH_B)).toBe(false);
+      expect(setup.store.isOpen(PATH_A)).toBe(true);
+    });
+
     it("names a new project with an origin's record directory after the origin", async () => {
       const setup = createSetup();
 
@@ -223,7 +236,7 @@ describe("ProjectStoreModule", () => {
         remoteUrl: REPO_URL,
       });
 
-      expect(setup.store.projectColor(projectRefFor(PATH_A, REPO_URL))).toBe(4);
+      expect(setup.store.projectColor(gitProjectRef(PATH_A, REPO_URL))).toBe(4);
       expect(readRecord(setup.fs, managedProjectDirName(REPO_URL))).toBeUndefined();
     });
 
@@ -244,7 +257,7 @@ describe("ProjectStoreModule", () => {
       const { errors } = await setup.open.collect("register", {
         intent: { type: INTENT_OPEN_PROJECT, payload: { path: PATH_A } },
         projectPath: PATH_A,
-        projectRef: projectRefFor(PATH_A),
+        projectRef: gitProjectRef(PATH_A),
       } satisfies RegisterHookInput);
 
       expect(errors[0]?.message).toContain("No project type resolved");
@@ -385,7 +398,7 @@ describe("ProjectStoreModule", () => {
     it("resolves and lists open projects only", async () => {
       const setup = createSetup();
       await register(setup, PATH_A);
-      const refA = projectRefFor(PATH_A);
+      const refA = gitProjectRef(PATH_A);
       const idA = generateProjectId(PATH_A, "linux");
 
       const resolved = await setup.resolveProject.collect("resolve", {
@@ -393,8 +406,8 @@ describe("ProjectStoreModule", () => {
         projectRef: refA,
       });
       const unknown = await setup.resolveProject.collect("resolve", {
-        intent: { type: "project:resolve", payload: { projectRef: projectRefFor(PATH_B) } },
-        projectRef: projectRefFor(PATH_B),
+        intent: { type: "project:resolve", payload: { projectRef: gitProjectRef(PATH_B) } },
+        projectRef: gitProjectRef(PATH_B),
       });
       const listed = await setup.listProjects.collect("list-projects", {
         intent: { type: "project:list", payload: {} },
@@ -414,7 +427,7 @@ describe("ProjectStoreModule", () => {
 
   describe("badge colors", () => {
     const colorOf = (setup: Setup, path: ProjectPath): number | undefined =>
-      setup.store.projectColor(projectRefFor(path));
+      setup.store.projectColor(gitProjectRef(path));
 
     it("gives each project opened the lowest free color and stores it in its record", async () => {
       const setup = createSetup();

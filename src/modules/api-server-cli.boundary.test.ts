@@ -13,7 +13,8 @@ import { createApiServerEnv, waitForConnect, waitForDisconnect } from "./api-ser
 import { OperationRegistry } from "../api/registry";
 import { defineEntry } from "../api/types";
 import { workspacePathSchema, type WorkspacePath, type WorkspaceRef } from "../intents/contract";
-import { asWorkspaceRef, makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { asWorkspaceRef, makeWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import type { ClientEvent } from "../api/events";
 import type { DomainEvent } from "../intents/lib/types";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
@@ -26,9 +27,9 @@ import { targetFields } from "../api/entries/target";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 
 const WS = workspacePathSchema.parse("/repo/wt/feature") as WorkspacePath;
-const REPO = projectRefFor("/repo");
-const OTHER = projectRefFor("/other");
-const THIRD = projectRefFor("/third");
+const REPO = gitProjectRef("/repo");
+const OTHER = gitProjectRef("/other");
+const THIRD = gitProjectRef("/third");
 const WS_REF = makeWorkspaceRef(REPO, "feature");
 const SHARED = makeWorkspaceRef(OTHER, "shared");
 const TOKEN = "test-token";
@@ -418,6 +419,26 @@ describe("CLI clients on the API server wire", () => {
         token: TOKEN,
         workspace: WS_REF,
         cwd: "/other/wt/shared",
+      });
+      mcp.connect();
+      await waitForConnect(mcp);
+
+      await call(mcp, "api:operation:workspace.status");
+
+      expect(seen).toEqual([{ workspaceRef: WS_REF }]);
+    });
+
+    it("is the workspace an MCP shim presents by a ref from before project types", async () => {
+      const seen: Seen[] = [];
+      env = await createApiServerEnv(undefined, {
+        registry: testRegistry(seen),
+        cliToken: TOKEN,
+      });
+      listProjectsReturns(PROJECTS);
+      const mcp = env.createCliClient({
+        client: "mcp",
+        token: TOKEN,
+        workspace: "ch::local::/repo::feature",
       });
       mcp.connect();
       await waitForConnect(mcp);

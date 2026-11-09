@@ -27,7 +27,7 @@ import type { IntentModule } from "./module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { workspaceRefSchema } from "../contract";
 import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
-import { projectRefFor } from "../../utils/ref";
+import { gitProjectRef } from "../../modules/git-project-ref";
 
 // =============================================================================
 // Test operation
@@ -109,7 +109,7 @@ function createSetup(opts: {
           handler: async (ctx): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
             const intent = ctx.intent as TestIntent;
             if (intent.payload.workspaceRef === WORKSPACE_REF) {
-              const projectRef = projectRefFor(PROJECT_ROOT);
+              const projectRef = gitProjectRef(PROJECT_ROOT);
               return {
                 result: {
                   workspaceRef: WORKSPACE_REF,

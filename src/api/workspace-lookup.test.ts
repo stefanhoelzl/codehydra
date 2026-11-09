@@ -13,13 +13,14 @@ import {
   workspaceAtPath,
   type ProjectLocation,
 } from "./workspace-lookup";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeProjectRef, makeWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "../modules/git-project-ref";
 
-const REPO = projectRefFor("/repo");
-const OTHER = projectRefFor("/other");
-const MANAGED = projectRefFor("/data/remotes/codehydra", "https://github.com/org/codehydra.git");
+const REPO = gitProjectRef("/repo");
+const OTHER = gitProjectRef("/other");
+const MANAGED = gitProjectRef("/data/remotes/codehydra", "https://github.com/org/codehydra.git");
 
-function ws(project: ReturnType<typeof projectRefFor>, name: string, path: string) {
+function ws(project: ReturnType<typeof gitProjectRef>, name: string, path: string) {
   return { ref: makeWorkspaceRef(project, name), name, path };
 }
 
@@ -44,6 +45,13 @@ const PROJECTS: ProjectLocation[] = [
     path: "/data/remotes/codehydra",
     workspaces: [ws(MANAGED, "main", "/data/ws/main")],
   },
+];
+
+/** A project of a type other than git, beside the git ones. */
+const TYPED = makeProjectRef("my-type", "PROJ-1");
+const TYPED_PROJECTS: ProjectLocation[] = [
+  ...PROJECTS,
+  { ref: TYPED, name: "PROJ-1", path: "/typed/proj-1", workspaces: [ws(TYPED, "main", "/t/main")] },
 ];
 
 describe("isWithinWorkspace", () => {
@@ -150,6 +158,41 @@ describe("resolveWorkspaceReference", () => {
     });
   });
 
+  it("reads a ref from before project types as git, in today's form", () => {
+    expect(resolveWorkspaceReference([], "ch::local::/repo::feature")).toEqual({
+      ref: makeWorkspaceRef(REPO, "feature"),
+    });
+    expect(resolveWorkspaceReference([], "ch::local::github.com/org/codehydra::main")).toEqual({
+      ref: makeWorkspaceRef(MANAGED, "main"),
+    });
+  });
+
+  it("resolves <type>::<identifier>::<name>", () => {
+    expect(resolveWorkspaceReference(TYPED_PROJECTS, "git::/other::feature")).toEqual({
+      ref: makeWorkspaceRef(OTHER, "feature"),
+    });
+    expect(resolveWorkspaceReference(TYPED_PROJECTS, "my-type::PROJ-1::main")).toEqual({
+      ref: makeWorkspaceRef(TYPED, "main"),
+    });
+  });
+
+  it("still reads <project>::<name> by a project named like a type", () => {
+    const named = gitProjectRef("/src/git");
+    const projects: ProjectLocation[] = [
+      ...PROJECTS,
+      { ref: named, name: "git", path: "/src/git", workspaces: [ws(named, "x", "/src/git/x")] },
+    ];
+    expect(resolveWorkspaceReference(projects, "git::x")).toEqual({
+      ref: makeWorkspaceRef(named, "x"),
+    });
+  });
+
+  it("scopes a name to a project given by a ref from before project types", () => {
+    expect(
+      resolveWorkspaceReference(PROJECTS, "feature", { project: "ch::local::/other" })
+    ).toEqual({ ref: makeWorkspaceRef(OTHER, "feature") });
+  });
+
   it("refuses an ambiguous name rather than guessing", () => {
     // "feature" exists in both projects; picking one silently would act on the
     // wrong workspace.
@@ -188,8 +231,8 @@ describe("resolveWorkspaceReference", () => {
   });
 
   it("still refuses a name that several other projects have", () => {
-    const third = projectRefFor("/third");
-    const fourth = projectRefFor("/fourth");
+    const third = gitProjectRef("/third");
+    const fourth = gitProjectRef("/fourth");
     const projects: ProjectLocation[] = [
       ...PROJECTS,
       { ref: third, name: "third", path: "/third", workspaces: [ws(third, "x", "/third/wt/x")] },
@@ -269,12 +312,44 @@ describe("resolveProjectReference", () => {
   });
 
   it("takes a full ref at its word", () => {
-    const ref = projectRefFor("/somewhere/else");
+    const ref = gitProjectRef("/somewhere/else");
     expect(resolveProjectReference(PROJECTS, ref)).toEqual({ ref });
   });
 
+  it("reads a ref from before project types as git, in today's form", () => {
+    expect(resolveProjectReference([], "ch::local::/somewhere/else")).toEqual({
+      ref: gitProjectRef("/somewhere/else"),
+    });
+    expect(resolveProjectReference([], "ch::local::github.com/org/codehydra")).toEqual({
+      ref: MANAGED,
+    });
+  });
+
+  it("resolves <type>::<identifier> exactly", () => {
+    expect(resolveProjectReference(TYPED_PROJECTS, "my-type::PROJ-1")).toEqual({ ref: TYPED });
+    expect(resolveProjectReference(TYPED_PROJECTS, "git::github.com/org/codehydra")).toEqual({
+      ref: MANAGED,
+    });
+    expect(resolveProjectReference(TYPED_PROJECTS, "my-type::PROJ-2")).toMatchObject({
+      category: "not-found",
+    });
+  });
+
+  it("reads an origin naming no type as git only", () => {
+    const lookalike = makeProjectRef("my-type", "github.com/org/lookalike");
+    const projects: ProjectLocation[] = [
+      { ref: lookalike, name: "lookalike", path: "/l", workspaces: [] },
+    ];
+    expect(resolveProjectReference(projects, "github.com/org/lookalike")).toMatchObject({
+      category: "not-found",
+    });
+    expect(resolveProjectReference(projects, "my-type::github.com/org/lookalike")).toEqual({
+      ref: lookalike,
+    });
+  });
+
   it("refuses an ambiguous name", () => {
-    const twin = projectRefFor("/elsewhere/other");
+    const twin = gitProjectRef("/elsewhere/other");
     const projects: ProjectLocation[] = [
       ...PROJECTS,
       { ref: twin, name: "other", path: "/elsewhere/other", workspaces: [] },

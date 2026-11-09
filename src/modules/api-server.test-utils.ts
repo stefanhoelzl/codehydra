@@ -70,7 +70,8 @@ import type {
 } from "../intents/vscode-show-message";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { workspacePathSchema, type WorkspacePath, type WorkspaceRef } from "../intents/contract";
-import { parseWorkspaceRef, projectRefFor } from "../utils/ref";
+import { parseWorkspaceRef } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import { testWorkspaceRef } from "../shared/test-fixtures";
 import { Path } from "../utils/path/path";
 import type { LogScopeStore } from "../boundaries/platform/logging-types";
@@ -218,7 +219,7 @@ function withoutLogScope(
 function testWorkspacePath(workspaceRef: WorkspaceRef): WorkspacePath {
   const parts = parseWorkspaceRef(workspaceRef);
   if (parts === null) throw new Error(`Not a workspace ref: ${workspaceRef}`);
-  return workspacePathSchema.parse(new Path(parts.project, parts.name).toString());
+  return workspacePathSchema.parse(new Path(parts.identifier, parts.name).toString());
 }
 
 // ============================================================================
@@ -379,7 +380,7 @@ export async function createApiServerEnv(
       byProject.set(dir, [...(byProject.get(dir) ?? []), path]);
     }
     return [...byProject].map(([dir, paths]) => ({
-      ref: projectRefFor(dir),
+      ref: gitProjectRef(dir),
       name: new Path(dir).basename,
       path: dir,
       workspaces: paths.map((path) => ({
@@ -533,7 +534,7 @@ export async function createApiServerEnv(
       await testDispatcher.dispatch({
         type: "workspace:open",
         payload: {
-          projectRef: projectRefFor("/test/project"),
+          projectRef: gitProjectRef("/test/project"),
           workspaceName: "test",
           base: "main",
           ...(resetWorkspace

@@ -35,7 +35,7 @@ import { EVENT_WORKSPACE_DELETED } from "../delete-workspace";
 import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../delete-workspace";
 import type { ProjectId, ProjectRef, WorkspaceName } from "../contract";
 import { projectPathSchema } from "../contract";
-import { projectRefFor } from "../../utils/ref";
+import { gitProjectRef } from "../../modules/git-project-ref";
 
 /** Options for `createMinimalOperation`. */
 export interface MinimalOperationOptions<TResult = void, THookResult = unknown, TFrame = unknown> {
@@ -178,7 +178,7 @@ export function createDeleteEventOperation(
           workspaceName: fields.workspaceName ?? ("ws" as WorkspaceName),
           workspaceRef: intent.payload.workspaceRef,
           worktreeRemoved: intent.payload.removeWorktree,
-          projectRef: fields.projectRef ?? projectRefFor(projectPathSchema.parse("/projects/test")),
+          projectRef: fields.projectRef ?? gitProjectRef(projectPathSchema.parse("/projects/test")),
         },
       };
       ctx.emit(event);

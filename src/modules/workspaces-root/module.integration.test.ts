@@ -53,7 +53,7 @@ import {
   ROOT_STATE_KEY,
 } from "./module";
 import { workspacesDirUnder } from "./workspaces-root";
-import { projectRefFor } from "../../utils/ref";
+import { gitProjectRef } from "../git-project-ref";
 
 const DATA = testPath("/data");
 const NEW_ROOT = testPath("/devdrive/ch");
@@ -283,7 +283,7 @@ function agentStatus(name: string, status: "busy" | "idle"): AgentStatusUpdatedE
     type: EVENT_AGENT_STATUS_UPDATED,
     payload: {
       projectId: "app-1234" as ProjectId,
-      projectRef: projectRefFor(LOCAL_WT.dirname.toString()),
+      projectRef: gitProjectRef(LOCAL_WT.dirname.toString()),
       workspaceName: name as WorkspaceName,
       workspaceRef: workspaceRefIn(LOCAL_WT.dirname.toString(), name),
       active: false,

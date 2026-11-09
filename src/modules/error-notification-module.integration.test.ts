@@ -6,7 +6,7 @@
  * through notification:show with the correct config.
  */
 
-import { projectRefFor } from "../utils/ref";
+import { gitProjectRef } from "./git-project-ref";
 import { describe, it, expect, beforeEach } from "vitest";
 import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
 import type { WorkspaceCreateFailedEvent } from "../intents/open-workspace";
@@ -43,7 +43,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "my-workspace",
-        projectRef: projectRefFor(projPath("/projects/test")),
+        projectRef: gitProjectRef(projPath("/projects/test")),
         error: "Worktree already exists",
       },
     };
@@ -64,7 +64,7 @@ describe("ErrorNotificationModule", () => {
   describe("a failure that repeats", () => {
     const failure = (workspaceName: string, error: string): WorkspaceCreateFailedEvent => ({
       type: EVENT_WORKSPACE_CREATE_FAILED,
-      payload: { workspaceName, projectRef: projectRefFor(projPath("/projects/test")), error },
+      payload: { workspaceName, projectRef: gitProjectRef(projPath("/projects/test")), error },
     });
 
     const emit = async (event: WorkspaceCreateFailedEvent): Promise<void> => {
@@ -113,7 +113,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "test-ws",
-        projectRef: projectRefFor(projPath("/projects/test")),
+        projectRef: gitProjectRef(projPath("/projects/test")),
         error: "Some error",
       },
     };
@@ -135,7 +135,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "mcp-workspace",
-        projectRef: projectRefFor(projPath("/projects/test")),
+        projectRef: gitProjectRef(projPath("/projects/test")),
         error: "Some MCP error",
         source: "mcp",
       },
@@ -153,7 +153,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "plugin-workspace",
-        projectRef: projectRefFor(projPath("/projects/test")),
+        projectRef: gitProjectRef(projPath("/projects/test")),
         error: "Some API server error",
         source: "api-server",
       },
@@ -171,7 +171,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "unknown-workspace",
-        projectRef: projectRefFor(projPath("/projects/test")),
+        projectRef: gitProjectRef(projPath("/projects/test")),
         error: "Some error",
       },
     };
@@ -222,7 +222,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "ws-1",
-        projectRef: projectRefFor(projPath("/projects/test")),
+        projectRef: gitProjectRef(projPath("/projects/test")),
         error: "Error 1",
       },
     };
@@ -230,7 +230,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "ws-2",
-        projectRef: projectRefFor(projPath("/projects/test")),
+        projectRef: gitProjectRef(projPath("/projects/test")),
         error: "Error 2",
       },
     };
