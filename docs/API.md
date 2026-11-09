@@ -801,6 +801,11 @@ $ ch lock take device "smoke test"   # wait for, then hold, a shared resource
 $ ch config set sidebar.width 300    # writes config.json, like the settings dialog
 ```
 
+`ws switch` (MCP `workspace_switch`) returns `{ "switched": true }`, or, while
+the user is filling in the New workspace form, `{ "switched": false, "reason": … }`
+with exit `0`: only the user's own switch takes them off a form with their input
+in it, so the call did nothing and can be made again later.
+
 Run `ch --help` for the command list, or `ch <command> --help` for one command's
 arguments. Both are built from the running app's registry, so they describe the
 operations that instance actually has.

@@ -34,7 +34,11 @@
  */
 
 import type { IntentModule } from "../../intents/lib/module";
-import type { IntentInterceptor } from "../../intents/lib/dispatcher";
+import type {
+  DispatchOrigin,
+  InterceptContext,
+  IntentInterceptor,
+} from "../../intents/lib/dispatcher";
 import type { Intent } from "../../intents/lib/types";
 import type { HookOutput } from "../../intents/lib/operation";
 import { ANY_VALUE } from "../../intents/lib/operation";
@@ -84,6 +88,7 @@ import {
   type FindCandidatesHookResult,
   type SwitchWorkspaceHookResult,
   type SwitchWorkspaceIntent,
+  type SwitchWorkspacePayload,
 } from "../../intents/switch-workspace";
 import { activeWorkspaceRef } from "../../intents/lib/active-workspace";
 import { EVENT_AGENT_STATUS_UPDATED } from "../../intents/update-agent-status";
@@ -210,6 +215,13 @@ export interface PresentationModuleDeps {
    * module.
    */
   readonly onOpenNewWorkspace: (projectRef: ProjectRef | null, deselecting: boolean) => void;
+  /**
+   * Whether the New workspace form holds the user's input (the creation
+   * module's `isEdited`). While it does and the form is the main view, only a
+   * switch the user asked for leaves it (the keep-edited-creation-form
+   * interceptor). Wired in the composition root to the creation module.
+   */
+  readonly creationFormEdited: () => boolean;
   /**
    * The process monitor. The presenter owns `sidebar.process-summary`: it turns
    * the monitor's polling on while the summary shows, puts each workspace's
@@ -929,6 +941,47 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       const { workspaceRef, stealFocus } = intent.payload as WakeWorkspacePayload;
       if (stealFocus !== false) pendingWakeLanding = workspaceRef;
       return intent;
+    },
+  };
+
+  // ---------------------------------------------------------------------------
+  // Keep an edited New workspace form on screen
+  //
+  // While the New workspace form is the main view and holds the user's input,
+  // only a switch the user asked for leaves it: a click or key in the sidebar
+  // (origin "ui"), shortcut mode ("shortcut"), or an OS notification click
+  // ("notification"). Everything else is dropped: a background creation or wake
+  // landing, an agent's `ch ws switch`, an automation's focus. Nothing typed would
+  // be lost (the creation module keeps the form), but the view and the caret
+  // would be pulled from under the user mid-sentence.
+  //
+  // The origin is the dispatch's own or inherited one, so a landing nested in a
+  // user's own action (a creation or wake started from the UI) still counts as
+  // the user's. An allow-list, so a new entry point is kept out until it says
+  // it acts for the user. A drop is not deferred: the row, and a new
+  // workspace's "new" tag, is the signal that something finished.
+  const USER_SWITCH_ORIGINS: ReadonlySet<DispatchOrigin> = new Set([
+    "ui",
+    "shortcut",
+    "notification",
+  ]);
+
+  const keepEditedCreationForm: IntentInterceptor = {
+    id: "keep-edited-creation-form",
+    before: async (intent: Intent, { origin }: InterceptContext): Promise<Intent | null> => {
+      if (intent.type !== INTENT_SWITCH_WORKSPACE) return intent;
+      const payload = intent.payload as SwitchWorkspacePayload;
+      // A deselect lands on the form itself; an auto-select's chosen target is
+      // dispatched as a nested switch, and judged then.
+      if ("auto" in payload || payload.workspaceRef === null) return intent;
+      if (origin !== undefined && USER_SWITCH_ORIGINS.has(origin)) return intent;
+      if (!startup.isDone() || model.active() !== undefined) return intent;
+      if (!deps.creationFormEdited()) return intent;
+      logger.debug("Kept the edited New workspace form: dropped a switch", {
+        workspace: payload.workspaceRef,
+        origin: origin ?? "none",
+      });
+      return null;
     },
   };
 
@@ -1819,7 +1872,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     trackRunningHook: (hook) => runningHooks.track(hook),
     cancelRunningHooks: (workspaceRef) => runningHooks.cancelFor(workspaceRef),
     events,
-    interceptors: [suppressBackgroundFocus, trackWakeLanding, startup.interceptor],
+    interceptors: [
+      suppressBackgroundFocus,
+      trackWakeLanding,
+      keepEditedCreationForm,
+      startup.interceptor,
+    ],
     hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         init: {

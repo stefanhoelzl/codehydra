@@ -226,13 +226,24 @@ export class IntentHandle<T> implements PromiseLike<T> {
 // Interceptor
 // =============================================================================
 
+/** What an interceptor knows about the dispatch it runs in, besides the intent. */
+export interface InterceptContext {
+  /**
+   * Where the dispatch entered the app (its own, or inherited from the dispatch
+   * it is nested in); undefined when no entry point named one. Policy may read
+   * it to tell a user's gesture from an agent's request, so an entry point that
+   * acts on a user's behalf must name its origin.
+   */
+  readonly origin: DispatchOrigin | undefined;
+}
+
 /**
  * Pre-operation policy that can modify or cancel an intent.
  * Returning null from `before()` cancels the intent.
  */
 export interface IntentInterceptor {
   readonly id: string;
-  before(intent: Intent): Promise<Intent | null>;
+  before(intent: Intent, context: InterceptContext): Promise<Intent | null>;
 }
 
 // =============================================================================
@@ -694,7 +705,7 @@ export class Dispatcher implements IDispatcher {
       // Run interceptor pipeline
       let current: Intent | null = intent;
       for (const interceptor of this.interceptors) {
-        current = await interceptor.before(current);
+        current = await interceptor.before(current, { origin: frame.origin });
         if (current === null) {
           this.logger.debug("interceptor blocked", {
             intent: intent.type,

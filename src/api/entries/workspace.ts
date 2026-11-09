@@ -37,6 +37,10 @@ import type { SwitchWorkspaceIntent } from "../../intents/switch-workspace";
 import { projectRefOf } from "../../utils/ref";
 import { WAKEUP_INSTRUCTIONS, toWakeupScript, wakeupOptionFields } from "./wakeup";
 
+/** `workspace.switch`'s `reason` when the user's New workspace form kept the view. */
+export const SWITCH_BLOCKED_BY_CREATION_FORM =
+  "the user is filling in the New workspace form; switch again once they are done";
+
 /** The agent options `workspace.create` accepts, as the caller typed them. */
 export interface AgentInput {
   readonly prompt?: string | undefined;
@@ -407,7 +411,9 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     description: "Make a workspace the active one.",
     instructions:
       "Brings the workspace to the front in the sidebar and shows its editor. Accepts a name or " +
-      "a path. Focus follows by default; pass focus false to switch without taking the window.",
+      "a path. Focus follows by default; pass focus false to switch without taking the window. " +
+      "While the user is filling in the New workspace form, the switch does not happen and the " +
+      "result is switched false with a reason.",
     input: z.object({
       workspace: z
         .string()
@@ -426,10 +432,16 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     requiresWorkspace: false,
     handler: async (ctx, input) => {
       const workspaceRef = await resolveReference(ctx, input.workspace, input.project);
-      await dispatcher.dispatch<SwitchWorkspaceIntent>({
+      const handle = dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
         payload: { workspaceRef, focus: input.focus },
       });
+      // The one interceptor that cancels a switch keeps an edited New workspace
+      // form on screen: not a failure, so the call succeeds and says so.
+      if (!(await handle.accepted)) {
+        return { switched: false, reason: SWITCH_BLOCKED_BY_CREATION_FORM };
+      }
+      await handle;
       return { switched: true };
     },
   });

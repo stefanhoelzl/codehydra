@@ -75,10 +75,14 @@ import {
   INTENT_DELETE_WORKSPACE,
 } from "../../intents/delete-workspace";
 import { ANY_VALUE } from "../../intents/lib/operation";
+import type { Operation, OperationSchemas } from "../../intents/lib/operation";
+import type { DispatchOrigin, InterceptContext } from "../../intents/lib/dispatcher";
 import {
   EVENT_WORKSPACE_SWITCHED,
+  INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
 } from "../../intents/switch-workspace";
+import { z } from "zod/v4";
 import {
   GET_ACTIVE_WORKSPACE_OPERATION_ID,
   GetActiveWorkspaceOperation,
@@ -154,6 +158,11 @@ function createDeps() {
     onOpenSettings: vi.fn<() => void>(),
     onOpenHelp: vi.fn<() => void>(),
     onOpenNewWorkspace: vi.fn<(projectRef: ProjectRef | null, deselecting: boolean) => void>(),
+    /** Whether the New workspace form holds input; a test sets it. */
+    formEdited: false,
+    creationFormEdited(): boolean {
+      return this.formEdited;
+    },
   };
 }
 
@@ -223,6 +232,9 @@ function createMockStateService(): Pick<StateService, "register"> & {
   return { register, values: store };
 }
 type Deps = ReturnType<typeof createDeps>;
+
+/** An interceptor's context for a dispatch no entry point named. */
+const NO_ORIGIN: InterceptContext = { origin: undefined };
 
 /** The persisted `sidebar.collapsed-projects` value. */
 function stateValue(deps: Deps): unknown {
@@ -1935,10 +1947,13 @@ describe("PresentationModule - sidebar resize", () => {
         const module = await startModule(deps);
         await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a]) });
         const found = (module.interceptors ?? []).find((i) => i.id === "track-wake-landing");
-        await found!.before!({
-          type: INTENT_WAKE_WORKSPACE,
-          payload: { workspaceRef: a.ref, ...payload },
-        } as never);
+        await found!.before!(
+          {
+            type: INTENT_WAKE_WORKSPACE,
+            payload: { workspaceRef: a.ref, ...payload },
+          } as never,
+          NO_ORIGIN
+        );
         return module;
       }
 
@@ -3780,7 +3795,7 @@ describe("PresentationModule - background-focus suppression", () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const other: Intent = { type: "workspace:switch", payload: { workspaceRef: null } };
-    expect(await interceptor(module).before(other)).toBe(other);
+    expect(await interceptor(module).before(other, NO_ORIGIN)).toBe(other);
   });
 
   for (const source of ["mcp", "api-server", "auto-workspace"] as const) {
@@ -3790,7 +3805,7 @@ describe("PresentationModule - background-focus suppression", () => {
       const module = await startModule(deps);
       expect(lastSnapshot(deps).mode).toBe("hover");
 
-      const result = await interceptor(module).before(openIntent(source, true));
+      const result = await interceptor(module).before(openIntent(source, true), NO_ORIGIN);
       expect(stealFocusOf(result)).toBe(false);
     });
   }
@@ -3798,7 +3813,7 @@ describe("PresentationModule - background-focus suppression", () => {
   it("downgrades an undefined (default-switch) stealFocus too", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
-    const result = await interceptor(module).before(openIntent("mcp"));
+    const result = await interceptor(module).before(openIntent("mcp"), NO_ORIGIN);
     expect(stealFocusOf(result)).toBe(false);
   });
 
@@ -3806,7 +3821,7 @@ describe("PresentationModule - background-focus suppression", () => {
     const deps = createDeps();
     const module = await toWorkspaceMode(deps);
     const intent = openIntent("mcp", true);
-    const result = await interceptor(module).before(intent);
+    const result = await interceptor(module).before(intent, NO_ORIGIN);
     expect(result).toBe(intent);
     expect(stealFocusOf(result)).toBe(true);
   });
@@ -3818,7 +3833,7 @@ describe("PresentationModule - background-focus suppression", () => {
 
     for (const source of ["ui-ipc", "creation", "open-project"] as const) {
       const intent = openIntent(source, true);
-      const result = await interceptor(module).before(intent);
+      const result = await interceptor(module).before(intent, NO_ORIGIN);
       expect(result).toBe(intent);
       expect(stealFocusOf(result)).toBe(true);
     }
@@ -3828,7 +3843,7 @@ describe("PresentationModule - background-focus suppression", () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const intent = openIntent("mcp", false);
-    const result = await interceptor(module).before(intent);
+    const result = await interceptor(module).before(intent, NO_ORIGIN);
     expect(result).toBe(intent);
     expect(stealFocusOf(result)).toBe(false);
   });
@@ -3841,8 +3856,165 @@ describe("PresentationModule - background-focus suppression", () => {
     await flush();
     expect(lastSnapshot(deps).mode).toBe("shortcut");
 
-    const result = await interceptor(module).before(openIntent("mcp", true));
+    const result = await interceptor(module).before(openIntent("mcp", true), NO_ORIGIN);
     expect(stealFocusOf(result)).toBe(false);
+  });
+});
+
+// =============================================================================
+// An edited New workspace form (the keep-edited-creation-form interceptor)
+//
+// While the form is the main view and holds the user's input, only a switch the
+// user asked for (origin ui, shortcut or notification) leaves it. Driven through
+// the real dispatcher, with a stand-in workspace:switch that records each switch
+// that got past the interceptors.
+// =============================================================================
+
+describe("PresentationModule - an edited New workspace form", () => {
+  const a = makeWorkspace("a");
+  const b = makeWorkspace("b");
+
+  /** The presenter on the creation panel, with its interceptor on a recording dispatcher. */
+  async function onTheForm(deps: Deps, edited: boolean) {
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a, b]) });
+    await flush();
+    expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+    deps.formEdited = edited;
+
+    const keep = (module.interceptors ?? []).find((i) => i.id === "keep-edited-creation-form");
+    expect(keep).toBeDefined();
+    deps.dispatcher.addInterceptor(keep!);
+    const switches: unknown[] = [];
+    const schemas = {
+      type: INTENT_SWITCH_WORKSPACE,
+      payload: z.unknown(),
+      result: z.unknown(),
+    } satisfies OperationSchemas;
+    const operation: Operation<typeof schemas> = {
+      id: "record-switch",
+      schemas,
+      execute: async (ctx) => {
+        switches.push(ctx.intent.payload);
+      },
+    };
+    deps.dispatcher.registerOperation(operation);
+    return { module, switches };
+  }
+
+  /** Switch to `b` as a dispatch from `origin` would; resolves to whether it got through. */
+  function switchFrom(deps: Deps, origin: DispatchOrigin | undefined): Promise<boolean> {
+    return deps.dispatcher.dispatch(
+      { type: INTENT_SWITCH_WORKSPACE, payload: { workspaceRef: b.ref } },
+      origin === undefined ? undefined : { origin }
+    ).accepted;
+  }
+
+  /** A fresh creation of `name` finishing in the background, inside a dispatch from `origin`. */
+  async function backgroundCreation(
+    deps: Deps,
+    module: UiPresenter,
+    origin: DispatchOrigin,
+    name: string
+  ): Promise<void> {
+    await deps.dispatcher.withOrigin({ origin }, async () => {
+      await emit(module, EVENT_WORKSPACE_LOADING, {
+        projectRef: PROJECT_REF,
+        workspaceName: name,
+        stealFocus: false,
+      });
+      await emit(module, EVENT_WORKSPACE_CREATED, {
+        projectId: PROJECT_ID,
+        workspaceName: name,
+        workspaceRef: makeWorkspaceRef(PROJECT_REF, name),
+        projectRef: PROJECT_REF,
+        branch: name,
+        metadata: {},
+        workspaceUrl: `http://127.0.0.1:1/${name}`,
+        stealFocus: false,
+        fresh: true,
+      });
+    });
+    await flush();
+  }
+
+  it("a background creation finishing does not pull an edited form away", async () => {
+    const deps = createDeps();
+    const { module, switches } = await onTheForm(deps, true);
+
+    await backgroundCreation(deps, module, "mcp", "agent-made");
+
+    expect(switches).toEqual([]);
+    expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+  });
+
+  it("a background creation finishing still lands on an untouched form", async () => {
+    const deps = createDeps();
+    const { module, switches } = await onTheForm(deps, false);
+
+    await backgroundCreation(deps, module, "auto-workspace", "polled");
+
+    expect(switches).toEqual([{ workspaceRef: makeWorkspaceRef(PROJECT_REF, "polled") }]);
+  });
+
+  const nonUser = [
+    undefined,
+    "mcp",
+    "cli",
+    "sidekick",
+    "auto-workspace",
+    "agent-hook",
+    "startup",
+    "app",
+    "system",
+  ] as const;
+  for (const origin of nonUser) {
+    it(`drops a switch from ${origin ?? "no origin"} while the form is edited`, async () => {
+      const deps = createDeps();
+      const { switches } = await onTheForm(deps, true);
+
+      expect(await switchFrom(deps, origin)).toBe(false);
+      expect(switches).toEqual([]);
+    });
+  }
+
+  for (const origin of ["ui", "shortcut", "notification"] as const) {
+    it(`lets the user's own switch (${origin}) leave an edited form`, async () => {
+      const deps = createDeps();
+      const { switches } = await onTheForm(deps, true);
+
+      expect(await switchFrom(deps, origin)).toBe(true);
+      expect(switches).toEqual([{ workspaceRef: b.ref }]);
+    });
+  }
+
+  it("a sidebar click leaves an edited form", async () => {
+    const deps = createDeps();
+    const { switches } = await onTheForm(deps, true);
+
+    emitUiEvent(deps, { kind: "switch-workspace", key: b.ref });
+    await flush();
+
+    expect(switches).toEqual([{ workspaceRef: b.ref }]);
+  });
+
+  it("lets any switch through while the form is not on screen", async () => {
+    const deps = createDeps();
+    const { module, switches } = await onTheForm(deps, true);
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
+    await flush();
+
+    expect(await switchFrom(deps, "mcp")).toBe(true);
+    expect(switches).toEqual([{ workspaceRef: b.ref }]);
+  });
+
+  it("lets a switch through once the form is untouched again", async () => {
+    const deps = createDeps();
+    const { switches } = await onTheForm(deps, true);
+    deps.formEdited = false;
+
+    expect(await switchFrom(deps, "mcp")).toBe(true);
+    expect(switches).toEqual([{ workspaceRef: b.ref }]);
   });
 });
 
@@ -4685,7 +4857,7 @@ describe("PresentationModule - startup screen", () => {
 
     for (const path of [PROJECT_PATH, BETA_PATH]) {
       const intent: Intent = { type: INTENT_OPEN_PROJECT, payload: { path } };
-      expect(await trackOpens(module).before(intent)).toBe(intent);
+      expect(await trackOpens(module).before(intent, NO_ORIGIN)).toBe(intent);
     }
 
     const zeta = makeWorkspace("zeta");
@@ -4737,7 +4909,7 @@ describe("PresentationModule - startup screen", () => {
     } as unknown as Deps["dispatcher"];
     const module = await toRunning(deps);
     for (const path of [PROJECT_PATH, BETA_PATH]) {
-      await trackOpens(module).before({ type: INTENT_OPEN_PROJECT, payload: { path } });
+      await trackOpens(module).before({ type: INTENT_OPEN_PROJECT, payload: { path } }, NO_ORIGIN);
     }
 
     // "alpha" (collapsed) sorts above "beta" (expanded).
@@ -4768,7 +4940,7 @@ describe("PresentationModule - startup screen", () => {
     } as unknown as Deps["dispatcher"];
     const module = await toRunning(deps);
     for (const path of [PROJECT_PATH, BETA_PATH]) {
-      await trackOpens(module).before({ type: INTENT_OPEN_PROJECT, payload: { path } });
+      await trackOpens(module).before({ type: INTENT_OPEN_PROJECT, payload: { path } }, NO_ORIGIN);
     }
 
     const a = makeWorkspace("a");
@@ -4800,7 +4972,10 @@ describe("PresentationModule - startup screen", () => {
       withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
     } as unknown as Deps["dispatcher"];
     const module = await toRunning(deps);
-    await trackOpens(module).before({ type: INTENT_OPEN_PROJECT, payload: { path: PROJECT_PATH } });
+    await trackOpens(module).before(
+      { type: INTENT_OPEN_PROJECT, payload: { path: PROJECT_PATH } },
+      NO_ORIGIN
+    );
 
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a]) });
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
@@ -4818,7 +4993,7 @@ describe("PresentationModule - startup screen", () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const intent: Intent = { type: INTENT_OPEN_PROJECT, payload: { path: PROJECT_PATH } };
-    expect(await trackOpens(module).before(intent)).toBe(intent);
+    expect(await trackOpens(module).before(intent, NO_ORIGIN)).toBe(intent);
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]), path: PROJECT_PATH });
     await flush();
     expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
