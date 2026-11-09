@@ -22,6 +22,39 @@ import { Path } from "../../utils/path/path";
 import type { FileSystemBoundary } from "./filesystem";
 import { projPath, testPath } from "../../shared/test-fixtures";
 import { sep } from "node:path";
+import type { Workspace } from "./git-types";
+import { WorkspaceMetadataStore } from "./workspace-metadata-store";
+
+/**
+ * The store the core registry holds metadata in, holding `workspaces` the way
+ * the git module hands them over: their metadata as discovered or created, the
+ * file found through the provider. `created` writes each file first, as a
+ * creation does.
+ */
+async function storeHolding(
+  provider: GitWorktreeProvider,
+  fs: FileSystemBoundary,
+  workspaces: readonly Workspace[],
+  options: { created?: boolean } = {}
+): Promise<WorkspaceMetadataStore> {
+  const store = new WorkspaceMetadataStore(fs);
+  for (const ws of workspaces) {
+    const locate = (): Promise<Path> => provider.metadataFileOf(ws.path);
+    if (options.created) await store.initialize(ws.path, locate, ws.metadata);
+    else store.track(ws.path, locate, ws.metadata);
+  }
+  return store;
+}
+
+/** The metadata discovery returned for the workspace at `path`. */
+function metadataAt(
+  discovered: readonly Workspace[],
+  path: Path
+): Readonly<Record<string, string>> {
+  const ws = discovered.find((w) => w.path.equals(path));
+  if (ws === undefined) throw new Error(`not discovered: ${path.toString()}`);
+  return ws.metadata;
+}
 
 /** The flat metadata a worktree's metadata file holds, or null when it has none. */
 async function readMetadataFile(
@@ -286,9 +319,10 @@ describe("GitWorktreeProvider integration", () => {
       const mockClient = gitRepo(MAIN_ONLY, fs);
       const provider = await providerFor(mockClient, fs);
 
-      // Create workspace with base branch "main"
+      // Create workspace with base branch "main"; the registry writes its file
       const created = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
-      expect(created.metadata.base).toBe("main");
+      expect(created.metadata).toEqual({ base: "main", name: "feature-x" });
+      await storeHolding(provider, fs, [created], { created: true });
 
       // Discover should return same metadata.base
       const discovered = await provider.discover(PROJECT_ROOT);
@@ -302,7 +336,8 @@ describe("GitWorktreeProvider integration", () => {
 
       // Create with first provider instance
       const provider1 = await providerFor(mockClient, fs);
-      await provider1.createWorkspace(PROJECT_ROOT, "feature-x", "main");
+      const created = await provider1.createWorkspace(PROJECT_ROOT, "feature-x", "main");
+      await storeHolding(provider1, fs, [created], { created: true });
 
       // Create new provider instance and verify metadata.base persists
       // (using same mockClient which retains state)
@@ -333,11 +368,12 @@ describe("GitWorktreeProvider integration", () => {
       expect(discovered[0]?.metadata.base).toBeUndefined();
     });
 
-    it("stores metadata.base as a protected key in the worktree's metadata file", async () => {
+    it("locates metadata.base, as a protected key, in the worktree's metadata file", async () => {
       const fs = createFileSystemMock();
       const mockClient = gitRepo(MAIN_ONLY, fs);
       const provider = await providerFor(mockClient, fs);
-      await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
+      const created = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
+      await storeHolding(provider, fs, [created], { created: true });
 
       expect(
         await readMetadataFile(fs, new Path(PROJECT_ROOT, ".git", "worktrees", "feature-x"))
@@ -397,86 +433,6 @@ describe("GitWorktreeProvider integration", () => {
       expect(discovered).toHaveLength(1);
       expect(discovered[0]?.name).toBe("detached-ws");
       expect(discovered[0]?.branch).toBeNull();
-    });
-  });
-
-  describe("metadata setMetadata/getMetadata", () => {
-    it("setMetadata persists and getMetadata retrieves", async () => {
-      const fs = createFileSystemMock();
-      const mockClient = gitRepo(MAIN_ONLY, fs);
-      const provider = await providerFor(mockClient, fs);
-      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
-
-      await provider.setMetadata(workspace.path, "note", "WIP feature");
-
-      const metadata = await provider.getMetadata(workspace.path);
-      expect(metadata.note).toBe("WIP feature");
-      expect(metadata.base).toBe("main");
-    });
-
-    it("metadata survives provider recreation", async () => {
-      const fs = createFileSystemMock();
-      const mockClient = gitRepo(MAIN_ONLY, fs);
-      const provider1 = await providerFor(mockClient, fs);
-      const workspace = await provider1.createWorkspace(PROJECT_ROOT, "feature-x", "main");
-      await provider1.setMetadata(workspace.path, "note", "test note");
-
-      const provider2 = await providerFor(mockClient, fs);
-      // Must discover to populate workspace registry before getMetadata
-      await provider2.discover(PROJECT_ROOT);
-      const metadata = await provider2.getMetadata(workspace.path);
-
-      expect(metadata.note).toBe("test note");
-      expect(metadata.base).toBe("main");
-    });
-
-    it("getMetadata returns empty metadata for workspace without config", async () => {
-      const mockClient = gitRepo({
-        branches: ["main", "no-config-branch"],
-        currentBranch: "main",
-        worktrees: [
-          {
-            name: "no-config-branch",
-            path: "/workspaces/no-config-branch",
-            branch: "no-config-branch",
-          },
-        ],
-      });
-
-      const provider = await providerFor(mockClient, mockFs);
-      await provider.discover(PROJECT_ROOT);
-      const metadata = await provider.getMetadata(testPath("/workspaces/no-config-branch"));
-
-      expect(metadata.base).toBeUndefined();
-    });
-
-    it("invalid key format throws WorkspaceError with INVALID_METADATA_KEY code", async () => {
-      const mockClient = gitRepo(MAIN_ONLY);
-      const provider = await providerFor(mockClient, mockFs);
-      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
-
-      try {
-        await provider.setMetadata(workspace.path, "my_key", "value");
-        expect.fail("Should have thrown");
-      } catch (error) {
-        expect(error).toBeInstanceOf(WorkspaceError);
-        expect((error as InstanceType<typeof WorkspaceError>).code).toBe("INVALID_METADATA_KEY");
-      }
-    });
-
-    it("setMetadata with null deletes the key", async () => {
-      const fs = createFileSystemMock();
-      const mockClient = gitRepo(MAIN_ONLY, fs);
-      const provider = await providerFor(mockClient, fs);
-      const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
-
-      await provider.setMetadata(workspace.path, "note", "test note");
-      let metadata = await provider.getMetadata(workspace.path);
-      expect(metadata.note).toBe("test note");
-
-      await provider.setMetadata(workspace.path, "note", null);
-      metadata = await provider.getMetadata(workspace.path);
-      expect(metadata.note).toBeUndefined();
     });
   });
 });
@@ -914,9 +870,10 @@ describe("GitWorktreeProvider", () => {
         },
       });
       const provider = await providerFor(mockClient, mockFs);
-      await provider.discover(PROJECT_ROOT);
+      // The registry holds what discovery read; listBases asks it for the recorded base.
+      const store = await storeHolding(provider, mockFs, await provider.discover(PROJECT_ROOT));
 
-      const bases = await provider.listBases(PROJECT_ROOT);
+      const bases = await provider.listBases(PROJECT_ROOT, (path) => store.get(path)?.["base"]);
 
       const featureX = bases.find((b) => b.name === "feature-x");
       expect(featureX?.base).toBe("develop");
@@ -1362,29 +1319,6 @@ describe("GitWorktreeProvider", () => {
       expect(result2.workspaceRemoved).toBe(true);
       expect(result2.baseDeleted).toBe(true); // Branch already deleted, treat as success
     });
-
-    it("forgets a removed workspace's metadata", async () => {
-      const worktreePath = new Path(
-        testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
-      );
-      const fs = createFileSystemMock();
-      const mockClient = gitRepo(
-        {
-          branches: ["main", "feature-x"],
-          currentBranch: "main",
-          worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-        },
-        fs
-      );
-      const provider = await providerFor(mockClient, fs);
-      await provider.discover(PROJECT_ROOT);
-      await provider.setMetadata(worktreePath, "note", "WIP feature");
-
-      await provider.removeWorkspace(PROJECT_ROOT, worktreePath, false);
-
-      expect(mockClient).toHaveBranch(PROJECT_ROOT, "feature-x");
-      await expect(provider.getMetadata(worktreePath)).rejects.toThrow(WorkspaceError);
-    });
   });
 
   describe("isDirty", () => {
@@ -1469,7 +1403,6 @@ describe("GitWorktreeProvider", () => {
             unmergedCommits: 5,
           },
         ],
-        branchConfigs: { "feature-x": { "codehydra.base": "main" } },
       });
       const provider = await providerFor(mockClient, mockFs);
       const wsPath = new Path(
@@ -1477,7 +1410,8 @@ describe("GitWorktreeProvider", () => {
       );
       provider.ensureWorkspaceRegistered(wsPath, PROJECT_ROOT);
 
-      const count = await provider.countUnmergedCommits(wsPath);
+      // The base the workspace recorded, as the registry hands it over
+      const count = await provider.countUnmergedCommits(wsPath, "main");
 
       expect(count).toBe(5);
     });
@@ -1928,7 +1862,7 @@ describe("GitWorktreeProvider", () => {
     });
   });
 
-  describe("setMetadata", () => {
+  describe("metadata writes, through the store, to the located file", () => {
     it("writes the worktree's metadata file, not git config", async () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
@@ -1943,11 +1877,11 @@ describe("GitWorktreeProvider", () => {
         fs
       );
       const provider = await providerFor(mockClient, fs);
-      await provider.discover(PROJECT_ROOT);
+      const store = await storeHolding(provider, fs, await provider.discover(PROJECT_ROOT));
 
-      await provider.setMetadata(worktreePath, "note", "WIP feature");
-      await provider.setMetadata(worktreePath, "hibernated", "true");
-      await provider.setMetadata(worktreePath, "agent.pending-prompt", "{}");
+      await store.set(worktreePath, "note", "WIP feature");
+      await store.set(worktreePath, "hibernated", "true");
+      await store.set(worktreePath, "agent.pending-prompt", "{}");
 
       expect(
         await readMetadataFile(fs, new Path(PROJECT_ROOT, ".git", "worktrees", "feature-x"))
@@ -1976,11 +1910,11 @@ describe("GitWorktreeProvider", () => {
         fs
       );
       const provider = await providerFor(mockClient, fs);
-      await provider.discover(PROJECT_ROOT);
+      const store = await storeHolding(provider, fs, await provider.discover(PROJECT_ROOT));
 
-      await provider.setMetadata(worktreePath, "hibernated", "true");
+      await store.set(worktreePath, "hibernated", "true");
 
-      expect(await provider.getMetadata(worktreePath)).toEqual({
+      expect(store.get(worktreePath)).toEqual({
         hibernated: "true",
         name: "feature-x",
       });
@@ -2070,9 +2004,9 @@ describe("GitWorktreeProvider", () => {
       await provider.validateRepository(PROJECT_ROOT);
       provider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
 
-      await provider.discover(PROJECT_ROOT);
+      const discovered = await provider.discover(PROJECT_ROOT);
 
-      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({
+      expect(metadataAt(discovered, FEATURE_PATH)).toEqual({
         agent: "claude",
         name: "feature-x",
       });
@@ -2080,7 +2014,7 @@ describe("GitWorktreeProvider", () => {
         agent: "claude",
         name: "feature-x",
       });
-      expect(await provider.getMetadata(new Path(FEATURE_PATH.dirname, "pinned"))).toEqual({
+      expect(metadataAt(discovered, new Path(FEATURE_PATH.dirname, "pinned"))).toEqual({
         agent: "opencode",
         name: "pinned",
       });
@@ -2096,10 +2030,10 @@ describe("GitWorktreeProvider", () => {
       }));
       await provider.validateRepository(PROJECT_ROOT);
       provider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
-      await provider.discover(PROJECT_ROOT);
+      const discovered = await provider.discover(PROJECT_ROOT);
 
       // Only the name is recorded: a workspace from before names were kept gets one
-      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({ name: "feature-x" });
+      expect(metadataAt(discovered, FEATURE_PATH)).toEqual({ name: "feature-x" });
     });
 
     it("writes an empty file for a workspace without config", async () => {
@@ -2155,9 +2089,9 @@ describe("GitWorktreeProvider", () => {
       vi.spyOn(fs, "writeFile").mockRejectedValue(new Error("disk full"));
       const provider = await providerFor(client, fs);
 
-      await provider.discover(PROJECT_ROOT);
+      const discovered = await provider.discover(PROJECT_ROOT);
 
-      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({ base: "main", name: "feature-x" });
+      expect(metadataAt(discovered, FEATURE_PATH)).toEqual({ base: "main", name: "feature-x" });
       expect(await client.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(
         new Map([["branch.feature-x.codehydra.base", "main"]])
       );
@@ -2205,7 +2139,7 @@ describe("GitWorktreeProvider", () => {
     });
   });
 
-  describe("getMetadata", () => {
+  describe("discovered metadata", () => {
     it("returns all metadata keys", async () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
@@ -2223,9 +2157,8 @@ describe("GitWorktreeProvider", () => {
         },
       });
       const provider = await providerFor(mockClient, mockFs);
-      await provider.discover(PROJECT_ROOT);
 
-      const metadata = await provider.getMetadata(worktreePath);
+      const metadata = metadataAt(await provider.discover(PROJECT_ROOT), worktreePath);
 
       expect(metadata).toEqual({
         base: "develop",

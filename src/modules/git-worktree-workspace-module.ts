@@ -10,10 +10,11 @@
  * - get-workspace-status: check dirty status
  * - list-projects: each project's default base branch
  *
- * The workspaces themselves live in the core workspace registry
- * (`workspace-registry-module.ts`): this module tells it what discovery and
- * creation found and when a worktree is gone, and the registry answers resolve,
- * switch and list for every project type alike.
+ * The workspaces themselves, and their metadata, live in the core workspace
+ * registry (`workspace-registry-module.ts`): this module tells it what discovery
+ * and creation found, where each worktree's metadata file is
+ * (`.git/worktrees/<id>/codehydra.json`) and when a worktree is gone, and the
+ * registry answers resolve, switch, list and metadata for every project type alike.
  *
  * Uses GitWorktreeProvider directly (no ProjectScopedWorkspaceProvider adapter).
  */
@@ -28,7 +29,7 @@ import { notify } from "./presentation/notification-card";
 import type { DialogSection } from "../shared/dialog-types";
 import type { WorkspacesRoot } from "./workspaces-root/workspaces-root";
 import type { Logger } from "../boundaries/platform/logging-types";
-import type { CreateHookResult, FinalizeHookResult } from "../intents/open-workspace";
+import type { CreateHookResult } from "../intents/open-workspace";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import type { ListBasesHookResult } from "../intents/get-project-bases";
 import { GET_PROJECT_BASES_OPERATION_ID } from "../intents/get-project-bases";
@@ -77,6 +78,21 @@ export function createGitWorktreeWorkspaceModule(
   dispatcher: Pick<Dispatcher, "dispatch">,
   registry: WorkspaceRegistry
 ): IntentModule {
+  /** Where a worktree's metadata file is, found when the registry first writes it. */
+  const locatorOf =
+    (worktreePath: Path): (() => Promise<Path>) =>
+    () =>
+      gitWorktreeProvider.metadataFileOf(worktreePath);
+
+  /** The base a workspace recorded in its metadata, if the registry holds it. */
+  const recordedBase = (worktreePath: Path): string | undefined => {
+    try {
+      return registry.metadata(worktreePath)["base"];
+    } catch {
+      return undefined;
+    }
+  };
+
   // Per-project default base branch, computed at project:open (discover) and
   // refreshed by the get-project-bases list hook. Surfaced via list-workspaces
   // so the creation form can seed the base field without a git round-trip.
@@ -354,7 +370,9 @@ export function createGitWorktreeWorkspaceModule(
 
             const discovered = await gitWorktreeProvider.discover(projectPathObj);
             registry.openProject(project);
-            for (const ws of discovered) registry.track(project, ws);
+            await Promise.all(
+              discovered.map((ws) => registry.track(project, ws, locatorOf(ws.path)))
+            );
 
             // Fire-and-forget cleanup
             void gitWorktreeProvider
@@ -414,12 +432,16 @@ export function createGitWorktreeWorkspaceModule(
               // that was never recorded stays absent rather than invented.
               const recordedBase = metadata["base"];
 
-              registry.track(project, {
-                name: existing.name,
-                path: new Path(workspacePath),
-                branch: existing.branch,
-                metadata,
-              });
+              await registry.track(
+                project,
+                {
+                  name: existing.name,
+                  path: new Path(workspacePath),
+                  branch: existing.branch,
+                  metadata,
+                },
+                locatorOf(new Path(workspacePath))
+              );
 
               return {
                 result: {
@@ -455,7 +477,12 @@ export function createGitWorktreeWorkspaceModule(
               throw new WorkspaceError(`${message} (base: '${base}')`);
             }
 
-            registry.track(project, internalWorkspace);
+            // The registry writes its metadata file: the base, and the name.
+            await registry.trackCreated(
+              project,
+              internalWorkspace,
+              locatorOf(internalWorkspace.path)
+            );
 
             return {
               result: {
@@ -465,46 +492,6 @@ export function createGitWorktreeWorkspaceModule(
                 resolvedBase: base,
               },
             };
-          },
-        },
-
-        finalize: {
-          /**
-           * Re-read the workspace's metadata so `workspace:created` (and the
-           * Workspace this operation returns) carry what the metadata store
-           * actually holds when creation completes.
-           *
-           * The `create` snapshot plus the metadata hook handlers *report* is
-           * only as complete as its reporters. An agent that acts on its own
-           * workspace during creation — OpenCode sends its initial prompt from
-           * the setup hook, and `codehydra_workspace_set_title` is one MCP call
-           * away — writes through `workspace:set-metadata`, which is not a hook
-           * result and so is invisible to that fold. Its `metadata:changed`
-           * event then lands on a row the presenter is about to overwrite with
-           * the stale snapshot, and the change vanishes until a restart re-reads
-           * the metadata.
-           *
-           * Reading here fixes it for every writer rather than for the ones that
-           * remember to report, and keeps the presenter's "install the
-           * authoritative snapshot" semantics correct by making it authoritative.
-           * Merged last (open-workspace.ts folds finalize results after setup's),
-           * so it supersedes both.
-           */
-          handler: async (ctx): Promise<HookOutput<FinalizeHookResult>> => {
-            const { workspacePath } = ctx;
-            try {
-              const metadata = await gitWorktreeProvider.getMetadata(new Path(workspacePath));
-              return { result: { metadata } };
-            } catch (error: unknown) {
-              // Best-effort: a workspace whose metadata cannot be read still
-              // opens, carrying the snapshot it already had.
-              logger
-                .scoped({ path: workspacePath })
-                .warn("Failed to re-read workspace metadata on finalize", {
-                  error: getErrorMessage(error),
-                });
-              return { result: {} };
-            }
           },
         },
       },
@@ -518,7 +505,7 @@ export function createGitWorktreeWorkspaceModule(
 
             // Enumerate once and reuse for the default (avoids a second full
             // branch enumeration inside defaultBase).
-            const bases = await gitWorktreeProvider.listBases(projectPathObj);
+            const bases = await gitWorktreeProvider.listBases(projectPathObj, recordedBase);
             const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj, bases);
             if (defaultBaseBranch !== undefined) {
               projectDefaults.set(projectKey(projectPathObj.toString()), defaultBaseBranch);
@@ -575,7 +562,10 @@ export function createGitWorktreeWorkspaceModule(
                 // Stale refs beat no answer.
               }
 
-              const unmerged = await gitWorktreeProvider.countUnmergedCommits(new Path(wsPath));
+              const unmerged = await gitWorktreeProvider.countUnmergedCommits(
+                new Path(wsPath),
+                recordedBase(new Path(wsPath))
+              );
               if (unmerged > 0) {
                 reasons.push(
                   `Workspace has ${unmerged} unmerged commit${unmerged === 1 ? "" : "s"}`
@@ -646,7 +636,8 @@ export function createGitWorktreeWorkspaceModule(
 
             const isDirty = await gitWorktreeProvider.isDirty(new Path(wsPath));
             const unmergedCommits = await gitWorktreeProvider.countUnmergedCommits(
-              new Path(wsPath)
+              new Path(wsPath),
+              recordedBase(new Path(wsPath))
             );
             return { result: { isDirty, unmergedCommits } };
           },

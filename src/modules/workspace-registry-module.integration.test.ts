@@ -2,20 +2,28 @@
 /**
  * Integration tests for the core workspace registry, driven through the
  * dispatcher with the fake project type (plain folders, no git) as the only
- * project type: what a second type gets from the registry for one module.
+ * project type: what a second type gets from the registry for one module. The
+ * fake type names no metadata location, so its workspaces' metadata files go
+ * under the project's record directory, on an in-memory filesystem.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { z } from "zod/v4";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import type { HookContext, Operation, OperationSchemas } from "../intents/lib/operation";
+import type {
+  HookContext,
+  HookOutput,
+  Operation,
+  OperationSchemas,
+} from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
 import { OPEN_PROJECT_OPERATION_ID, INTENT_OPEN_PROJECT } from "../intents/open-project";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
   INTENT_OPEN_WORKSPACE,
+  type FinalizeHookResult,
   type OpenWorkspaceIntent,
 } from "../intents/open-workspace";
 import {
@@ -42,13 +50,14 @@ import {
   INTENT_LIST_PROJECTS,
   type ListWorkspacesHookResult,
 } from "../intents/list-projects";
-import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
 import type { ProjectPath, WorkspacePath, WorkspaceRef } from "../intents/contract";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { WorkspaceError } from "../shared/errors/service-errors";
 import { makeWorkspaceRef } from "../utils/ref";
 import { projPath, wsPath } from "../shared/test-fixtures";
-import { createWorkspaceRegistryModule } from "./workspace-registry-module";
+import { DEFAULT_METADATA_DIR, type WorkspaceRegistryModule } from "./workspace-registry-module";
+import { createTestWorkspaceRegistry, TEST_PROJECT_DIR } from "./workspace-registry.test-utils";
+import type { MockFileSystemBoundary } from "../boundaries/platform/filesystem.state-mock";
+import { Path } from "../utils/path/path";
 import {
   createFakeProjectType,
   fakeProjectRef,
@@ -147,16 +156,6 @@ const listWorkspacesOperation = createMinimalOperation(
   "list-workspaces"
 );
 
-/** Emits the event in its payload, to drive the registry's event subscriptions. */
-const emitSchemas = { type: "emit-event", payload: z.custom<MetadataChangedEvent>() };
-const emitOperation: Operation<typeof emitSchemas> = {
-  id: "emit-event",
-  schemas: emitSchemas,
-  async execute(ctx) {
-    ctx.emit(ctx.intent.payload);
-  },
-};
-
 // =============================================================================
 // Setup and helpers
 // =============================================================================
@@ -167,6 +166,8 @@ const OTHER = projPath("/projects/other");
 interface Setup {
   dispatcher: Dispatcher;
   fake: FakeProjectType;
+  registry: WorkspaceRegistryModule;
+  fs: MockFileSystemBoundary;
 }
 
 function createSetup(): Setup {
@@ -178,12 +179,11 @@ function createSetup(): Setup {
   dispatcher.registerOperation(new ResolveWorkspaceOperation());
   dispatcher.registerOperation(findCandidatesOperation);
   dispatcher.registerOperation(listWorkspacesOperation);
-  dispatcher.registerOperation(emitOperation);
-  const registry = createWorkspaceRegistryModule();
+  const { registry, fs } = createTestWorkspaceRegistry();
   const fake = createFakeProjectType(registry);
   dispatcher.registerModule(registry);
   dispatcher.registerModule(fake.module);
-  return { dispatcher, fake };
+  return { dispatcher, fake, registry, fs };
 }
 
 async function run<T>(dispatcher: Dispatcher, type: string, payload: unknown): Promise<T> {
@@ -514,43 +514,131 @@ describe("WorkspaceRegistryModule", () => {
     });
   });
 
-  describe("metadata:changed", () => {
-    const changed = (projectPath: string, name: string, key: string, value: string | null) =>
-      ({
-        type: EVENT_METADATA_CHANGED,
-        payload: {
-          projectId: "test-project" as ProjectId,
-          workspaceName: name as WorkspaceName,
-          workspaceRef: refOf(projectPath, name),
-          projectRef: fakeProjectRef(projectPath),
-          key,
-          value,
-        },
-      }) satisfies MetadataChangedEvent;
+  describe("metadata", () => {
+    /** Where the registry keeps a fake-type workspace's metadata. */
+    const fileOf = (name: string): Path =>
+      new Path(TEST_PROJECT_DIR, DEFAULT_METADATA_DIR, `${name}.json`);
+    const readFile = async (fs: MockFileSystemBoundary, name: string): Promise<unknown> =>
+      JSON.parse(await fs.readFile(fileOf(name)));
 
-    it("sets and deletes a key of the workspace it names", async () => {
-      const { dispatcher, fake } = setup;
-      fake.addFolder(PROJECT, "alpha", { title: "Alpha" });
+    it("serves a discovered workspace's metadata from memory, and writes a key to its file", async () => {
+      const { dispatcher, fake, registry, fs } = setup;
+      const path = fake.addFolder(PROJECT, "alpha", { title: "Alpha" });
       await openProject(dispatcher, PROJECT);
 
-      await run(dispatcher, "emit-event", changed(PROJECT, "alpha", "note", "WIP"));
-      const afterSet = await resolve(dispatcher, { workspaceRef: refOf(PROJECT, "alpha") });
-      await run(dispatcher, "emit-event", changed(PROJECT, "alpha", "title", null));
-      const afterDelete = await resolve(dispatcher, { workspaceRef: refOf(PROJECT, "alpha") });
+      await registry.setMetadata(path, "note", "WIP");
 
-      expect(afterSet.metadata).toEqual({ title: "Alpha", note: "WIP" });
-      expect(afterDelete.metadata).toEqual({ note: "WIP" });
+      expect(registry.metadata(path)).toEqual({ title: "Alpha", note: "WIP" });
+      expect(
+        (await resolve(dispatcher, { workspaceRef: refOf(PROJECT, "alpha") })).metadata
+      ).toEqual({ title: "Alpha", note: "WIP" });
+      expect(await readFile(fs, "alpha")).toEqual({
+        version: 1,
+        internal: {},
+        protected: {},
+        public: { title: "Alpha", note: "WIP" },
+      });
     });
 
-    it("ignores a workspace it does not hold", async () => {
-      const { dispatcher, fake } = setup;
-      fake.addFolder(PROJECT, "alpha", { title: "Alpha" });
+    it("reads the file back when the project opens again", async () => {
+      const { dispatcher, fake, registry } = setup;
+      const path = fake.addFolder(PROJECT, "alpha");
+      await openProject(dispatcher, PROJECT);
+      await registry.setMetadata(path, "note", "WIP");
+
+      await run(dispatcher, INTENT_CLOSE_PROJECT, { projectPath: PROJECT });
+      expect(() => registry.metadata(path)).toThrow(WorkspaceError);
       await openProject(dispatcher, PROJECT);
 
-      await run(dispatcher, "emit-event", changed(OTHER, "ghost", "note", "WIP"));
+      expect(registry.metadata(path)).toEqual({ note: "WIP" });
+    });
 
-      const result = await resolve(dispatcher, { workspaceRef: refOf(PROJECT, "alpha") });
-      expect(result.metadata).toEqual({ title: "Alpha" });
+    it("records a created workspace's name in its new file", async () => {
+      const { dispatcher, registry, fs } = setup;
+      await openProject(dispatcher, PROJECT);
+
+      await create(dispatcher, PROJECT, "fresh");
+
+      expect(registry.metadata(new Path(PROJECT, "fresh"))).toEqual({ name: "fresh" });
+      expect(await readFile(fs, "fresh")).toMatchObject({ protected: { name: "fresh" } });
+    });
+
+    it("deletes the file with the workspace", async () => {
+      const { dispatcher, fs } = setup;
+      await openProject(dispatcher, PROJECT);
+      await create(dispatcher, PROJECT, "fresh");
+
+      await remove(dispatcher, refOf(PROJECT, "fresh"));
+
+      await expect(fs.readFile(fileOf("fresh"))).rejects.toThrow();
+    });
+
+    it("keeps the file when only the workspace's runtime is torn down", async () => {
+      const { dispatcher, fs } = setup;
+      await openProject(dispatcher, PROJECT);
+      await create(dispatcher, PROJECT, "fresh");
+
+      await remove(dispatcher, refOf(PROJECT, "fresh"), { removeWorktree: false });
+
+      expect(await readFile(fs, "fresh")).toMatchObject({ protected: { name: "fresh" } });
+    });
+
+    it("leaves memory as it was when a write fails", async () => {
+      const { dispatcher, fake, registry, fs } = setup;
+      const path = fake.addFolder(PROJECT, "alpha", { title: "Alpha" });
+      await openProject(dispatcher, PROJECT);
+      vi.spyOn(fs, "rename").mockRejectedValueOnce(new Error("disk full"));
+
+      await expect(registry.setMetadata(path, "title", "Beta")).rejects.toThrow("disk full");
+
+      expect(registry.metadata(path)).toEqual({ title: "Alpha" });
+    });
+
+    it("refuses a malformed key and a workspace it does not hold", async () => {
+      const { dispatcher, fake, registry } = setup;
+      const path = fake.addFolder(PROJECT, "alpha");
+      await openProject(dispatcher, PROJECT);
+
+      await expect(registry.setMetadata(path, "bad_key", "x")).rejects.toMatchObject({
+        code: "INVALID_METADATA_KEY",
+      });
+      await expect(
+        registry.setMetadata(new Path(PROJECT, "ghost"), "note", "x")
+      ).rejects.toMatchObject({ code: "WORKSPACE_NOT_FOUND" });
+      expect(() => registry.metadata(new Path(PROJECT, "ghost"))).toThrow(WorkspaceError);
+    });
+
+    it("flags a workspace hibernated once its metadata says so", async () => {
+      const { dispatcher, fake, registry } = setup;
+      const path = fake.addFolder(PROJECT, "alpha");
+      await openProject(dispatcher, PROJECT);
+
+      await registry.setMetadata(path, "hibernated", "true");
+
+      const { candidates } = await run<FindCandidatesHookResult>(
+        dispatcher,
+        INTENT_SWITCH_WORKSPACE,
+        {}
+      );
+      expect(candidates?.[0]?.hibernated).toBe(true);
+    });
+
+    it("finalizes an opened workspace with the metadata held now, a write made during creation included", async () => {
+      // An agent acting on its own workspace mid-creation writes through
+      // workspace:set-metadata, which no hook result reports.
+      const { dispatcher, registry } = setup;
+      await openProject(dispatcher, PROJECT);
+      await create(dispatcher, PROJECT, "fresh");
+      const path = new Path(PROJECT, "fresh");
+      await registry.setMetadata(path, "title", "renamed by agent");
+
+      // The registry's own finalize handler, as open-workspace runs it last.
+      const output = (await registry.hooks![OPEN_WORKSPACE_OPERATION_ID]!["finalize"]!.handler({
+        intent: { type: INTENT_OPEN_WORKSPACE, payload: {} },
+        workspacePath: path.toString(),
+      } as HookContext)) as HookOutput<FinalizeHookResult>;
+
+      expect(output.result).toEqual({ metadata: { name: "fresh", title: "renamed by agent" } });
     });
   });
 });

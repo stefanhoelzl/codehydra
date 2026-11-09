@@ -2,21 +2,21 @@
  * MetadataModule - Hook handler module for workspace metadata operations.
  *
  * Provides hook handlers for:
- * - set-metadata "set" hook point: writes metadata via GitWorktreeProvider
- * - get-metadata "get" hook point: reads metadata via GitWorktreeProvider
+ * - set-metadata "set" hook point: writes metadata through the core workspace registry
+ * - get-metadata "get" hook point: reads metadata from the core workspace registry
  */
 
 import type { IntentModule } from "../intents/lib/module";
 import type { HookOutput } from "../intents/lib/operation";
-import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import { Path } from "../utils/path/path";
 import { SET_METADATA_OPERATION_ID } from "../intents/set-metadata";
 import { GET_METADATA_OPERATION_ID } from "../intents/get-metadata";
 import type { GetMetadataHookResult } from "../intents/get-metadata";
 import { defineHooks } from "../intents/declarations";
+import type { WorkspaceRegistry } from "./workspace-registry-module";
 
 interface MetadataModuleDeps {
-  readonly gitWorktreeProvider: GitWorktreeProvider;
+  readonly registry: Pick<WorkspaceRegistry, "metadata" | "setMetadata">;
 }
 
 export function createMetadataModule(deps: MetadataModuleDeps): IntentModule {
@@ -26,9 +26,8 @@ export function createMetadataModule(deps: MetadataModuleDeps): IntentModule {
       [SET_METADATA_OPERATION_ID]: {
         set: {
           handler: async (ctx) => {
-            const { workspacePath } = ctx;
-            const { intent } = ctx;
-            await deps.gitWorktreeProvider.setMetadata(
+            const { workspacePath, intent } = ctx;
+            await deps.registry.setMetadata(
               new Path(workspacePath),
               intent.payload.key,
               intent.payload.value
@@ -39,8 +38,7 @@ export function createMetadataModule(deps: MetadataModuleDeps): IntentModule {
       [GET_METADATA_OPERATION_ID]: {
         get: {
           handler: async (ctx): Promise<HookOutput<GetMetadataHookResult>> => {
-            const { workspacePath } = ctx;
-            const metadata = await deps.gitWorktreeProvider.getMetadata(new Path(workspacePath));
+            const metadata = deps.registry.metadata(new Path(ctx.workspacePath));
             return { result: { metadata } };
           },
         },

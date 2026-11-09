@@ -19,6 +19,7 @@ import { projectDirName } from "./paths";
 import { Path } from "../../utils/path/path";
 import path from "path";
 import { testPath } from "../../shared/test-fixtures";
+import { WorkspaceMetadataStore } from "./workspace-metadata-store";
 
 /** Construct a provider the way production does: new + validateRepository + registerProject. */
 async function createProvider(
@@ -117,7 +118,14 @@ describe("Services Integration", () => {
       );
 
       const workspace = await provider.createWorkspace(projectRoot, "feature-x", "main");
-      await provider.setMetadata(workspace.path, "title", "Login flow");
+      // As the core registry holds a created workspace: its file found through the provider
+      const store = new WorkspaceMetadataStore(fileSystemLayer);
+      await store.initialize(
+        workspace.path,
+        () => provider.metadataFileOf(workspace.path),
+        workspace.metadata
+      );
+      await store.set(workspace.path, "title", "Login flow");
 
       const gitDir = await gitClient.getWorktreeGitDir(workspace.path);
       expect(gitDir.dirname.basename).toBe("worktrees");

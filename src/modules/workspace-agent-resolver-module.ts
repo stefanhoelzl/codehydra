@@ -14,7 +14,6 @@ import { getErrorMessage } from "../shared/error-utils";
 import type { IntentModule } from "../intents/lib/module";
 import { ANY_VALUE, type HookOutput } from "../intents/lib/operation";
 import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
-import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../boundaries/platform/config";
 import type { Logger } from "../boundaries/platform/logging-types";
@@ -31,11 +30,13 @@ import { SEND_AGENT_MESSAGE_OPERATION_ID } from "../intents/send-agent-message";
 import { AGENT_LIFECYCLE_OPERATION_ID } from "../intents/agent-lifecycle";
 import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../intents/vscode-modal-changed";
 import { defineHooks, type HookHandlerOf } from "../intents/declarations";
+import type { WorkspaceRegistry } from "./workspace-registry-module";
 
 const AGENT_METADATA_KEY = "agent";
 
 interface WorkspaceAgentResolverDeps {
-  readonly gitWorktreeProvider: GitWorktreeProvider;
+  /** The core workspace registry, which holds every workspace's metadata. */
+  readonly registry: Pick<WorkspaceRegistry, "metadata" | "setMetadata">;
   /** Accessor for the user's global agent selection (registered in the composition root). */
   readonly agentConfig: PersistedAccessor<ConfigAgentType>;
   readonly logger: Logger;
@@ -58,7 +59,7 @@ async function recordedAgent(
   deps: WorkspaceAgentResolverDeps
 ): Promise<AgentType | null> {
   try {
-    const metadata = await deps.gitWorktreeProvider.getMetadata(new Path(workspacePath));
+    const metadata = deps.registry.metadata(new Path(workspacePath));
     const fromMetadata = metadata[AGENT_METADATA_KEY];
     if (fromMetadata === "claude" || fromMetadata === "opencode") {
       return fromMetadata;
@@ -123,11 +124,7 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
         // default becomes. The workspace's finalize re-reads its metadata, so the
         // workspace snapshot picks this up without a metadata-changed event.
         try {
-          await deps.gitWorktreeProvider.setMetadata(
-            new Path(workspacePath),
-            AGENT_METADATA_KEY,
-            agent
-          );
+          await deps.registry.setMetadata(new Path(workspacePath), AGENT_METADATA_KEY, agent);
         } catch (error) {
           deps.logger
             .scoped({ path: workspacePath })

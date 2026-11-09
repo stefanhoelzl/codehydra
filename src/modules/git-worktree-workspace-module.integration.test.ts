@@ -30,7 +30,7 @@ import type { DiscoverHookResult } from "../intents/open-project";
 import { CLOSE_PROJECT_OPERATION_ID, INTENT_CLOSE_PROJECT } from "../intents/close-project";
 import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { OpenWorkspaceIntent } from "../intents/open-workspace";
-import type { CreateHookResult, FinalizeHookResult } from "../intents/open-workspace";
+import type { CreateHookResult } from "../intents/open-workspace";
 import {
   GET_PROJECT_BASES_OPERATION_ID,
   INTENT_GET_PROJECT_BASES,
@@ -66,10 +66,8 @@ import {
 } from "../intents/list-projects";
 import type { WorkspaceName } from "../shared/api/types";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
-import {
-  createWorkspaceRegistryModule,
-  type WorkspaceRegistryModule,
-} from "./workspace-registry-module";
+import type { WorkspaceRegistryModule } from "./workspace-registry-module";
+import { createTestWorkspaceRegistry, TEST_PROJECTS_DIR } from "./workspace-registry.test-utils";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import type { MockDialogManager } from "./presentation/dialog-manager.state-mock";
 import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
@@ -108,7 +106,10 @@ function createMockGitWorktreeProvider() {
     ensureWorkspaceRegistered: vi.fn(),
     listUnmanagedWorktrees: vi.fn().mockResolvedValue([]),
     adoptWorktree: vi.fn().mockResolvedValue(undefined),
-    getMetadata: vi.fn().mockResolvedValue({}),
+    // Where a worktree's metadata file is: the test registry's directory.
+    metadataFileOf: vi.fn(
+      async (worktreePath: Path) => new Path(TEST_PROJECTS_DIR, `${worktreePath.basename}.json`)
+    ),
   };
 }
 
@@ -165,26 +166,6 @@ const openWorkspaceOperation = createMinimalOperation<CreateHookResult>(
         ...(projectRef !== undefined && { projectRef }),
       };
     },
-  }
-);
-
-/**
- * Runs open-workspace's `finalize` hook point. Registered on a dispatcher of its
- * own: only one operation may claim an intent type, and `openWorkspaceOperation`
- * already claims this one for `create`.
- */
-const openWorkspaceFinalizeOperation = createMinimalOperation<FinalizeHookResult>(
-  OPEN_WORKSPACE_OPERATION_ID,
-  INTENT_OPEN_WORKSPACE,
-  "finalize",
-  {
-    hookContext: (ctx) => ({
-      intent: ctx.intent,
-      workspacePath: (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath,
-      envVars: {},
-      agentType: null,
-    }),
-    defaultResult: {},
   }
 );
 
@@ -484,7 +465,7 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(listProjectsOperation);
 
   // Wire the module under test, with the core registry it feeds
-  const registry = createWorkspaceRegistryModule();
+  const { registry } = createTestWorkspaceRegistry();
   const { dialogs, notifications, ui, notify } = createMockUi();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
@@ -541,7 +522,7 @@ function createPreflightTestSetup(): Omit<TestSetup, "module" | "registry"> {
   dispatcher.registerOperation(minimalPreflightOperation);
   dispatcher.registerOperation(minimalResolveWorkspaceOperation);
 
-  const registry = createWorkspaceRegistryModule();
+  const { registry } = createTestWorkspaceRegistry();
   const { dialogs, notifications, ui, notify } = createMockUi();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
@@ -767,6 +748,23 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       expect(result.projectPath).toBe(projectPath);
     });
 
+    it("hands the registry each workspace's metadata, located in its worktree on first write", async () => {
+      const { dispatcher, provider, registry } = setup;
+      const projectPath = projPath("/projects/my-app");
+      const ws = makeWorkspace("feature-1", projectPath);
+      provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      // Read from memory: discovery read the file.
+      expect(registry.metadata(ws.path)).toEqual({ base: "origin/main" });
+      expect(provider.metadataFileOf).not.toHaveBeenCalled();
+
+      await registry.setMetadata(ws.path, "title", "Login");
+
+      expect(provider.metadataFileOf).toHaveBeenCalledWith(ws.path);
+      expect(registry.metadata(ws.path)).toEqual({ base: "origin/main", title: "Login" });
+    });
+
     it("caches the default base from discover and surfaces it via list-workspaces", async () => {
       const { dispatcher, provider } = setup;
       const projectPath = projPath("/projects/my-app");
@@ -854,6 +852,14 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         );
         expect(result.workspacePath).toBe(testPath("/workspaces/new-feature").toString());
         expect(result.branch).toBe("new-feature");
+
+        // The registry holds its metadata, the name recorded, and wrote its file
+        // where the provider says the worktree's metadata lives.
+        expect(setup.registry.metadata(testPath("/workspaces/new-feature"))).toEqual({
+          base: "origin/main",
+          name: "new-feature",
+        });
+        expect(provider.metadataFileOf).toHaveBeenCalledWith(testPath("/workspaces/new-feature"));
 
         // Verify state was updated (resolve should find it)
         const resolveResult = await dispatchResolveWorkspace(
@@ -1221,71 +1227,6 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   // get-project-bases -> list
   // ---------------------------------------------------------------------------
 
-  // ---------------------------------------------------------------------------
-  // open-workspace -> finalize
-  // ---------------------------------------------------------------------------
-
-  describe("open-workspace -> finalize", () => {
-    /**
-     * A dispatcher whose `workspace:open` operation runs the finalize hook.
-     * `createTestSetup` wires the same intent to the create hook, and an intent
-     * type admits only one operation.
-     */
-    function finalizeSetup() {
-      const provider = createMockGitWorktreeProvider();
-      const workspacesRoot = {
-        workspacesDir: () => new Path("/workspaces"),
-        previousWorkspacesDirs: () => [],
-      };
-      const dispatcher = createMockDispatcher();
-      dispatcher.registerOperation(openWorkspaceFinalizeOperation);
-      const { ui, notify } = createMockUi();
-      dispatcher.registerModule(
-        createGitWorktreeWorkspaceModule(
-          provider as unknown as GitWorktreeProvider,
-          workspacesRoot,
-          SILENT_LOGGER,
-          ui,
-          notify,
-          createWorkspaceRegistryModule()
-        )
-      );
-      return { dispatcher, provider };
-    }
-
-    const finalize = async (dispatcher: Dispatcher, workspacePath: string) =>
-      (await dispatcher.dispatch({
-        type: INTENT_OPEN_WORKSPACE,
-        payload: { workspacePath },
-      } as unknown as Intent)) as FinalizeHookResult;
-
-    it("re-reads metadata so a write made during creation is not lost", async () => {
-      // What an agent acting on its own workspace mid-creation produces: the
-      // title is in git config, but it was never a hook result, so the `create`
-      // snapshot the operation is holding knows nothing about it.
-      const { dispatcher, provider } = finalizeSetup();
-      provider.getMetadata.mockResolvedValue({ base: "main", title: "renamed by agent" });
-
-      const result = await finalize(dispatcher, "/workspaces/new-feature");
-
-      expect(provider.getMetadata).toHaveBeenCalledWith(new Path("/workspaces/new-feature"));
-      // Folded last by open-workspace, so this supersedes the stale snapshot and
-      // reaches both workspace:created and the returned Workspace.
-      expect(result.metadata).toEqual({ base: "main", title: "renamed by agent" });
-    });
-
-    it("still opens the workspace when the metadata cannot be read", async () => {
-      const { dispatcher, provider } = finalizeSetup();
-      provider.getMetadata.mockRejectedValue(new Error("not a git directory"));
-
-      const result = await finalize(dispatcher, "/workspaces/new-feature");
-
-      // Best-effort: no metadata contributed, and no thrown error to fail the
-      // creation over a label.
-      expect(result.metadata).toBeUndefined();
-    });
-  });
-
   describe("get-project-bases -> list", () => {
     it("returns bases and defaultBaseBranch from provider", async () => {
       const { dispatcher, provider } = setup;
@@ -1300,7 +1241,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       const result = await dispatchListBases(dispatcher, projPath(projectPath));
 
-      expect(provider.listBases).toHaveBeenCalledWith(new Path(projectPath));
+      expect(provider.listBases).toHaveBeenCalledWith(new Path(projectPath), expect.any(Function));
       // defaultBase reuses the already-enumerated bases (no second listBases).
       expect(provider.defaultBase).toHaveBeenCalledWith(new Path(projectPath), bases);
       expect(result.bases).toHaveLength(2);
@@ -1328,6 +1269,18 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("get-workspace-status -> get", () => {
+    it("counts unmerged commits against the base the workspace recorded", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = projPath("/projects/my-app");
+      const ws = { ...makeWorkspace("feature-1", projectPath), metadata: { base: "develop" } };
+      provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
+
+      expect(provider.countUnmergedCommits).toHaveBeenCalledWith(ws.path, "develop");
+    });
+
     it("calls isDirty and returns result", async () => {
       const { dispatcher, provider } = setup;
       const projectPath = projPath("/projects/my-app");
@@ -1596,7 +1549,7 @@ describe("Add-project worktree picker", () => {
         SILENT_LOGGER,
         ui,
         notify,
-        createWorkspaceRegistryModule()
+        createTestWorkspaceRegistry().registry
       )
     );
 
