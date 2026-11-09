@@ -1742,6 +1742,55 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(client.connected).toBe(false);
     });
 
+    it("kills the terminals the user opened after closing the agent's, before hanging up", async () => {
+      const client = createClient(wsPath(WS));
+      await waitForConnect(client);
+
+      // A shell in a terminal the user opened ignores the release sweep's
+      // SIGTERM and cost every such deletion the 5s until SIGKILL. Killing the
+      // terminal hangs the shell up instead. The agent goes first, gracefully.
+      const asked: Array<{ command: string; connected: boolean }> = [];
+      client.on("command", (request, ack) => {
+        asked.push({ command: request.command, connected: client.connected });
+        if (request.command === "codehydra.closeAgent") {
+          ack({ success: true, data: { closed: true } });
+          client.emit("api:workspace:agentLifecycle", { event: "close" });
+          return;
+        }
+        ack({ success: true, data: undefined });
+      });
+
+      await startDeleting();
+      await waitForDisconnect(client);
+
+      expect(asked).toEqual([
+        { command: "codehydra.closeAgent", connected: true },
+        { command: "workbench.action.terminal.killAll", connected: true },
+      ]);
+    });
+
+    it("stops waiting on the terminals once app:shutdown starts", async () => {
+      const client = createClient(wsPath(WS));
+      await waitForConnect(client);
+
+      // The window was closed mid-deletion: the editor that would run the
+      // terminal command is gone, so the command is never answered. Waiting
+      // out its timeout only held the quit up, and logged a warning.
+      client.on("command", (request, ack) => {
+        if (request.command === "codehydra.closeAgent") {
+          ack({ success: true, data: { closed: false } });
+        }
+      });
+
+      const started = Date.now();
+      const deleting = startDeleting();
+      await delay(100);
+      await env.testDispatcher.dispatch({ type: "app:shutdown", payload: {} } as Intent);
+      await deleting;
+
+      expect(Date.now() - started).toBeLessThan(2000);
+    });
+
     it("does not wait when there is no agent terminal to close", async () => {
       const client = createClient(wsPath(WS));
       await waitForConnect(client);

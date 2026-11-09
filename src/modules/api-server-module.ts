@@ -156,6 +156,12 @@ const CLOSE_AGENT_COMMAND = "codehydra.closeAgent";
  */
 const AGENT_CLOSE_TIMEOUT_MS = 5_000;
 
+/** VS Code command that kills every terminal of the workspace's window. */
+const KILL_ALL_TERMINALS_COMMAND = "workbench.action.terminal.killAll";
+
+/** How long teardown waits for KILL_ALL_TERMINALS_COMMAND before the release sweep takes over. */
+const KILL_ALL_TERMINALS_TIMEOUT_MS = 5_000;
+
 // =============================================================================
 // Dependency Interfaces
 // =============================================================================
@@ -329,6 +335,16 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    */
   const closingWorkspaces = new Set<WorkspaceRef>();
 
+  /**
+   * Set, and `shutdownStarted` resolved, once app:shutdown starts. By then the
+   * window — and with it every workspace's editor — is gone, so a terminal
+   * command sent to a sidekick has nothing to run it and only times out. A
+   * deletion still running then stops waiting on its terminals and leaves them
+   * to the release sweep.
+   */
+  let appShuttingDown = false;
+  const { promise: shutdownStarted, resolve: startShutdown } = Promise.withResolvers<void>();
+
   // ---------------------------------------------------------------------------
   // Server lifecycle functions
   // ---------------------------------------------------------------------------
@@ -432,11 +448,17 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     return socket;
   }
 
+  /**
+   * Run a VS Code command in the workspace's editor.
+   *
+   * @param canceled - stop waiting, without a timeout warning, once it resolves
+   */
   async function sendCommand(
     workspaceRef: WorkspaceRef,
     command: string,
     args?: readonly unknown[],
-    timeoutMs: number = COMMAND_TIMEOUT_MS
+    timeoutMs: number = COMMAND_TIMEOUT_MS,
+    canceled?: Promise<void>
   ): Promise<ApiResult<unknown>> {
     const socket = liveSocket(workspaceRef);
     if ("error" in socket) {
@@ -452,7 +474,17 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         resolve(result);
       });
     });
-    const result = await raceTimeout(ack, timeoutMs);
+    const answer =
+      canceled === undefined
+        ? ack
+        : Promise.race([
+            ack,
+            canceled.then((): ApiResult<unknown> => ({
+              success: false,
+              error: "Command canceled",
+            })),
+          ]);
+    const result = await raceTimeout(answer, timeoutMs);
     if (result === TIMED_OUT) {
       log.warn("Command timeout", { command, timeoutMs });
       return { success: false, error: "Command timed out" };
@@ -532,7 +564,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    */
   async function closeAgentTerminal(workspaceRef: WorkspaceRef): Promise<void> {
     const socket = connections.get(workspaceRef);
-    if (!socket?.connected) return;
+    if (!socket?.connected || appShuttingDown) return;
     const log = logger.scoped({ workspace: workspaceRef });
 
     // Register the waiter BEFORE sending: the extension can report the close
@@ -548,7 +580,8 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         workspaceRef,
         CLOSE_AGENT_COMMAND,
         undefined,
-        AGENT_CLOSE_TIMEOUT_MS
+        AGENT_CLOSE_TIMEOUT_MS,
+        shutdownStarted
       );
 
       // The command resolves as soon as it is invoked, not when the terminal is
@@ -563,10 +596,16 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         return;
       }
 
-      if ((await raceTimeout(closed, AGENT_CLOSE_TIMEOUT_MS)) === TIMED_OUT) {
+      const outcome = await raceTimeout(
+        Promise.race([closed, shutdownStarted]),
+        AGENT_CLOSE_TIMEOUT_MS
+      );
+      if (outcome === TIMED_OUT) {
         log.warn("Agent terminal did not close in time; falling back to process cleanup", {
           timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
         });
+      } else if (appShuttingDown) {
+        log.debug("App shutting down; leaving the agent to process cleanup");
       } else {
         log.debug("Agent terminal closed");
       }
@@ -575,6 +614,34 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       if (waiters.size === 0 && agentClosedWaiters.get(workspaceRef) === waiters) {
         agentClosedWaiters.delete(workspaceRef);
       }
+    }
+  }
+
+  /**
+   * Kill the terminals still open in the workspace — the ones the user opened,
+   * after the agent's has been closed.
+   *
+   * Their processes run under the IDE server's pty host, which the workspace
+   * does not own, so nothing else ends them before the worktree goes. Left to
+   * the release sweep, an interactive shell costs the deletion 5s: it ignores
+   * the sweep's SIGTERM by design, and only the SIGKILL after the timeout ends
+   * it. Killing the terminal hangs it up instead, and a shell exits on SIGHUP.
+   *
+   * Best-effort like closeAgentTerminal: the release sweep stays the backstop.
+   */
+  async function killAllTerminals(workspaceRef: WorkspaceRef): Promise<void> {
+    if (!connections.get(workspaceRef)?.connected || appShuttingDown) return;
+    const result = await sendCommand(
+      workspaceRef,
+      KILL_ALL_TERMINALS_COMMAND,
+      undefined,
+      KILL_ALL_TERMINALS_TIMEOUT_MS,
+      shutdownStarted
+    );
+    if (!result.success) {
+      logger
+        .scoped({ workspace: workspaceRef })
+        .debug("Could not kill terminals", { error: result.error });
     }
   }
 
@@ -1578,6 +1645,12 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       },
 
       [APP_SHUTDOWN_OPERATION_ID]: {
+        drain: {
+          handler: async (): Promise<void> => {
+            appShuttingDown = true;
+            startShutdown();
+          },
+        },
         stop: {
           handler: async () => {
             await close();
@@ -1638,6 +1711,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               // stops the agent; that handler requires CAPABILITY_AGENT_STOPPED,
               // so it cannot run while the socket is still open.
               await closeAgentTerminal(workspaceRef);
+              // Then the rest, which the user opened: same socket, so before
+              // hanging up too.
+              await killAllTerminals(workspaceRef);
 
               connections.get(workspaceRef)?.disconnect(true);
             } catch (err) {

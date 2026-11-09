@@ -592,7 +592,8 @@ const errorNotificationModule = createErrorNotificationModule({ dispatcher });
 
 // Owns the transient per-workspace facts contributed to workspace:resolve:
 // which teardown holds a workspace (`closing`), and which workspace is active.
-const workspaceLifecycleModule = createWorkspaceLifecycleModule();
+// Holds app:shutdown until confirmed deletions finish.
+const workspaceLifecycleModule = createWorkspaceLifecycleModule({ logger: lifecycleLogger });
 
 const viewModule = createViewModule({
   viewManager,

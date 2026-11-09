@@ -187,6 +187,16 @@ describe("WindowManager", () => {
         "CodeHydra - my-app / feature - (main)"
       );
     });
+
+    it("ignores a title for a window that is already gone", async () => {
+      // A workspace deletion still running when the window is closed switches
+      // away at its end, and window-title retitles the window then.
+      const deps = createWindowManagerDeps();
+      const manager = createWindowManager(deps);
+      await deps.windowLayer.dispose();
+
+      expect(() => manager.setTitle("existing / sample - CodeHydra")).not.toThrow();
+    });
   });
 
   describe("setOverlayIcon", () => {

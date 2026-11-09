@@ -35,7 +35,7 @@ import type {
   IntentOf,
 } from "../intents/lib/operation";
 import { APP_START_OPERATION_ID, INTENT_APP_START } from "../intents/app-start";
-import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
+import { AppShutdownOperation } from "../intents/app-shutdown";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
   INTENT_OPEN_WORKSPACE,
@@ -442,11 +442,8 @@ export async function createApiServerEnv(
   });
   testDispatcher.registerModule(module);
   testDispatcher.registerOperation(createMinimalStartOperation());
-  testDispatcher.registerOperation(
-    createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
-      throwOnError: false,
-    })
-  );
+  // The real one: it runs "drain" before "stop", and the module hooks both.
+  testDispatcher.registerOperation(new AppShutdownOperation());
   testDispatcher.registerOperation(createMinimalCommandOperation());
   testDispatcher.registerOperation(createMinimalShowMessageOperation());
   testDispatcher.registerOperation(new VscodeCancelMessageOperation());
