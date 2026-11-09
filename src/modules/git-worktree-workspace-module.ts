@@ -2,24 +2,26 @@
  * GitWorktreeWorkspaceModule - Manages workspace-related git worktree operations.
  *
  * Consolidates worktree lifecycle hooks across multiple operations:
- * - resolve-workspace: shared workspace resolution (ref or path → the workspace's identity)
  * - open-project: register project, discover workspaces, fire-and-forget cleanup
- * - close-project: unregister project, clear state
- * - open-workspace: resolve caller, create worktree
+ * - close-project: unregister project
+ * - open-workspace: create worktree
  * - get-project-bases: list bases (local read), refresh bases (git fetch)
  * - delete-workspace: remove worktree
- * - switch-workspace: find candidates
  * - get-workspace-status: check dirty status
- * - list-projects: list workspaces per project
+ * - list-projects: each project's default base branch
+ *
+ * The workspaces themselves live in the core workspace registry
+ * (`workspace-registry-module.ts`): this module tells it what discovery and
+ * creation found and when a worktree is gone, and the registry answers resolve,
+ * switch and list for every project type alike.
  *
  * Uses GitWorktreeProvider directly (no ProjectScopedWorkspaceProvider adapter).
- * Maintains its own workspace state in closure-scoped maps.
  */
 
 import type { IntentModule } from "../intents/lib/module";
 import type { HookOutput } from "../intents/lib/operation";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
-import type { UnmanagedWorktree, Workspace } from "../boundaries/platform/git-types";
+import type { UnmanagedWorktree } from "../boundaries/platform/git-types";
 import type { UiPresenter } from "./presentation/presentation-module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { notify } from "./presentation/notification-card";
@@ -32,17 +34,9 @@ import type { ListBasesHookResult } from "../intents/get-project-bases";
 import { GET_PROJECT_BASES_OPERATION_ID } from "../intents/get-project-bases";
 import type { DeleteHookResult, PreflightHookResult } from "../intents/delete-workspace";
 import type { DiscoverHookResult, PrepareHookResult } from "../intents/open-project";
-import type { CloseResolveHookResult } from "../intents/close-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
-import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
-import type { FindCandidatesHookResult, WorkspaceCandidate } from "../intents/switch-workspace";
-import { HIBERNATED_METADATA_KEY } from "../intents/hibernate-workspace";
-import {
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  type ResolveHookResult,
-} from "../intents/resolve-workspace";
 import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   type GetStatusHookResult,
@@ -54,12 +48,11 @@ import {
 } from "../intents/list-projects";
 import { Path } from "../utils/path/path";
 import { getErrorMessage, WorkspaceError } from "../shared/errors/service-errors";
-import { EVENT_METADATA_CHANGED } from "../intents/set-metadata";
-import { projectPathSchema, workspaceNameSchema, workspacePathSchema } from "../intents/contract";
-import type { ProjectPath, ProjectRef, WorkspacePath, WorkspaceRef } from "../intents/contract";
-import { makeWorkspaceRef, parseWorkspaceRef, type WorkspaceRefParts } from "../utils/ref";
+import { projectPathSchema, workspacePathSchema } from "../intents/contract";
+import type { ProjectPath, WorkspacePath } from "../intents/contract";
 import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
-import { defineEvents, defineHooks } from "../intents/declarations";
+import { defineHooks } from "../intents/declarations";
+import { REQUIRES_FREE_NAME, type WorkspaceRegistry } from "./workspace-registry-module";
 
 // =============================================================================
 // Module Factory
@@ -73,6 +66,7 @@ import { defineEvents, defineHooks } from "../intents/declarations";
  * @param logger - Logger for warnings and errors
  * @param ui - Presenter for the add-project worktree picker
  * @param dispatcher - Dispatcher for the picker's failure notice (`notification:show`)
+ * @param registry - The core workspace registry, told what exists
  * @returns IntentModule with hook contributions
  */
 export function createGitWorktreeWorkspaceModule(
@@ -80,23 +74,13 @@ export function createGitWorktreeWorkspaceModule(
   workspacesRoot: Pick<WorkspacesRoot, "workspacesDir" | "previousWorkspacesDirs">,
   logger: Logger,
   ui: Pick<UiPresenter, "dialog">,
-  dispatcher: Pick<Dispatcher, "dispatch">
+  dispatcher: Pick<Dispatcher, "dispatch">,
+  registry: WorkspaceRegistry
 ): IntentModule {
-  // Internal state
-  // Keyed by branded paths: these maps feed hook results directly, so keeping the brand on
-  // the key means a project/workspace path never has to be re-minted on the way out.
-  // Each project's workspaces, by `Path.toString()` of the workspace path.
-  const workspaces = new Map<ProjectPath, Map<string, Workspace>>();
-  const deletionPending = new Map<
-    WorkspacePath,
-    { projectPath: ProjectPath; workspace: Workspace }
-  >();
   // Per-project default base branch, computed at project:open (discover) and
   // refreshed by the get-project-bases list hook. Surfaced via list-workspaces
   // so the creation form can seed the base field without a git round-trip.
   const projectDefaults = new Map<ProjectPath, string>();
-  // Each open project's ref, learned at discover/create: a workspace's ref extends it.
-  const projectRefs = new Map<ProjectPath, ProjectRef>();
 
   // ---------------------------------------------------------------------------
   // Private Helpers
@@ -110,143 +94,6 @@ export function createGitWorktreeWorkspaceModule(
   const projectKey = (p: string): ProjectPath => projectPathSchema.parse(new Path(p).toString());
   const workspaceKey = (p: string): WorkspacePath =>
     workspacePathSchema.parse(new Path(p).toString());
-
-  /**
-   * True when `candidate` is the workspace at `workspaceRoot`, or lies inside it.
-   *
-   * The separator check is what stops `/repo/wt/feature` claiming a sibling
-   * called `/repo/wt/feature-2`, which a bare `startsWith` would.
-   */
-  function isWithin(candidate: string, workspaceRoot: string): boolean {
-    return candidate === workspaceRoot || candidate.startsWith(`${workspaceRoot}/`);
-  }
-
-  /** The resolve-hook answer for `ws`, or undefined while its project's ref is not known. */
-  function identityOf(projectPath: ProjectPath, ws: Workspace): ResolveHookResult | undefined {
-    const projectRef = projectRefs.get(projectPath);
-    if (projectRef === undefined) return undefined;
-    return {
-      workspaceRef: makeWorkspaceRef(projectRef, ws.name),
-      workspacePath: workspaceKey(ws.path.toString()),
-      projectRef,
-      projectPath,
-      // The stored name, NOT the basename of ws.path: Path lowercases on
-      // Windows, so a path-derived name breaks the renderer's case-sensitive
-      // name matching for uppercase workspace names.
-      workspaceName: workspaceNameSchema.parse(ws.name),
-      branch: ws.branch,
-      metadata: ws.metadata,
-    };
-  }
-
-  /** A workspace's identity, from its (parsed) ref. */
-  function identifyByRef(wanted: WorkspaceRefParts): ResolveHookResult | undefined {
-    for (const [projectPath, wsList] of getMergedWorkspaces()) {
-      if (projectRefs.get(projectPath) !== wanted.projectRef) continue;
-      const ws = wsList.find((w) => w.name === wanted.name);
-      if (ws !== undefined) return identityOf(projectPath, ws);
-    }
-    return undefined;
-  }
-
-  /**
-   * A workspace's identity, from a path inside it.
-   *
-   * A path matches the deepest workspace containing it rather than requiring the
-   * workspace root exactly, so a caller that only knows its working directory —
-   * the `ch` CLI, run from anywhere inside a worktree — resolves the same way a
-   * caller holding the root does. An exact match is the longest possible one, so
-   * it still wins; nesting resolves to the innermost workspace.
-   */
-  function identifyByPath(workspacePath: WorkspacePath): ResolveHookResult | undefined {
-    const normalizedPath = new Path(workspacePath).toString();
-    let best: { projectPath: ProjectPath; ws: Workspace; rootLength: number } | undefined;
-    for (const [projectPath, wsList] of getMergedWorkspaces()) {
-      for (const ws of wsList) {
-        const root = ws.path.toString();
-        if (!isWithin(normalizedPath, root)) continue;
-        if (best !== undefined && root.length <= best.rootLength) continue;
-        best = { projectPath, ws, rootLength: root.length };
-      }
-    }
-    return best === undefined ? undefined : identityOf(best.projectPath, best.ws);
-  }
-
-  /**
-   * A workspace's identity, from its ref or from a path inside it. Used by the
-   * resolve-workspace operation; a valid ref, when given, wins over a path.
-   */
-  function identify(by: {
-    readonly workspaceRef?: WorkspaceRef | undefined;
-    readonly workspacePath?: WorkspacePath | undefined;
-  }): ResolveHookResult | undefined {
-    const wanted = by.workspaceRef !== undefined ? parseWorkspaceRef(by.workspaceRef) : null;
-    if (wanted !== null) return identifyByRef(wanted);
-    if (by.workspacePath !== undefined) return identifyByPath(by.workspacePath);
-    return undefined;
-  }
-
-  /** A workspace's ref, or undefined while its project's ref is not known. */
-  function refOf(projectPath: ProjectPath, ws: Workspace): WorkspaceRef | undefined {
-    const projectRef = projectRefs.get(projectPath);
-    return projectRef === undefined ? undefined : makeWorkspaceRef(projectRef, ws.name);
-  }
-
-  /** Add `ws` to its project's workspaces, unless one is already registered at its path. */
-  function registerWorkspaceInState(projectPath: ProjectPath, ws: Workspace): void {
-    let byPath = workspaces.get(projectPath);
-    if (byPath === undefined) {
-      byPath = new Map<string, Workspace>();
-      workspaces.set(projectPath, byPath);
-    }
-    const pathKey = ws.path.toString();
-    if (!byPath.has(pathKey)) byPath.set(pathKey, ws);
-  }
-
-  /** A project's workspaces, in registration order. */
-  function workspacesOf(projectPath: ProjectPath): Workspace[] {
-    return [...(workspaces.get(projectPath)?.values() ?? [])];
-  }
-
-  function unregisterWorkspaceFromState(
-    projectPath: ProjectPath,
-    workspacePath: WorkspacePath
-  ): void {
-    workspaces.get(projectKey(projectPath))?.delete(new Path(workspacePath).toString());
-  }
-
-  function addToDeletionPending(projectPath: ProjectPath, workspacePath: WorkspacePath): void {
-    const key = projectKey(projectPath);
-    const normalizedWsPath = workspaceKey(workspacePath);
-    const ws = workspaces.get(key)?.get(normalizedWsPath);
-    if (!ws) return;
-    deletionPending.set(normalizedWsPath, { projectPath: key, workspace: ws });
-  }
-
-  function removeFromDeletionPending(workspacePath: WorkspacePath): void {
-    const normalizedWsPath = workspaceKey(workspacePath);
-    deletionPending.delete(normalizedWsPath);
-  }
-
-  /**
-   * Returns the full workspace list: git cache merged with deletion-pending entries.
-   * This is the single source of truth for resolve/list/find-candidates consumers.
-   */
-  function getMergedWorkspaces(): Map<ProjectPath, Workspace[]> {
-    const merged = new Map<ProjectPath, Workspace[]>();
-    for (const [key, byPath] of workspaces) {
-      merged.set(key, [...byPath.values()]);
-    }
-
-    for (const [wsPath, entry] of deletionPending) {
-      if (workspaces.get(entry.projectPath)?.has(wsPath)) continue;
-      const list = merged.get(entry.projectPath) ?? [];
-      list.push(entry.workspace);
-      merged.set(entry.projectPath, list);
-    }
-
-    return merged;
-  }
 
   // ---------------------------------------------------------------------------
   // Add-project worktree picker
@@ -399,16 +246,6 @@ export function createGitWorktreeWorkspaceModule(
   return {
     name: "git-worktree",
     hooks: defineHooks({
-      // resolve-workspace -> resolve (single registration replaces 8 per-operation hooks)
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx): Promise<HookOutput<ResolveHookResult>> => {
-            const { payload } = ctx.intent;
-            return { result: identify(payload) ?? {} };
-          },
-        },
-      },
-
       // open-project -> prepare (worktree picker) + discover
       [OPEN_PROJECT_OPERATION_ID]: {
         // prepare: offer the project's pre-existing worktrees for adoption.
@@ -492,18 +329,18 @@ export function createGitWorktreeWorkspaceModule(
             const workspacesDir = workspacesRoot.workspacesDir(projectPathObj);
 
             const key = projectKey(projectPathObj.toString());
-            projectRefs.set(key, projectRef);
+            const project = { ref: projectRef, path: key };
 
             // Already open: report the list the app holds rather than re-read git.
             // project:open runs again for an open project (an automation naming it
             // by URL), and a fresh discover can skip a worktree the sidebar, agent
             // and views still hold, leaving a workspace nothing can resolve.
-            const known = workspaces.get(key);
+            const known = registry.workspacesOf(projectRef);
             if (known !== undefined) {
               const defaultBaseBranch = projectDefaults.get(key);
               return {
                 result: {
-                  workspaces: toDiscoveredWorkspaces([...known.values()]),
+                  workspaces: toDiscoveredWorkspaces(known),
                   ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
                 },
               };
@@ -516,8 +353,8 @@ export function createGitWorktreeWorkspaceModule(
             );
 
             const discovered = await gitWorktreeProvider.discover(projectPathObj);
-            workspaces.set(key, new Map());
-            for (const ws of discovered) registerWorkspaceInState(key, ws);
+            registry.openProject(project);
+            for (const ws of discovered) registry.track(project, ws);
 
             // Fire-and-forget cleanup
             void gitWorktreeProvider
@@ -544,42 +381,13 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // close-project -> resolve + close
+      // close-project -> close (the registry lists and forgets the workspaces)
       [CLOSE_PROJECT_OPERATION_ID]: {
-        // resolve: contribute the project's workspace list. The operation
-        // tears each down (runtime teardown), upgrades to full deletion on a
-        // confirmed removeAll, and the confirm dialog shows the count.
-        resolve: {
-          handler: async (ctx): Promise<HookOutput<CloseResolveHookResult>> => {
-            const key = projectKey(ctx.projectPath);
-            const list: { workspaceRef: WorkspaceRef; workspacePath: WorkspacePath }[] = [];
-            for (const workspace of workspacesOf(key)) {
-              const workspaceRef = refOf(key, workspace);
-              if (workspaceRef === undefined) continue;
-              // The contract carries paths as plain branded data, not `Path` instances.
-              list.push({ workspaceRef, workspacePath: workspaceKey(workspace.path.toString()) });
-            }
-            return { result: { workspaces: list } };
-          },
-        },
         close: {
           handler: async (ctx): Promise<HookOutput<Record<string, never>>> => {
-            const { projectPath } = ctx;
-            const projectPathObj = new Path(projectPath);
-
+            const projectPathObj = new Path(ctx.projectPath);
             gitWorktreeProvider.unregisterProject(projectPathObj);
-            const key = projectKey(projectPathObj.toString());
-            workspaces.delete(key);
-            projectDefaults.delete(key);
-            projectRefs.delete(key);
-
-            // Clear deletion-pending entries for this project
-            for (const [wsPath, entry] of deletionPending) {
-              if (entry.projectPath === key) {
-                deletionPending.delete(wsPath);
-              }
-            }
-
+            projectDefaults.delete(projectKey(projectPathObj.toString()));
             return { result: {} };
           },
         },
@@ -588,11 +396,13 @@ export function createGitWorktreeWorkspaceModule(
       // open-workspace -> create
       [OPEN_WORKSPACE_OPERATION_ID]: {
         create: {
+          // After the registry checked a fresh name is free.
+          requires: REQUIRES_FREE_NAME,
           handler: async (ctx): Promise<HookOutput<CreateHookResult>> => {
             const { intent } = ctx;
             const { payload } = intent;
             const { projectPath, projectRef, fresh } = ctx;
-            projectRefs.set(projectKey(projectPath), projectRef);
+            const project = { ref: projectRef, path: projectKey(projectPath) };
 
             // Reopen: populate from the existing workspace's data, skip worktree creation
             const existing = payload.existingWorkspace;
@@ -604,7 +414,7 @@ export function createGitWorktreeWorkspaceModule(
               // that was never recorded stays absent rather than invented.
               const recordedBase = metadata["base"];
 
-              registerWorkspaceInState(projectKey(projectPath), {
+              registry.track(project, {
                 name: existing.name,
                 path: new Path(workspacePath),
                 branch: existing.branch,
@@ -623,17 +433,6 @@ export function createGitWorktreeWorkspaceModule(
 
             // New workspace: create via provider
             const projectPathObj = new Path(projectPath);
-
-            // A name is taken for good once a workspace has it, even after that
-            // workspace switches to another branch: the name is its identity.
-            // Compared like the creation dialog does, ignoring case.
-            const requested = payload.workspaceName!.toLowerCase();
-            const taken = workspacesOf(projectKey(projectPathObj.toString())).some(
-              (w) => w.name.toLowerCase() === requested
-            );
-            if (taken) {
-              throw new WorkspaceError(`Workspace '${payload.workspaceName!}' already exists`);
-            }
 
             // Resolve base: explicit or default
             const base = payload.base ?? (await gitWorktreeProvider.defaultBase(projectPathObj));
@@ -656,7 +455,7 @@ export function createGitWorktreeWorkspaceModule(
               throw new WorkspaceError(`${message} (base: '${base}')`);
             }
 
-            registerWorkspaceInState(projectKey(projectPathObj.toString()), internalWorkspace);
+            registry.track(project, internalWorkspace);
 
             return {
               result: {
@@ -793,60 +592,32 @@ export function createGitWorktreeWorkspaceModule(
             const { projectPath, workspacePath: wsPath } = ctx;
             const { payload } = ctx.intent;
 
-            if (payload.removeWorktree) {
-              // Snapshot workspace into deletionPending before removal attempt
-              addToDeletionPending(projectPath, wsPath);
-
-              try {
-                await gitWorktreeProvider.removeWorkspace(
-                  new Path(projectPath),
-                  new Path(wsPath),
-                  !payload.keepBranch
-                );
-              } catch (error) {
-                if (payload.force) {
-                  logger.warn("WorktreeModule: error in force mode (ignored)", {
-                    error: getErrorMessage(error),
-                  });
-                  // Dismiss: remove from both maps
-                  removeFromDeletionPending(wsPath);
-                  unregisterWorkspaceFromState(projectPath, wsPath);
-                }
-                // Non-force: workspace stays in deletionPending for resolve/list
-                return { result: { error: getErrorMessage(error) } };
-              }
-
-              // Success: clean up deletionPending
-              removeFromDeletionPending(wsPath);
+            if (!payload.removeWorktree) {
+              // Runtime teardown only: the worktree stays, the registry lets go of it.
+              registry.untrack(new Path(wsPath), "closed");
+              return { result: {} };
             }
 
-            unregisterWorkspaceFromState(projectPath, wsPath);
-            return { result: {} };
-          },
-        },
-      },
-
-      // switch-workspace -> find-candidates (resolve hook removed)
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
-        "find-candidates": {
-          handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
-            const candidates: WorkspaceCandidate[] = [];
-            for (const [key, wsList] of getMergedWorkspaces()) {
-              const projectRef = projectRefs.get(key);
-              if (projectRef === undefined) continue;
-              const projectName = new Path(key).basename;
-              for (const ws of wsList) {
-                const hibernated = ws.metadata[HIBERNATED_METADATA_KEY] === "true";
-                candidates.push({
-                  projectRef,
-                  projectName,
-                  workspaceRef: makeWorkspaceRef(projectRef, ws.name),
-                  workspaceName: ws.name,
-                  ...(hibernated && { hibernated: true }),
+            try {
+              await gitWorktreeProvider.removeWorkspace(
+                new Path(projectPath),
+                new Path(wsPath),
+                !payload.keepBranch
+              );
+            } catch (error) {
+              if (payload.force) {
+                logger.warn("WorktreeModule: error in force mode (ignored)", {
+                  error: getErrorMessage(error),
                 });
+                // Dismissed: the workspace goes, whatever is left on disk
+                registry.untrack(new Path(wsPath), "deleted");
               }
+              // Non-force: the workspace stays registered, so the user can retry
+              return { result: { error: getErrorMessage(error) } };
             }
-            return { result: { candidates } };
+
+            registry.untrack(new Path(wsPath), "deleted");
+            return { result: {} };
           },
         },
       },
@@ -882,55 +653,17 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // list-projects -> list-workspaces
+      // list-projects -> list-workspaces: each project's default base branch. The
+      // workspaces come from the registry; the operation merges entries by path.
       [LIST_PROJECTS_OPERATION_ID]: {
         "list-workspaces": {
           handler: async (): Promise<HookOutput<ListWorkspacesHookResult>> => {
             const entries: ListWorkspacesHookEntry[] = [];
-            for (const [key, wsList] of getMergedWorkspaces()) {
-              const defaultBaseBranch = projectDefaults.get(key);
-              entries.push({
-                projectPath: key,
-                workspaces: toDiscoveredWorkspaces(wsList),
-                ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
-              });
+            for (const [projectPath, defaultBaseBranch] of projectDefaults) {
+              entries.push({ projectPath, workspaces: [], defaultBaseBranch });
             }
             return { result: { entries } };
           },
-        },
-      },
-    }),
-
-    // -------------------------------------------------------------------------
-    // Domain Event Subscriptions
-    // -------------------------------------------------------------------------
-
-    events: defineEvents({
-      [EVENT_METADATA_CHANGED]: {
-        handler: async (event): Promise<void> => {
-          const { workspaceRef, key, value } = event.payload;
-
-          for (const [projectKey, byPath] of workspaces) {
-            for (const [pathKey, ws] of byPath) {
-              if (refOf(projectKey, ws) !== workspaceRef) continue;
-
-              const updatedMetadata =
-                value !== null
-                  ? { ...ws.metadata, [key]: value }
-                  : Object.fromEntries(Object.entries(ws.metadata).filter(([k]) => k !== key));
-
-              // Replacing an existing key keeps its position in the map.
-              byPath.set(pathKey, {
-                name: ws.name,
-                path: ws.path,
-                branch: ws.branch,
-                metadata: updatedMetadata,
-              });
-
-              // Each workspace ref is unique — no need to continue searching
-              return;
-            }
-          }
         },
       },
     }),

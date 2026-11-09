@@ -171,6 +171,7 @@ import { createProjectStoreModule } from "./modules/project-store-module";
 import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
+import { createWorkspaceRegistryModule } from "./modules/workspace-registry-module";
 import { createWorkspaceLifecycleModule } from "./modules/workspace-lifecycle-module";
 import { createBadgeModule } from "./modules/badge-module";
 import { createOsNotificationModule } from "./modules/os-notification-module";
@@ -887,12 +888,14 @@ const remoteProjectModule = createRemoteProjectModule({
   logger: lifecycleLogger,
   dispatcher,
 });
+const workspaceRegistryModule = createWorkspaceRegistryModule();
 const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   gitWorktreeProvider,
   workspacesRoot,
   apiLogger,
   presentationModule,
-  dispatcher
+  dispatcher,
+  workspaceRegistryModule
 );
 const badgeModule = createBadgeModule({
   platformInfo,
@@ -1138,6 +1141,7 @@ dispatcher.registerModule(deleteWindowsLockModule);
 dispatcher.registerModule(posixProcessCleanupModule);
 dispatcher.registerModule(remoteProjectModule);
 dispatcher.registerModule(projectStoreModule);
+dispatcher.registerModule(workspaceRegistryModule);
 dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);
 dispatcher.registerModule(windowTitleModule);
