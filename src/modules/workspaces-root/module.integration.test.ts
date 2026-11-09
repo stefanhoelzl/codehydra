@@ -43,7 +43,7 @@ import type { ProjectId, WorkspaceName } from "../../intents/contract";
 import { testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import type { Entry } from "../../boundaries/platform/filesystem.state-mock";
 import { Path } from "../../utils/path/path";
-import { generateProjectId } from "../local-project-module";
+import { generateProjectId } from "../project-store-module";
 import {
   ADOPTIONS_CONVERTED_STATE_KEY,
   createWorkspacesRootModule,

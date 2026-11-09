@@ -1,44 +1,27 @@
 // @vitest-environment node
 /**
- * Integration tests for LocalProjectModule.
+ * Integration tests for LocalProjectModule: the git project type's
+ * contributions, run together with the real project store they hand records to.
  *
- * Tests verify hook handlers through the Dispatcher,
- * validating the full hook pipeline including self-selection behavior.
- *
- * Test plan items covered:
- * #1: resolve validates local path and returns projectPath
- * #2: resolve skips for git URL payloads
- * #3: resolve propagates validation errors
- * #4: register generates ID and persists new local projects
- * #5: register registers remote project (saves with remoteUrl from context)
- * #6: register skips save when project config already exists
- * #7: close resolve returns config for known project path
- * #8: close resolve returns empty for unknown project path
- * #9: close removes from state and config
- * #10: close removes remote project from state and config
- * #11: start returns all project paths including remote
- * #12: start returns empty when no projects saved
- * #13: start does NOT populate internal state — project:open register handles that
- * #14: resolve returns alreadyOpen when path is in internal state
- * #15: register returns alreadyOpen for duplicate path
- * #16: close resolve returns remoteUrl from config
- * #17: close with removeLocalRepo force-deletes config dir for remote projects
+ * Covered: prepare (git init offer), resolve (validation, type "git" + config,
+ * remoteUrl from the record), restore (a saved git project → its open
+ * payload), close resolve/close (directories), managed clones' records, and
+ * projectRefs. The store's own behavior is in project-store-module.integration.test.ts.
  */
 
 import { projectRefFor } from "../utils/ref";
 import { describe, it, expect, vi } from "vitest";
 
 import {
-  assignColor,
   createLocalProjectModule,
-  generateProjectId,
+  loadAllProjects,
   type LocalProjectModuleDeps,
 } from "./local-project-module";
-import { PROJECT_COLOR_COUNT } from "../shared/ui-state";
+import { createProjectStoreModule, type ProjectStoreModule } from "./project-store-module";
 import {
   OPEN_PROJECT_OPERATION_ID,
   INTENT_OPEN_PROJECT,
-  type RegisterHookInput,
+  type ProjectTypeConfig,
 } from "../intents/open-project";
 import type { OpenProjectIntent } from "../intents/open-project";
 import type { schemas as openProjectSchemas } from "../intents/open-project";
@@ -54,7 +37,6 @@ import type { schemas as appReadySchemas } from "../intents/app-ready";
 import { APP_READY_OPERATION_ID } from "../intents/app-ready";
 import type { AppReadyIntent } from "../intents/app-ready";
 import { Path } from "../utils/path/path";
-import type { ProjectId } from "../shared/api/types";
 import type {
   HookContext,
   ResolvedHooks,
@@ -81,9 +63,6 @@ import type { ProjectPath } from "../intents/contract";
 // =============================================================================
 
 const PROJECT_PATH = projPath("/test/local-project");
-// Derived, not pinned: the id is a hash of the project path, so a literal here
-// would only ever be right for one platform's spelling of that path.
-const PROJECT_ID = projectDirName(PROJECT_PATH) as ProjectId;
 const PROJECTS_DIR = testPath("/test/app-data/projects").toNative();
 const REMOTES_DIR = testPath("/test/app-data/remotes").toNative();
 const REPO_URL = "https://github.com/user/repo.git";
@@ -91,94 +70,53 @@ const REPO_URL = "https://github.com/user/repo.git";
 const MANAGED_PATH = projPath(managedClonePath(REMOTES_DIR, REPO_URL).toString());
 const MANAGED_RECORD = nodePath.join(PROJECTS_DIR, managedProjectDirName(REPO_URL), "config.json");
 
-// =============================================================================
-// Mock Factories
-// =============================================================================
-
-function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): {
-  deps: LocalProjectModuleDeps;
-  fs: ReturnType<typeof createFileSystemMock>;
-  gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
-  dialogManager: ReturnType<typeof createMockDialogManager>;
-  gitClient: LocalProjectModuleDeps["gitClient"];
-  notifications: ReturnType<typeof createMockNotificationManager>;
-} {
-  const fs = createFileSystemMock({
-    entries: {
-      [PROJECTS_DIR]: directory(),
-      ...(fsOverrides?.entries ?? {}),
-    },
-  });
-
-  const gitWorktreeProvider = {
-    validateRepository: vi.fn().mockResolvedValue(undefined),
-  };
-
-  const dialog = createMockDialogManager();
-  const notifications = createMockNotificationManager();
-
-  const gitClient = {
-    isRepositoryRoot: vi.fn().mockResolvedValue(true),
-    init: vi.fn().mockResolvedValue(undefined),
-  };
-
-  return {
-    deps: {
-      projectsDir: PROJECTS_DIR,
-      remotesDir: () => REMOTES_DIR,
-      platform: "linux",
-      fs,
-      gitWorktreeProvider,
-      ui: dialog.ui,
-      dispatcher: notifications.dispatcher,
-      gitClient,
-      logger: SILENT_LOGGER,
-    },
-    fs,
-    gitWorktreeProvider,
-    dialogManager: dialog,
-    gitClient,
-    notifications,
-  };
-}
+type MockFs = ReturnType<typeof createFileSystemMock>;
 
 // =============================================================================
 // Test Setup
 // =============================================================================
 
 /**
- * Build a ResolvedHooks from a module's hook declarations for a given operation.
- * Calls the single handler registered for the hook point and wraps the result.
+ * A ResolvedHooks running every given module's handler for a hook point, the way
+ * the dispatcher does. Handlers that return no result contribute none.
  */
-function resolveHooksFromModule<S extends OperationSchemas>(
-  module: IntentModule,
+function hooksOf<S extends OperationSchemas>(
+  modules: readonly IntentModule[],
   operationId: string
 ): ResolvedHooks<S> {
-  const opHooks = module.hooks?.[operationId] ?? {};
   return {
     collect: async <T>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>> => {
-      const hookHandler = opHooks[hookPointId];
-      if (!hookHandler) {
-        return { results: [], errors: [], capabilities: {} };
+      const results: T[] = [];
+      const errors: Error[] = [];
+      for (const module of modules) {
+        const hookHandler = module.hooks?.[operationId]?.[hookPointId];
+        if (!hookHandler) continue;
+        try {
+          const output = await hookHandler.handler(ctx);
+          const result = (output as HookOutput<T> | undefined)?.result;
+          if (result !== undefined && result !== null) results.push(result);
+        } catch (error) {
+          errors.push(error as Error);
+        }
       }
-      try {
-        const output = await hookHandler.handler(ctx);
-        const result = (output as HookOutput<T> | undefined)?.result;
-        const results: T[] = result !== undefined && result !== null ? [result] : [];
-        return { results, errors: [], capabilities: {} };
-      } catch (error) {
-        return { results: [], errors: [error as Error], capabilities: {} };
-      }
+      return { results, errors, capabilities: {} };
     },
   };
 }
 
 interface TestSetup {
   module: ReturnType<typeof createLocalProjectModule>;
+  store: ProjectStoreModule;
+  /** Only the git module's handlers. */
   openHooks: ResolvedHooks<typeof openProjectSchemas>;
   closeHooks: ResolvedHooks<typeof closeProjectSchemas>;
   readyHooks: ResolvedHooks<typeof appReadySchemas>;
-  fs: ReturnType<typeof createFileSystemMock>;
+  /** The store's and the git module's handlers together, as the app runs them. */
+  both: {
+    open: ResolvedHooks<typeof openProjectSchemas>;
+    close: ResolvedHooks<typeof closeProjectSchemas>;
+  };
+  fs: MockFs;
   gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
   dialogManager: ReturnType<typeof createMockDialogManager>;
   gitClient: LocalProjectModuleDeps["gitClient"];
@@ -186,19 +124,48 @@ interface TestSetup {
 }
 
 function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): TestSetup {
-  const { deps, fs, gitWorktreeProvider, dialogManager, gitClient, notifications } =
-    createMockDeps(fsOverrides);
+  const fs = createFileSystemMock({
+    entries: {
+      [PROJECTS_DIR]: directory(),
+      ...(fsOverrides?.entries ?? {}),
+    },
+  });
+  const gitWorktreeProvider = { validateRepository: vi.fn().mockResolvedValue(undefined) };
+  const dialogManager = createMockDialogManager();
+  const notifications = createMockNotificationManager();
+  const gitClient = {
+    isRepositoryRoot: vi.fn().mockResolvedValue(true),
+    init: vi.fn().mockResolvedValue(undefined),
+  };
 
-  const module = createLocalProjectModule(deps);
+  const store = createProjectStoreModule({
+    projectsDir: PROJECTS_DIR,
+    fs,
+    platform: "linux",
+    logger: SILENT_LOGGER,
+  });
+  const module = createLocalProjectModule({
+    projectsDir: PROJECTS_DIR,
+    remotesDir: () => REMOTES_DIR,
+    fs,
+    store,
+    gitWorktreeProvider,
+    ui: dialogManager.ui,
+    dispatcher: notifications.dispatcher,
+    gitClient,
+    logger: SILENT_LOGGER,
+  });
 
   return {
     module,
-    openHooks: resolveHooksFromModule<typeof openProjectSchemas>(module, OPEN_PROJECT_OPERATION_ID),
-    closeHooks: resolveHooksFromModule<typeof closeProjectSchemas>(
-      module,
-      CLOSE_PROJECT_OPERATION_ID
-    ),
-    readyHooks: resolveHooksFromModule(module, APP_READY_OPERATION_ID),
+    store,
+    openHooks: hooksOf([module], OPEN_PROJECT_OPERATION_ID),
+    closeHooks: hooksOf([module], CLOSE_PROJECT_OPERATION_ID),
+    readyHooks: hooksOf([module], APP_READY_OPERATION_ID),
+    both: {
+      open: hooksOf([store, module], OPEN_PROJECT_OPERATION_ID),
+      close: hooksOf([store, module], CLOSE_PROJECT_OPERATION_ID),
+    },
     fs,
     gitWorktreeProvider,
     dialogManager,
@@ -211,85 +178,92 @@ function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0
 // Helpers
 // =============================================================================
 
-/** Write a project config to the mock filesystem */
-function writeConfig(
-  fs: ReturnType<typeof createFileSystemMock>,
-  projectPath: ProjectPath,
-  remoteUrl?: string
-): void {
-  const dirName = projectDirName(new Path(projectPath).toString());
-  const configDir = nodePath.join(PROJECTS_DIR, dirName);
-  const configPath = nodePath.join(configDir, "config.json");
-
+/** Write a legacy (pre-type) git record to the mock filesystem, under the path-named dir. */
+function writeConfig(fs: MockFs, projectPath: ProjectPath, remoteUrl?: string): void {
+  const configDir = nodePath.join(PROJECTS_DIR, projectDirName(new Path(projectPath).toString()));
   const config = {
     path: projPath(new Path(projectPath).toString()),
     ...(remoteUrl !== undefined && { remoteUrl }),
   };
-
   fs.$.setEntry(configDir, { type: "directory" });
-  fs.$.setEntry(configPath, { type: "file", content: JSON.stringify(config, null, 2) });
+  fs.$.setEntry(nodePath.join(configDir, "config.json"), {
+    type: "file",
+    content: JSON.stringify(config, null, 2),
+  });
 }
 
-// =============================================================================
-// Intent Helpers
-// =============================================================================
+function writeManagedRecord(fs: MockFs, content: unknown): void {
+  fs.$.setEntry(nodePath.dirname(MANAGED_RECORD), { type: "directory" });
+  fs.$.setEntry(MANAGED_RECORD, { type: "file", content: JSON.stringify(content) });
+}
+
+function readJson(fs: MockFs, file: string): unknown {
+  const entry = fs.$.entries.get(new Path(file).toString());
+  return entry?.type === "file" ? JSON.parse(String(entry.content)) : undefined;
+}
 
 function openLocalIntent(path: string): OpenProjectIntent {
-  return {
-    type: INTENT_OPEN_PROJECT,
-    payload: { path: projPath(new Path(path).toString()) },
-  };
+  return { type: INTENT_OPEN_PROJECT, payload: { path: projPath(new Path(path).toString()) } };
 }
 
 function openGitIntent(url: string): OpenProjectIntent {
-  return {
-    type: INTENT_OPEN_PROJECT,
-    payload: { git: url },
-  };
+  return { type: INTENT_OPEN_PROJECT, payload: { git: url } };
 }
 
 function closeIntent(projectPath: ProjectPath): CloseProjectIntent {
-  return {
-    type: INTENT_CLOSE_PROJECT,
-    payload: { projectRef: projectRefFor(projectPath) },
-  };
+  return { type: INTENT_CLOSE_PROJECT, payload: { projectRef: projectRefFor(projectPath) } };
 }
 
-/** The context project:close hands its "resolve" handlers, for the project at `projectPath`. */
 function closeResolveCtx(projectPath: ProjectPath): CloseResolveHookInput {
+  return { intent: closeIntent(projectPath), projectRef: projectRefFor(projectPath), projectPath };
+}
+
+function closeInput(
+  options: { remoteUrl?: string; removeLocalRepo: boolean },
+  projectPath: ProjectPath = PROJECT_PATH
+): CloseHookInput {
   return {
     intent: closeIntent(projectPath),
     projectRef: projectRefFor(projectPath),
-    projectPath,
-  };
-}
-
-/** The context project:open hands its "register" handlers, for the test project. */
-function registerInput(remoteUrl?: string): RegisterHookInput {
-  return {
-    intent: openLocalIntent(PROJECT_PATH),
-    projectPath: projPath(new Path(PROJECT_PATH).toString()),
-    projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
-    ...(remoteUrl !== undefined && { remoteUrl }),
-  };
-}
-
-/** The context project:close hands its "close" handlers, for the test project. */
-function closeInput(options: { remoteUrl?: string; removeLocalRepo: boolean }): CloseHookInput {
-  return {
-    intent: closeIntent(PROJECT_PATH),
-    projectRef: projectRefFor(PROJECT_PATH),
-    projectPath: projPath(new Path(PROJECT_PATH).toString()),
+    projectPath: projPath(new Path(projectPath).toString()),
     ...(options.remoteUrl !== undefined && { remoteUrl: options.remoteUrl }),
     removeLocalRepo: options.removeLocalRepo,
   };
 }
 
 function appReadyIntent(): AppReadyIntent {
-  return {
-    type: "app:ready",
-    payload: {} as AppReadyIntent["payload"],
-  };
+  return { type: "app:ready", payload: {} as AppReadyIntent["payload"] };
+}
+
+/**
+ * Open a project the way project:open does: the git module's resolve, then the
+ * store's register with what resolve reported.
+ */
+async function open(setup: TestSetup, path: ProjectPath): Promise<void> {
+  const { results, errors } = await setup.openHooks.collect("resolve", {
+    intent: openLocalIntent(path),
+  });
+  if (errors.length > 0) throw errors[0];
+  const resolved = results[0]!;
+  const projectPath = resolved.projectPath!;
+  const register = await setup.both.open.collect("register", {
+    intent: openLocalIntent(path),
+    projectPath,
+    projectRef: projectRefFor(projectPath, resolved.remoteUrl),
+    ...(resolved.remoteUrl !== undefined && { remoteUrl: resolved.remoteUrl }),
+    ...(resolved.type !== undefined && { type: resolved.type }),
+    ...(resolved.config !== undefined && { config: resolved.config }),
+  });
+  if (register.errors.length > 0) throw register.errors[0];
+}
+
+/** Restore one saved project through the git module. */
+function restore(
+  setup: TestSetup,
+  type: string,
+  config: ProjectTypeConfig
+): ReturnType<TestSetup["readyHooks"]["collect"]> {
+  return setup.readyHooks.collect("restore", { intent: appReadyIntent(), type, config });
 }
 
 // =============================================================================
@@ -302,7 +276,7 @@ describe("LocalProjectModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("project:open resolve", () => {
-    it("validates local path and returns projectPath (#1)", async () => {
+    it("validates a local path and reports it as a git project", async () => {
       const { openHooks, gitWorktreeProvider } = createTestSetup();
 
       const { results, errors } = await openHooks.collect("resolve", {
@@ -310,25 +284,29 @@ describe("LocalProjectModule Integration", () => {
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({ projectPath: projPath(new Path(PROJECT_PATH).toString()) });
+      expect(results).toEqual([
+        {
+          projectPath: projPath(new Path(PROJECT_PATH).toString()),
+          type: "git",
+          config: { path: new Path(PROJECT_PATH).toString() },
+        },
+      ]);
       expect(gitWorktreeProvider.validateRepository).toHaveBeenCalledWith(new Path(PROJECT_PATH));
     });
 
-    it("skips for git URL payloads (#2)", async () => {
+    it("skips for git URL payloads", async () => {
       const { openHooks, gitWorktreeProvider } = createTestSetup();
 
       const { results, errors } = await openHooks.collect("resolve", {
-        intent: openGitIntent("https://github.com/user/repo.git"),
+        intent: openGitIntent(REPO_URL),
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
+      expect(results).toEqual([{}]);
       expect(gitWorktreeProvider.validateRepository).not.toHaveBeenCalled();
     });
 
-    it("propagates validation errors (#3)", async () => {
+    it("propagates validation errors", async () => {
       const { openHooks, gitWorktreeProvider } = createTestSetup();
       vi.mocked(gitWorktreeProvider.validateRepository).mockRejectedValue(
         new Error("Not a git repository")
@@ -339,160 +317,148 @@ describe("LocalProjectModule Integration", () => {
       });
 
       expect(results).toHaveLength(0);
-      expect(errors).toHaveLength(1);
       expect(errors[0]!.message).toBe("Not a git repository");
     });
 
-    it("returns remoteUrl from persisted config on startup (#18)", async () => {
+    it("returns remoteUrl and the record's own config from a saved project", async () => {
       const setup = createTestSetup();
+      writeConfig(setup.fs, PROJECT_PATH, REPO_URL);
 
-      // Pre-populate config with remoteUrl (simulates saved remote project)
-      writeConfig(setup.fs, PROJECT_PATH, "https://github.com/user/repo.git");
-
-      // Resolve with local path only (no git URL) — like app startup
       const { results, errors } = await setup.openHooks.collect("resolve", {
         intent: openLocalIntent(PROJECT_PATH),
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({
-        projectPath: projPath(new Path(PROJECT_PATH).toString()),
-        remoteUrl: "https://github.com/user/repo.git",
-      });
+      expect(results).toEqual([
+        {
+          projectPath: projPath(new Path(PROJECT_PATH).toString()),
+          remoteUrl: REPO_URL,
+          type: "git",
+          config: { path: new Path(PROJECT_PATH).toString(), remoteUrl: REPO_URL },
+        },
+      ]);
     });
 
-    it("returns remoteUrl with alreadyOpen when project is in state (#19)", async () => {
+    it("returns alreadyOpen, with remoteUrl, when the project is open", async () => {
       const setup = createTestSetup();
+      writeConfig(setup.fs, PROJECT_PATH, REPO_URL);
+      await open(setup, PROJECT_PATH);
+      vi.mocked(setup.gitWorktreeProvider.validateRepository).mockClear();
 
-      // Pre-populate config with remoteUrl
-      writeConfig(setup.fs, PROJECT_PATH, "https://github.com/user/repo.git");
-
-      // Register so project is in internal state
-      await setup.openHooks.collect("register", registerInput("https://github.com/user/repo.git"));
-
-      // Resolve again — should return alreadyOpen AND remoteUrl
       const { results, errors } = await setup.openHooks.collect("resolve", {
         intent: openLocalIntent(PROJECT_PATH),
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({
-        projectPath: projPath(new Path(PROJECT_PATH).toString()),
-        alreadyOpen: true,
-        remoteUrl: "https://github.com/user/repo.git",
-      });
-      expect(setup.gitWorktreeProvider.validateRepository).not.toHaveBeenCalled();
-    });
-
-    it("returns alreadyOpen when path is in internal state (#14)", async () => {
-      const setup = createTestSetup();
-
-      // Register a project so it's in internal state
-      await setup.openHooks.collect("register", registerInput());
-
-      // Resolve again — should return alreadyOpen and skip validation
-      const { results, errors } = await setup.openHooks.collect("resolve", {
-        intent: openLocalIntent(PROJECT_PATH),
-      });
-
-      expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({
-        projectPath: projPath(new Path(PROJECT_PATH).toString()),
-        alreadyOpen: true,
-      });
+      expect(results[0]).toMatchObject({ alreadyOpen: true, remoteUrl: REPO_URL });
       expect(setup.gitWorktreeProvider.validateRepository).not.toHaveBeenCalled();
     });
   });
 
   // ---------------------------------------------------------------------------
-  // project:open → register
+  // open → record, through the store
   // ---------------------------------------------------------------------------
 
-  describe("project:open register", () => {
-    it("generates ID and persists new local projects (#4)", async () => {
-      const { openHooks, fs } = createTestSetup();
-
-      const ctx = registerInput();
-
-      const { results, errors } = await openHooks.collect("register", ctx);
-
-      expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]!.projectId).toBe(PROJECT_ID);
-
-      // Verify config was written to filesystem
-      const dirName = projectDirName(new Path(PROJECT_PATH).toString());
-      const configPath = nodePath.join(PROJECTS_DIR, dirName, "config.json");
-      const entry = fs.$.entries.get(new Path(configPath).toString());
-      expect(entry).toBeDefined();
-      expect(entry!.type).toBe("file");
-      const config = JSON.parse((entry as { content: string }).content);
-      expect(config.path).toBe(new Path(PROJECT_PATH).toString());
-      expect(config.remoteUrl).toBeUndefined();
-    });
-
-    it("saves with remoteUrl when provided in context (#5)", async () => {
-      const { openHooks, fs } = createTestSetup();
-
-      const ctx = registerInput("https://github.com/user/repo.git");
-
-      const { results, errors } = await openHooks.collect("register", ctx);
-
-      expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]!.projectId).toBe(PROJECT_ID);
-      expect(results[0]!.name).toBe(new Path(PROJECT_PATH).basename);
-
-      // Verify config includes remoteUrl
-      const dirName = projectDirName(new Path(PROJECT_PATH).toString());
-      const configPath = nodePath.join(PROJECTS_DIR, dirName, "config.json");
-      const entry = fs.$.entries.get(new Path(configPath).toString());
-      expect(entry).toBeDefined();
-      const config = JSON.parse((entry as { content: string }).content);
-      expect(config.remoteUrl).toBe("https://github.com/user/repo.git");
-    });
-
-    it("registers a project that already has a record (#6)", async () => {
+  describe("records of opened projects", () => {
+    it("stores a local project as type git with its path", async () => {
       const setup = createTestSetup();
 
-      // Pre-populate config in filesystem
-      writeConfig(setup.fs, PROJECT_PATH);
+      await open(setup, PROJECT_PATH);
 
-      const ctx = registerInput();
-
-      const { results, errors } = await setup.openHooks.collect("register", ctx);
-
-      expect(errors).toHaveLength(0);
-      expect(results[0]!.projectId).toBe(PROJECT_ID);
+      const record = nodePath.join(PROJECTS_DIR, projectDirName(PROJECT_PATH), "config.json");
+      expect(readJson(setup.fs, record)).toEqual({
+        type: "git",
+        config: { path: new Path(PROJECT_PATH).toString() },
+        color: 0,
+      });
     });
 
-    it("returns alreadyOpen for duplicate path (#15)", async () => {
-      const { openHooks, fs } = createTestSetup();
+    it("rewrites a legacy record in place, keeping its remoteUrl", async () => {
+      const setup = createTestSetup();
+      writeConfig(setup.fs, PROJECT_PATH, REPO_URL);
 
-      const ctx = registerInput();
+      await open(setup, PROJECT_PATH);
 
-      // First registration — should persist
-      const { results: first, errors: firstErrors } = await openHooks.collect("register", ctx);
+      const record = nodePath.join(PROJECTS_DIR, projectDirName(PROJECT_PATH), "config.json");
+      expect(readJson(setup.fs, record)).toEqual({
+        type: "git",
+        config: { path: new Path(PROJECT_PATH).toString(), remoteUrl: REPO_URL },
+        color: 0,
+      });
+      expect(readJson(setup.fs, MANAGED_RECORD)).toBeUndefined();
+    });
 
-      expect(firstErrors).toHaveLength(0);
-      expect(first[0]!.projectId).toBe(PROJECT_ID);
-      expect(first[0]!.alreadyOpen).toBeUndefined();
+    it("reopens a managed clone by path into its URL-named record", async () => {
+      const setup = createTestSetup();
+      writeManagedRecord(setup.fs, { remoteUrl: REPO_URL });
 
-      // Verify config was written
-      const dirName = projectDirName(new Path(PROJECT_PATH).toString());
-      const configPath = nodePath.join(PROJECTS_DIR, dirName, "config.json");
-      expect(fs.$.entries.has(new Path(configPath).toString())).toBe(true);
+      await open(setup, MANAGED_PATH);
 
-      // Second registration — should return alreadyOpen without re-persisting
-      const { results: second, errors: secondErrors } = await openHooks.collect("register", ctx);
+      expect(readJson(setup.fs, MANAGED_RECORD)).toEqual({
+        type: "git",
+        config: { remoteUrl: REPO_URL },
+        color: 0,
+      });
+      const pathRecord = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH), "config.json");
+      expect(setup.fs.$.entries.has(new Path(pathRecord).toString())).toBe(false);
+      expect(setup.store.projectColor(projectRefFor(MANAGED_PATH, REPO_URL))).toBe(0);
+    });
+  });
 
-      expect(secondErrors).toHaveLength(0);
-      expect(second[0]!.projectId).toBe(PROJECT_ID);
-      expect(second[0]!.name).toBe(new Path(PROJECT_PATH).basename);
-      expect(second[0]!.alreadyOpen).toBe(true);
+  // ---------------------------------------------------------------------------
+  // app:ready → restore
+  // ---------------------------------------------------------------------------
+
+  describe("app:ready restore", () => {
+    it("reopens a local git project by its path", async () => {
+      const setup = createTestSetup();
+
+      const { results, errors } = await restore(setup, "git", {
+        path: new Path(PROJECT_PATH).toString(),
+      });
+
+      expect(errors).toHaveLength(0);
+      expect(results).toEqual([{ payload: { path: new Path(PROJECT_PATH).toString() } }]);
+    });
+
+    it("reopens a managed project at the path its URL derives", async () => {
+      const setup = createTestSetup();
+
+      const { results } = await restore(setup, "git", { remoteUrl: REPO_URL });
+
+      expect(results).toEqual([{ payload: { path: MANAGED_PATH } }]);
+    });
+
+    it("restores every legacy record the store loads", async () => {
+      const setup = createTestSetup();
+      writeConfig(setup.fs, PROJECT_PATH);
+      writeManagedRecord(setup.fs, { remoteUrl: REPO_URL });
+
+      const paths: string[] = [];
+      for (const record of await setup.store.records()) {
+        const { results } = await restore(setup, record.type, record.config);
+        const path = results[0]?.payload?.path;
+        if (path !== undefined) paths.push(path);
+      }
+
+      expect(paths.sort()).toEqual([new Path(PROJECT_PATH).toString(), MANAGED_PATH].sort());
+    });
+
+    it("leaves projects of other types alone", async () => {
+      const setup = createTestSetup();
+
+      const { results } = await restore(setup, "other", { path: "/somewhere" });
+
+      expect(results).toEqual([{}]);
+    });
+
+    it("skips a git record with neither a path nor a URL", async () => {
+      const setup = createTestSetup();
+
+      const { results, errors } = await restore(setup, "git", {});
+
+      expect(errors).toHaveLength(0);
+      expect(results).toEqual([{}]);
     });
   });
 
@@ -501,55 +467,46 @@ describe("LocalProjectModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("project:close resolve", () => {
-    it("returns config for known project path (#7)", async () => {
+    it("returns nothing for a local project", async () => {
       const setup = createTestSetup();
+      await open(setup, PROJECT_PATH);
 
-      // Register a project so config is written to disk
-      await setup.openHooks.collect("register", registerInput());
-
-      // Now resolve by projectPath - should return config data (empty for local projects without remoteUrl)
       const { results, errors } = await setup.closeHooks.collect(
         "resolve",
         closeResolveCtx(PROJECT_PATH)
       );
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      // Local project has no remoteUrl, so result is empty
-      expect(results[0]).toEqual({});
+      expect(results).toEqual([{}]);
     });
 
-    it("returns empty for unknown project path (#8)", async () => {
+    it("returns nothing for an unknown project path", async () => {
       const { closeHooks } = createTestSetup();
 
-      const { results, errors } = await closeHooks.collect(
+      const { results } = await closeHooks.collect(
         "resolve",
         closeResolveCtx(projPath("/unknown/project"))
       );
 
-      expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
+      expect(results).toEqual([{}]);
     });
 
-    it("returns remoteUrl from config (#16)", async () => {
+    it("returns remoteUrl from the record", async () => {
       const setup = createTestSetup();
+      writeConfig(setup.fs, PROJECT_PATH, REPO_URL);
 
-      // Pre-populate config with remoteUrl
-      writeConfig(setup.fs, PROJECT_PATH, "https://github.com/user/repo.git");
+      const { results } = await setup.closeHooks.collect("resolve", closeResolveCtx(PROJECT_PATH));
 
-      // Register project so it's in internal state
-      await setup.openHooks.collect("register", registerInput("https://github.com/user/repo.git"));
+      expect(results[0]!.remoteUrl).toBe(REPO_URL);
+    });
 
-      // Resolve — should include remoteUrl from config
-      const { results, errors } = await setup.closeHooks.collect(
-        "resolve",
-        closeResolveCtx(PROJECT_PATH)
-      );
+    it("knows a managed project by the path its URL derives", async () => {
+      const setup = createTestSetup();
+      writeManagedRecord(setup.fs, { type: "git", config: { remoteUrl: REPO_URL } });
 
-      expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]!.remoteUrl).toBe("https://github.com/user/repo.git");
+      const { results } = await setup.closeHooks.collect("resolve", closeResolveCtx(MANAGED_PATH));
+
+      expect(results).toEqual([{ remoteUrl: REPO_URL }]);
     });
   });
 
@@ -558,72 +515,56 @@ describe("LocalProjectModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("project:close close", () => {
-    it("removes from state and config (#9)", async () => {
+    it("removes the record and the empty project directory, with the store", async () => {
       const setup = createTestSetup();
+      await open(setup, PROJECT_PATH);
 
-      // Register a project first
-      await setup.openHooks.collect("register", registerInput());
-
-      // Close the project
-      const { errors } = await setup.closeHooks.collect(
+      const { errors } = await setup.both.close.collect(
         "close",
         closeInput({ removeLocalRepo: false })
       );
 
       expect(errors).toHaveLength(0);
-
-      // Verify it's gone from internal state (close resolve should return empty)
-      const { results: resolveResults } = await setup.closeHooks.collect(
-        "resolve",
-        closeResolveCtx(PROJECT_PATH)
-      );
-      expect(resolveResults[0]).toEqual({});
+      const configDir = nodePath.join(PROJECTS_DIR, projectDirName(PROJECT_PATH));
+      expect(setup.fs.$.entries.has(new Path(configDir).toString())).toBe(false);
+      expect(setup.store.isOpen(PROJECT_PATH)).toBe(false);
     });
 
-    it("closes remote project — removes from state (#10)", async () => {
+    it("keeps a workspaces directory still holding worktrees", async () => {
       const setup = createTestSetup();
+      await open(setup, PROJECT_PATH);
+      const worktree = nodePath.join(
+        PROJECTS_DIR,
+        projectDirName(PROJECT_PATH),
+        "workspaces",
+        "feature"
+      );
+      setup.fs.$.setEntry(worktree, { type: "directory" });
 
-      // Pre-populate config with remoteUrl
-      writeConfig(setup.fs, PROJECT_PATH, "https://github.com/user/repo.git");
+      await setup.both.close.collect("close", closeInput({ removeLocalRepo: false }));
 
-      // Register a remote project first so it's in internal state
-      await setup.openHooks.collect("register", registerInput("https://github.com/user/repo.git"));
+      expect(setup.fs.$.entries.has(new Path(worktree).toString())).toBe(true);
+    });
 
-      // Close with remoteUrl present
-      const { errors } = await setup.closeHooks.collect(
+    it("force-deletes the project directories for a remote project with removeLocalRepo", async () => {
+      const setup = createTestSetup();
+      writeConfig(setup.fs, PROJECT_PATH, REPO_URL);
+      await open(setup, PROJECT_PATH);
+      const worktree = nodePath.join(
+        PROJECTS_DIR,
+        projectDirName(PROJECT_PATH),
+        "workspaces",
+        "feature"
+      );
+      setup.fs.$.setEntry(worktree, { type: "directory" });
+
+      const { errors } = await setup.both.close.collect(
         "close",
-        closeInput({ remoteUrl: "https://github.com/user/repo.git", removeLocalRepo: false })
+        closeInput({ remoteUrl: REPO_URL, removeLocalRepo: true })
       );
 
       expect(errors).toHaveLength(0);
-
-      // Verify it's gone from internal state
-      const { results: resolveResults } = await setup.closeHooks.collect(
-        "resolve",
-        closeResolveCtx(PROJECT_PATH)
-      );
-      expect(resolveResults[0]).toEqual({});
-    });
-
-    it("force-deletes config dir for remote project with removeLocalRepo (#17)", async () => {
-      const setup = createTestSetup();
-
-      // Pre-populate config with remoteUrl
-      writeConfig(setup.fs, PROJECT_PATH, "https://github.com/user/repo.git");
-
-      // Register project
-      await setup.openHooks.collect("register", registerInput("https://github.com/user/repo.git"));
-
-      // Close with removeLocalRepo=true and remoteUrl
-      const { errors } = await setup.closeHooks.collect(
-        "close",
-        closeInput({ remoteUrl: "https://github.com/user/repo.git", removeLocalRepo: true })
-      );
-      expect(errors).toHaveLength(0);
-
-      // Verify config dir was force-deleted (recursive rm)
-      const dirName = projectDirName(new Path(PROJECT_PATH).toString());
-      const configDir = nodePath.join(PROJECTS_DIR, dirName);
+      const configDir = nodePath.join(PROJECTS_DIR, projectDirName(PROJECT_PATH));
       expect(setup.fs.$.entries.has(new Path(configDir).toString())).toBe(false);
     });
 
@@ -631,34 +572,26 @@ describe("LocalProjectModule Integration", () => {
       const setup = createTestSetup({
         entries: { [new Path(PROJECT_PATH).toNative()]: directory() },
       });
-      writeConfig(setup.fs, PROJECT_PATH);
-      await setup.openHooks.collect("register", registerInput());
+      await open(setup, PROJECT_PATH);
 
-      const { errors } = await setup.closeHooks.collect(
+      const { errors } = await setup.both.close.collect(
         "close",
         closeInput({ removeLocalRepo: true })
       );
 
       expect(errors).toHaveLength(0);
       expect(setup.fs.$.entries.has(new Path(PROJECT_PATH).toString())).toBe(false);
-      // App-data still goes through the gentle removal, not remote's force-rm:
-      // config.json is unlinked and the now-empty dirs collapse.
-      const configDir = nodePath.join(
-        PROJECTS_DIR,
-        projectDirName(new Path(PROJECT_PATH).toString())
-      );
-      expect(
-        setup.fs.$.entries.has(new Path(nodePath.join(configDir, "config.json")).toString())
-      ).toBe(false);
+      const configDir = nodePath.join(PROJECTS_DIR, projectDirName(PROJECT_PATH));
+      expect(setup.fs.$.entries.has(new Path(configDir).toString())).toBe(false);
     });
 
     it("leaves the directory alone for a local project without removeLocalRepo", async () => {
       const setup = createTestSetup({
         entries: { [new Path(PROJECT_PATH).toNative()]: directory() },
       });
-      writeConfig(setup.fs, PROJECT_PATH);
+      await open(setup, PROJECT_PATH);
 
-      await setup.closeHooks.collect("close", closeInput({ removeLocalRepo: false }));
+      await setup.both.close.collect("close", closeInput({ removeLocalRepo: false }));
 
       expect(setup.fs.$.entries.has(new Path(PROJECT_PATH).toString())).toBe(true);
     });
@@ -667,7 +600,6 @@ describe("LocalProjectModule Integration", () => {
       const setup = createTestSetup({
         entries: { [new Path(PROJECT_PATH).toNative()]: directory() },
       });
-      writeConfig(setup.fs, PROJECT_PATH);
       const projectPathStr = new Path(PROJECT_PATH).toString();
       setup.fs.rm = vi.fn().mockImplementation(async (target: string) => {
         if (new Path(target).toString() === projectPathStr) {
@@ -675,12 +607,10 @@ describe("LocalProjectModule Integration", () => {
         }
       });
 
-      const { errors } = await setup.closeHooks.collect("close", {
-        intent: closeIntent(PROJECT_PATH),
-        projectRef: projectRefFor(PROJECT_PATH),
-        projectPath: projPath(projectPathStr),
-        removeLocalRepo: true,
-      } satisfies CloseHookInput);
+      const { errors } = await setup.closeHooks.collect(
+        "close",
+        closeInput({ removeLocalRepo: true })
+      );
 
       // The close still succeeds — by now the project is out of state and its
       // workspaces are gone, so throwing would only leave the app inconsistent.
@@ -691,168 +621,18 @@ describe("LocalProjectModule Integration", () => {
       expect(notification?.opened.message).toContain(projectPathStr);
       expect(notification?.opened.message).toContain("EACCES");
     });
-  });
-
-  // ---------------------------------------------------------------------------
-  // app:ready → load-projects
-  // ---------------------------------------------------------------------------
-
-  describe("app:ready load-projects", () => {
-    it("returns all project paths including remote (#11)", async () => {
-      const localPath = testPath("/projects/alpha").toNative();
-      const remotePath = testPath("/remotes/repo").toNative();
-      const setup = createTestSetup();
-
-      // Pre-populate configs
-      writeConfig(setup.fs, projPath(localPath));
-      writeConfig(setup.fs, projPath(remotePath), "https://github.com/org/repo.git");
-
-      const { results, errors } = await setup.readyHooks.collect("load-projects", {
-        intent: appReadyIntent(),
-      });
-
-      expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]!.projectPaths).toContain(new Path(localPath).toString());
-      expect(results[0]!.projectPaths).toContain(new Path(remotePath).toString());
-    });
-
-    it("returns empty when no projects saved (#12)", async () => {
-      const { readyHooks } = createTestSetup();
-
-      const { results, errors } = await readyHooks.collect("load-projects", {
-        intent: appReadyIntent(),
-      });
-
-      expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]!.projectPaths).toEqual([]);
-    });
-
-    it("does not populate internal state — project:open register handles that (#13)", async () => {
-      const setup = createTestSetup();
-
-      // Pre-populate config
-      writeConfig(setup.fs, PROJECT_PATH);
-
-      await setup.readyHooks.collect("load-projects", {
-        intent: appReadyIntent(),
-      });
-
-      // load-projects should NOT populate internal state — resolve reads config from disk,
-      // so it returns {} for a local project (no remoteUrl)
-      const { results, errors } = await setup.closeHooks.collect(
-        "resolve",
-        closeResolveCtx(PROJECT_PATH)
-      );
-
-      expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      // Local project config has no remoteUrl, so result is empty
-      expect(results[0]).toEqual({});
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Managed (URL-cloned) projects: the record is named after the URL
-  // ---------------------------------------------------------------------------
-
-  describe("managed project records", () => {
-    function readJson(fs: ReturnType<typeof createFileSystemMock>, file: string): unknown {
-      const entry = fs.$.entries.get(new Path(file).toString());
-      return entry?.type === "file" ? JSON.parse(String(entry.content)) : undefined;
-    }
-
-    it("names each recorded project by its ref: a checkout by path, a clone by origin", async () => {
-      const setup = createTestSetup();
-      writeConfig(setup.fs, PROJECT_PATH);
-      setup.fs.$.setEntry(nodePath.dirname(MANAGED_RECORD), { type: "directory" });
-      setup.fs.$.setEntry(MANAGED_RECORD, {
-        type: "file",
-        content: JSON.stringify({ remoteUrl: REPO_URL }),
-      });
-
-      const refs = await setup.module.projectRefs();
-
-      expect(Object.fromEntries(refs)).toEqual({
-        [new Path(PROJECT_PATH).toString()]: projectRefFor(PROJECT_PATH),
-        [new Path(MANAGED_PATH).toString()]: projectRefFor(MANAGED_PATH, REPO_URL),
-      });
-      expect(refs.get(new Path(MANAGED_PATH).toString())).not.toBe(projectRefFor(MANAGED_PATH));
-    });
-
-    it("stores only the URL, in the URL-named directory", async () => {
-      const setup = createTestSetup();
-
-      await setup.openHooks.collect("register", {
-        intent: openLocalIntent(MANAGED_PATH),
-        projectPath: MANAGED_PATH,
-        projectRef: projectRefFor(MANAGED_PATH),
-        remoteUrl: REPO_URL,
-      } satisfies RegisterHookInput);
-
-      expect(readJson(setup.fs, MANAGED_RECORD)).toEqual({ remoteUrl: REPO_URL, color: 0 });
-      const pathRecord = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH), "config.json");
-      expect(setup.fs.$.entries.has(new Path(pathRecord).toString())).toBe(false);
-    });
-
-    it("keeps the path for a clone that is not where its URL derives", async () => {
-      const setup = createTestSetup();
-
-      await setup.openHooks.collect("register", {
-        intent: openLocalIntent(PROJECT_PATH),
-        projectPath: projPath(new Path(PROJECT_PATH).toString()),
-        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
-        remoteUrl: REPO_URL,
-      } satisfies RegisterHookInput);
-
-      const pathRecord = nodePath.join(PROJECTS_DIR, projectDirName(PROJECT_PATH), "config.json");
-      expect(readJson(setup.fs, pathRecord)).toEqual({
-        path: new Path(PROJECT_PATH).toString(),
-        remoteUrl: REPO_URL,
-        color: 0,
-      });
-    });
-
-    it("reopens a managed project at the path its URL derives", async () => {
-      const setup = createTestSetup();
-      setup.fs.$.setEntry(nodePath.dirname(MANAGED_RECORD), { type: "directory" });
-      setup.fs.$.setEntry(MANAGED_RECORD, {
-        type: "file",
-        content: JSON.stringify({ remoteUrl: REPO_URL }),
-      });
-
-      const { results } = await setup.readyHooks.collect("load-projects", {
-        intent: appReadyIntent(),
-      });
-      expect(results[0]!.projectPaths).toEqual([MANAGED_PATH]);
-
-      // ...and knows it is managed when asked by that path.
-      const { results: resolved } = await setup.closeHooks.collect(
-        "resolve",
-        closeResolveCtx(MANAGED_PATH)
-      );
-      expect(resolved[0]).toEqual({ remoteUrl: REPO_URL });
-    });
 
     it("removes both directories when a managed project is closed", async () => {
       const setup = createTestSetup();
-      await setup.openHooks.collect("register", {
-        intent: openLocalIntent(MANAGED_PATH),
-        projectPath: MANAGED_PATH,
-        projectRef: projectRefFor(MANAGED_PATH),
-        remoteUrl: REPO_URL,
-      } satisfies RegisterHookInput);
+      writeManagedRecord(setup.fs, { remoteUrl: REPO_URL });
+      await open(setup, MANAGED_PATH);
       const worktreesDir = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH), "workspaces");
       setup.fs.$.setEntry(worktreesDir, { type: "directory" });
 
-      await setup.closeHooks.collect("close", {
-        intent: closeIntent(MANAGED_PATH),
-        projectRef: projectRefFor(MANAGED_PATH),
-        projectPath: MANAGED_PATH,
-        remoteUrl: REPO_URL,
-        removeLocalRepo: false,
-      } satisfies CloseHookInput);
+      await setup.both.close.collect(
+        "close",
+        closeInput({ remoteUrl: REPO_URL, removeLocalRepo: false }, MANAGED_PATH)
+      );
 
       expect(setup.fs.$.entries.has(new Path(nodePath.dirname(MANAGED_RECORD)).toString())).toBe(
         false
@@ -862,91 +642,45 @@ describe("LocalProjectModule Integration", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Badge colors
+  // What other modules read of git records
   // ---------------------------------------------------------------------------
 
-  describe("badge colors", () => {
-    const pathA = projPath(new Path(PROJECT_PATH).toString());
-    const pathB = projPath(new Path("/test/second-project").toString());
-    const pathC = projPath(new Path("/test/third-project").toString());
+  describe("git records for other modules", () => {
+    it("names each recorded project by its ref: a checkout by path, a clone by origin", async () => {
+      const setup = createTestSetup();
+      writeConfig(setup.fs, PROJECT_PATH);
+      writeManagedRecord(setup.fs, { type: "git", config: { remoteUrl: REPO_URL } });
 
-    function register(setup: TestSetup, path: ProjectPath) {
-      return setup.openHooks.collect("register", {
-        intent: openLocalIntent(path),
-        projectPath: path,
-        projectRef: projectRefFor(path),
-      } satisfies RegisterHookInput);
-    }
-    function recordOf(setup: TestSetup, path: ProjectPath): unknown {
-      const file = nodePath.join(PROJECTS_DIR, projectDirName(path), "config.json");
-      const entry = setup.fs.$.entries.get(new Path(file).toString());
-      return entry?.type === "file" ? JSON.parse(String(entry.content)) : undefined;
-    }
-    function writeRecord(setup: TestSetup, path: ProjectPath, color: number): void {
-      const dir = nodePath.join(PROJECTS_DIR, projectDirName(path));
-      setup.fs.$.setEntry(dir, { type: "directory" });
-      setup.fs.$.setEntry(nodePath.join(dir, "config.json"), {
-        type: "file",
-        content: JSON.stringify({ path, color }),
+      const refs = await setup.module.projectRefs();
+
+      expect(Object.fromEntries(refs)).toEqual({
+        [new Path(PROJECT_PATH).toString()]: projectRefFor(PROJECT_PATH),
+        [new Path(MANAGED_PATH).toString()]: projectRefFor(MANAGED_PATH, REPO_URL),
       });
-    }
-    const colorOf = (setup: TestSetup, path: ProjectPath) =>
-      setup.module.projectColor(projectRefFor(path));
-
-    it("gives each project opened the lowest free color and stores it in its record", async () => {
-      const setup = createTestSetup();
-      await register(setup, pathA);
-      await register(setup, pathB);
-
-      expect(colorOf(setup, pathA)).toBe(0);
-      expect(colorOf(setup, pathB)).toBe(1);
-      expect(recordOf(setup, pathB)).toEqual({ path: pathB, color: 1 });
     });
 
-    it("keeps the color a record holds", async () => {
+    it("lists only git projects, legacy and new alike, with their paths", async () => {
       const setup = createTestSetup();
-      writeRecord(setup, pathA, 5);
-      await register(setup, pathA);
+      writeConfig(setup.fs, PROJECT_PATH);
+      writeManagedRecord(setup.fs, { type: "git", config: { remoteUrl: REPO_URL }, color: 3 });
+      setup.fs.$.setEntry(nodePath.join(PROJECTS_DIR, "other"), { type: "directory" });
+      setup.fs.$.setEntry(nodePath.join(PROJECTS_DIR, "other", "config.json"), {
+        type: "file",
+        content: JSON.stringify({ type: "other", config: { path: "/elsewhere" } }),
+      });
 
-      expect(colorOf(setup, pathA)).toBe(5);
-      expect(recordOf(setup, pathA)).toEqual({ path: pathA, color: 5 });
-    });
+      const projects = await loadAllProjects(setup.fs, {
+        projectsDir: PROJECTS_DIR,
+        remotesDir: REMOTES_DIR,
+      });
 
-    it("gives a record whose color another open project has the lowest free one", async () => {
-      const setup = createTestSetup();
-      await register(setup, pathA);
-      writeRecord(setup, pathB, 0);
-      await register(setup, pathB);
-
-      expect(colorOf(setup, pathB)).toBe(1);
-      expect(recordOf(setup, pathB)).toEqual({ path: pathB, color: 1 });
-    });
-
-    it("frees a closed project's color for the next one opened", async () => {
-      const setup = createTestSetup();
-      await register(setup, pathA);
-      await register(setup, pathB);
-      await setup.closeHooks.collect("close", closeInput({ removeLocalRepo: false }));
-      await register(setup, pathC);
-
-      expect(colorOf(setup, pathA)).toBeUndefined();
-      expect(colorOf(setup, pathC)).toBe(0);
-    });
-
-    it("never gives two projects opened at once the same color", async () => {
-      const setup = createTestSetup();
-      await Promise.all([register(setup, pathA), register(setup, pathB), register(setup, pathC)]);
-
-      const colors = [pathA, pathB, pathC].map((path) => colorOf(setup, path));
-      expect(new Set(colors).size).toBe(3);
-    });
-
-    it("repeats the colors in order once every one is taken", () => {
-      const all = Array.from({ length: PROJECT_COLOR_COUNT }, (_, index) => index);
-      expect(assignColor(undefined, all)).toBe(0);
-      expect(assignColor(undefined, [...all, 0])).toBe(1);
-      expect(assignColor(3, [0, 1])).toBe(3);
-      expect(assignColor(PROJECT_COLOR_COUNT, [])).toBe(0);
+      expect(projects).toHaveLength(2);
+      expect(projects).toEqual(
+        expect.arrayContaining([
+          { path: new Path(PROJECT_PATH).toString() },
+          { path: MANAGED_PATH, remoteUrl: REPO_URL, color: 3 },
+        ])
+      );
     });
   });
 
@@ -959,12 +693,11 @@ describe("LocalProjectModule Integration", () => {
       const { openHooks, gitClient } = createTestSetup();
 
       const { results, errors } = await openHooks.collect("prepare", {
-        intent: openGitIntent("https://github.com/user/repo.git"),
+        intent: openGitIntent(REPO_URL),
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
+      expect(results).toEqual([{}]);
       expect(gitClient.isRepositoryRoot).not.toHaveBeenCalled();
     });
 
@@ -977,24 +710,21 @@ describe("LocalProjectModule Integration", () => {
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
+      expect(results).toEqual([{}]);
       expect(dialogManager.manager.open).not.toHaveBeenCalled();
     });
 
     it("skips when project is already open", async () => {
       const setup = createTestSetup();
-
-      // Register project first so it's in internal state
-      await setup.openHooks.collect("register", registerInput());
+      await open(setup, PROJECT_PATH);
+      vi.mocked(setup.gitClient.isRepositoryRoot).mockClear();
 
       const { results, errors } = await setup.openHooks.collect("prepare", {
         intent: openLocalIntent(PROJECT_PATH),
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
+      expect(results).toEqual([{}]);
       expect(setup.gitClient.isRepositoryRoot).not.toHaveBeenCalled();
     });
 
@@ -1002,12 +732,10 @@ describe("LocalProjectModule Integration", () => {
       const { openHooks, dialogManager, gitClient } = createTestSetup();
       vi.mocked(gitClient.isRepositoryRoot).mockResolvedValue(false);
 
-      // Start the prepare hook (will block on dialog.nextEvent())
       const preparePromise = openHooks.collect("prepare", {
         intent: openLocalIntent(PROJECT_PATH),
       });
 
-      // Simulate user clicking "Initialize"
       await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull());
       dialogManager.lastHandle!.emitEvent({
         dialogId: dialogManager.lastHandle!.id,
@@ -1017,8 +745,7 @@ describe("LocalProjectModule Integration", () => {
       const { results, errors } = await preparePromise;
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
+      expect(results).toEqual([{}]);
       expect(gitClient.init).toHaveBeenCalledWith(new Path(PROJECT_PATH), {
         initialCommit: "Initial commit",
       });
@@ -1029,12 +756,10 @@ describe("LocalProjectModule Integration", () => {
       const { openHooks, dialogManager, gitClient } = createTestSetup();
       vi.mocked(gitClient.isRepositoryRoot).mockResolvedValue(false);
 
-      // Start the prepare hook (will block on dialog.nextEvent())
       const preparePromise = openHooks.collect("prepare", {
         intent: openLocalIntent(PROJECT_PATH),
       });
 
-      // Simulate user clicking "Cancel"
       await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull());
       dialogManager.lastHandle!.emitEvent({
         dialogId: dialogManager.lastHandle!.id,
@@ -1044,8 +769,7 @@ describe("LocalProjectModule Integration", () => {
       const { results, errors } = await preparePromise;
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({ canceled: true });
+      expect(results).toEqual([{ canceled: true }]);
       expect(gitClient.init).not.toHaveBeenCalled();
       expect(dialogManager.lastHandle!.closed).toBe(true);
     });
@@ -1054,20 +778,17 @@ describe("LocalProjectModule Integration", () => {
       const { openHooks, dialogManager, gitClient } = createTestSetup();
       vi.mocked(gitClient.isRepositoryRoot).mockResolvedValue(false);
 
-      // Start the prepare hook (will block on the dialog)
       const preparePromise = openHooks.collect("prepare", {
         intent: openLocalIntent(PROJECT_PATH),
       });
 
-      // Simulate the user pressing Escape
       await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull());
       dialogManager.lastHandle!.emitDismiss();
 
       const { results, errors } = await preparePromise;
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({ canceled: true });
+      expect(results).toEqual([{ canceled: true }]);
       expect(gitClient.init).not.toHaveBeenCalled();
       expect(dialogManager.lastHandle!.closed).toBe(true);
     });
@@ -1081,27 +802,8 @@ describe("LocalProjectModule Integration", () => {
       });
 
       expect(errors).toHaveLength(0);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({});
+      expect(results).toEqual([{}]);
       expect(dialogManager.manager.open).not.toHaveBeenCalled();
     });
-  });
-});
-
-describe("generateProjectId", () => {
-  it("names the id after the basename and hashes the normalized path", () => {
-    const id = generateProjectId("/home/user/My App/", "linux");
-
-    expect(id).toMatch(/^My-App-[0-9a-f]{8}$/);
-    expect(generateProjectId("/home/user//My App", "linux")).toBe(id);
-  });
-
-  it("case-folds on Windows only, whose paths are case-insensitive", () => {
-    expect(generateProjectId("/Users/Dev/App", "win32")).toBe(
-      generateProjectId("/users/dev/app", "win32")
-    );
-    expect(generateProjectId("/Users/Dev/App", "linux")).not.toBe(
-      generateProjectId("/users/dev/app", "linux")
-    );
   });
 });

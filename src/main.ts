@@ -167,6 +167,7 @@ import { createAutoUpdaterModule } from "./modules/auto-updater-module";
 import { DefaultStateService } from "./boundaries/platform/state-service";
 import { createWorkspacesRootModule } from "./modules/workspaces-root/module";
 import { createStateModule } from "./modules/state-module";
+import { createProjectStoreModule } from "./modules/project-store-module";
 import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
@@ -559,7 +560,7 @@ const presentationModule = createPresentationModule({
   configService,
   stateService,
   // Built further down; read only once a project is open.
-  projectColor: (projectRef) => localProjectModule.projectColor(projectRef),
+  projectColor: (projectRef) => projectStoreModule.projectColor(projectRef),
   onOpenSettings: () => openSettings(),
   onOpenHelp: () => openHelp(),
   onOpenNewWorkspace: (projectRef, deselecting) => {
@@ -858,15 +859,21 @@ const workspacesRootModule = createWorkspacesRootModule({
   logger: loggingService.createLogger("workspaces-root"),
 });
 const workspacesRoot = workspacesRootModule.root;
+const projectStoreModule = createProjectStoreModule({
+  projectsDir: pathProvider.dataPath("projects").toString(),
+  fs: fileSystemLayer,
+  platform,
+  logger: lifecycleLogger,
+});
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
   remotesDir: () => workspacesRoot.remotesDir().toString(),
   fs: fileSystemLayer,
+  store: projectStoreModule,
   gitWorktreeProvider,
   ui: presentationModule,
   dispatcher,
   gitClient,
-  platform,
   logger: lifecycleLogger,
 });
 const remoteProjectModule = createRemoteProjectModule({
@@ -1125,6 +1132,7 @@ dispatcher.registerModule(metadataModule);
 dispatcher.registerModule(deleteWindowsLockModule);
 dispatcher.registerModule(posixProcessCleanupModule);
 dispatcher.registerModule(remoteProjectModule);
+dispatcher.registerModule(projectStoreModule);
 dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);
 dispatcher.registerModule(windowTitleModule);

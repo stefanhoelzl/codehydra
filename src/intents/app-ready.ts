@@ -5,11 +5,12 @@
  * the presenter). This ensures the renderer's ui:state subscription is in
  * place before project:open dispatches fire.
  *
- * Runs one hook point:
- * 1. "load-projects" - Collect saved project paths from modules
+ * Runs these hook points:
+ * 1. "load-projects" - Collect the saved projects ({ type, config }) from the project store
+ * 2. "restore" - Per saved project: its type's module returns the project:open payload
  *
- * After collecting paths, dispatches project:open for each saved project
- * (best-effort, skips invalid projects). Once all dispatches complete,
+ * Then dispatches project:open with each payload (best-effort, skips invalid
+ * projects). Once all dispatches complete,
  * emits an `app:started` domain event so the renderer knows startup is done.
  *
  * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook/
@@ -22,11 +23,17 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
-import { agentInfoSchema, agentTypeSchema, projectPathSchema, hookCtxSchema } from "./contract";
-import type { AgentInfo, AgentType, ProjectPath } from "./contract";
+import {
+  INTENT_OPEN_PROJECT,
+  openProjectPayloadSchema,
+  projectTypeConfigSchema,
+  projectTypeSchema,
+  type OpenProjectIntent,
+} from "./open-project";
+import { agentInfoSchema, agentTypeSchema, hookCtxSchema } from "./contract";
+import type { AgentInfo, AgentType } from "./contract";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
-import { throwHookErrors } from "./lib/hook-helpers";
+import { onlyDefined, throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_APP_READY = "app:ready" as const;
 
@@ -62,13 +69,28 @@ export const appReadyResultSchema = z
   })
   .readonly();
 
+/** A saved project as the project store keeps it: its type and that type's opaque config. */
+const savedProjectShape = { type: projectTypeSchema, config: projectTypeConfigSchema };
+const savedProjectSchema = z.object(savedProjectShape).readonly();
+
 /**
  * Per-handler result for "load-projects" hook point.
- * Modules return paths to saved projects that should be opened on startup.
+ * The project store returns the saved projects that should be opened on startup.
  */
 export const loadProjectsResultSchema = z
   .object({
-    projectPaths: z.array(projectPathSchema).readonly().optional(),
+    projects: z.array(savedProjectSchema).readonly().optional(),
+  })
+  .readonly();
+
+/**
+ * Per-handler result for the "restore" hook point: how to reopen one saved
+ * project. Only the module owning the project's type answers; it returns the
+ * project:open payload that reopens it (for git, the project's path).
+ */
+export const restoreProjectResultSchema = z
+  .object({
+    payload: openProjectPayloadSchema.optional(),
   })
   .readonly();
 
@@ -88,6 +110,9 @@ export const appStartedPayloadSchema = z.object({}).readonly();
 /** Both hook points receive the bare intent — declared so the context type is derived. */
 const appReadyHookInputSchema = hookCtxSchema(appReadyPayloadSchema, {});
 
+/** The "restore" hook point receives one saved project. */
+const restoreProjectHookInputSchema = hookCtxSchema(appReadyPayloadSchema, savedProjectShape);
+
 /**
  * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
  * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
@@ -98,6 +123,7 @@ export const schemas = {
   result: appReadyResultSchema,
   hooks: {
     "load-projects": { input: appReadyHookInputSchema, result: loadProjectsResultSchema },
+    restore: { input: restoreProjectHookInputSchema, result: restoreProjectResultSchema },
     "available-agents": { input: appReadyHookInputSchema, result: availableAgentsResultSchema },
   },
   events: {
@@ -113,6 +139,10 @@ export type AppReadyPayload = z.infer<typeof appReadyPayloadSchema>;
 export type AppReadyResult = z.infer<typeof appReadyResultSchema>;
 export type AppReadyIntent = IntentOf<typeof schemas>;
 export type LoadProjectsResult = z.infer<typeof loadProjectsResultSchema>;
+export type SavedProject = z.infer<typeof savedProjectSchema>;
+export type RestoreProjectResult = z.infer<typeof restoreProjectResultSchema>;
+/** Input context for the "restore" hook point. */
+export type RestoreProjectHookInput = HookContext & SavedProject;
 export type AvailableAgentsResult = z.infer<typeof availableAgentsResultSchema>;
 
 // =============================================================================
@@ -145,22 +175,26 @@ export class AppReadyOperation implements Operation<typeof schemas> {
     const defaultAgentRaw = this.agentConfig.get();
     const defaultAgent: AgentType | null = agentTypeSchema.safeParse(defaultAgentRaw).data ?? null;
 
-    const projectPaths: ProjectPath[] = [];
+    const projects: SavedProject[] = [];
     for (const result of projectsResult.results) {
-      if (result.projectPaths) projectPaths.push(...result.projectPaths);
+      if (result.projects) projects.push(...result.projects);
     }
 
-    // Dispatch project:open for each saved project (best-effort, in parallel).
+    // Reopen each saved project (best-effort, in parallel): its type's module
+    // turns it into a project:open payload, which is dispatched like any open.
     // Each project:open dispatches workspace:create + workspace:switch internally.
     // allSettled keeps best-effort semantics: invalid projects (no longer exist,
-    // not git repos, etc.) are silently dropped without aborting the rest.
+    // not git repos, a type no module answers for, etc.) are dropped without
+    // aborting the rest.
     await Promise.allSettled(
-      projectPaths.map((projectPath) =>
-        ctx.dispatch<OpenProjectIntent>({
-          type: INTENT_OPEN_PROJECT,
-          payload: { path: projectPath },
-        })
-      )
+      projects.map(async (project) => {
+        const restoreCtx: RestoreProjectHookInput = { intent: ctx.intent, ...project };
+        const { results, errors } = await ctx.hooks.collect("restore", restoreCtx);
+        throwHookErrors(errors, "app:ready restore hooks failed");
+        const payload = onlyDefined(results, "payload", "app:ready restore");
+        if (payload === undefined) return;
+        await ctx.dispatch<OpenProjectIntent>({ type: INTENT_OPEN_PROJECT, payload });
+      })
     );
 
     // Signal that initial project:open dispatches are complete.
