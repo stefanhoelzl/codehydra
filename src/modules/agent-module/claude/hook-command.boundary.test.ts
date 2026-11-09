@@ -1,7 +1,9 @@
 // @vitest-environment node
 /**
- * Boundary test for the hook registration CodeHydra writes into Claude's
- * settings file.
+ * Boundary test for the command hook registration CodeHydra writes into
+ * Claude's settings file — SessionStart's, the one hook that still runs the
+ * handler as a process (every other hook is an HTTP hook; see
+ * `buildSettingsFile`).
  *
  * Claude runs a hook with `args` in *exec form*: it spawns `command` directly
  * with that argument vector and no shell. So this spawns it the same way —
@@ -62,8 +64,15 @@ function runExecForm(
 function registrationFor(hookName: string) {
   // process.execPath is this machine's real node — absolute, and on Windows a
   // native path with backslashes, which is the shape production passes.
-  const settings = buildSettingsFile(handlerPath, process.execPath);
-  return settings.hooks[hookName]![0]!.hooks[0]!;
+  const settings = buildSettingsFile({
+    handlerPath,
+    interpreter: process.execPath,
+    port: 1,
+    workspaceRef: "ch::local::/repo::main",
+  });
+  const hook = settings.hooks[hookName]![0]!.hooks[0]!;
+  if (hook.type !== "command") throw new Error(`${hookName} is not registered as a command`);
+  return hook;
 }
 
 describe("generated hook registration (boundary)", () => {
@@ -76,20 +85,12 @@ describe("generated hook registration (boundary)", () => {
     expect(stdout).toBe("ARGV:SessionStart");
   });
 
-  it("passes each hook name through as the handler's argument", async () => {
-    for (const hook of ["PreToolUse", "Stop", "UserPromptSubmit"]) {
-      const { command, args } = registrationFor(hook);
-      const { stdout } = await runExecForm(command, args);
-      expect(stdout).toBe(`ARGV:${hook}`);
-    }
-  });
-
   it("keeps the handler path and hook name as separate argv entries", () => {
-    const { command, args } = registrationFor("Stop");
+    const { command, args } = registrationFor("SessionStart");
 
     // The shape that makes the above work: nothing is concatenated into a
     // string a shell would have to take apart again.
     expect(command).toBe(process.execPath);
-    expect(args).toEqual([handlerPath, "Stop"]);
+    expect(args).toEqual([handlerPath, "SessionStart"]);
   });
 });

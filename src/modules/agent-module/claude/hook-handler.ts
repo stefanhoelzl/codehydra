@@ -2,6 +2,11 @@
 /**
  * Claude Code Hook Handler - Platform-independent script for processing Claude Code hooks.
  *
+ * Registered for SessionStart only: every other hook is an HTTP hook Claude
+ * POSTs to the bridge itself (`buildSettingsFile`). Claude sends no HTTP hook
+ * for SessionStart, and only a child process sees the session's inbox
+ * variables below. Kept generic over the hook name all the same.
+ *
  * This script is invoked by Claude Code hooks. It:
  * 1. Reads the hook payload from stdin (JSON)
  * 2. Adds the workspace ref from the environment

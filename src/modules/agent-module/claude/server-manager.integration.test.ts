@@ -435,6 +435,32 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChangesB).toEqual(["busy"]);
     });
 
+    it("routes an HTTP hook by its X-CH-Workspace header", async () => {
+      const a = testPath("/workspace/feature-a").toNative();
+      const b = testPath("/workspace/feature-b").toNative();
+      const port = await serverManager.startServer(refOf(a));
+      await serverManager.startServer(refOf(b));
+
+      const statusChangesA = captureStatus(refOf(a));
+      const statusChangesB = captureStatus(refOf(b));
+
+      // What Claude sends for an HTTP hook: its own payload, no ref in the
+      // body, the ref the settings file wrote in a header.
+      const res = await fetch(`http://127.0.0.1:${port}/hook/UserPromptSubmit`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CH-Workspace": refOf(b),
+          Connection: "close",
+        },
+        body: JSON.stringify({ session_id: "s1", hook_event_name: "UserPromptSubmit" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(statusChangesA).toEqual([]);
+      expect(statusChangesB).toEqual(["busy"]);
+    });
+
     it.each([
       {
         hookName: "WrapperStart",
@@ -1028,6 +1054,28 @@ describe("ClaudeCodeServerManager integration", () => {
       );
       expect(Object.keys(settings.hooks)).not.toContain("WrapperStart");
       expect(Object.keys(settings.hooks)).not.toContain("WrapperEnd");
+    });
+
+    it("registers SessionStart as a command and every other hook as an HTTP hook", async () => {
+      const port = await serverManager.startServer(FEATURE_A);
+
+      const settings = readGeneratedConfig("codehydra-hooks.json") as {
+        hooks: Record<
+          string,
+          { hooks: { type: string; url?: string; headers?: Record<string, string> }[] }[]
+        >;
+      };
+
+      expect(settings.hooks.SessionStart![0]!.hooks[0]!.type).toBe("command");
+      for (const [name] of registeredHooks().filter(([name]) => name !== "SessionStart")) {
+        // Claude POSTs to the bridge itself: no process per hook, and the
+        // workspace travels in a header since Claude's payload has no ref.
+        expect(settings.hooks[name]![0]!.hooks[0]).toEqual({
+          type: "http",
+          url: `http://127.0.0.1:${port}/hook/${name}`,
+          headers: { "X-CH-Workspace": FEATURE_A },
+        });
+      }
     });
 
     it("keeps a spaced handler path as one argument, unquoted", async () => {

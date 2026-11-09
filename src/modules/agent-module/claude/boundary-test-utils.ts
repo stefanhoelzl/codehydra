@@ -5,7 +5,8 @@
  *
  *     claude -p (a stream-json session on stdin)
  *       -> the settings file `buildSettingsFile()` really writes
- *         -> dist/bin/claude-code-hook-handler.cjs (the shipped handler)
+ *         -> Claude's own HTTP hooks, and for SessionStart
+ *            dist/bin/claude-code-hook-handler.cjs (the shipped handler)
  *           -> a recording tap
  *             -> a real ClaudeCodeServerManager bridge
  *               -> AgentActivity
@@ -51,7 +52,7 @@ import { DefaultPathProvider } from "../../../boundaries/platform/path-provider"
 import { NodePlatformInfo } from "../../../boundaries/platform/node-platform-info";
 import { createMockBuildInfo } from "../../../boundaries/platform/build-info.test-utils";
 import { createTempDir, createTestGitRepo } from "../../../utils/testing/test-utils";
-import { ClaudeCodeServerManager } from "./server-manager";
+import { ClaudeCodeServerManager, WORKSPACE_HEADER } from "./server-manager";
 import { quoteForCmd } from "../cmd-quote";
 import { workspaceRefSchema } from "../../../intents/contract";
 import { isValidHookName, type ClaudeCodeHookName } from "./types";
@@ -706,6 +707,18 @@ async function runScenarioInner(
     process.env._CHDEV_ROOT_DIR = previousRoot;
   }
 
+  // Track the status the bridge reports, so the tap can sample it either side
+  // of each hook. The tap starts first: the settings file names its port.
+  let status: AgentActivity = "none";
+  const bridge: { port?: number } = {};
+  const records: HookRecord[] = [];
+  const tap = await startRecordingTap(
+    () => bridge.port,
+    records,
+    () => status
+  );
+  disposables.cleanups.push(() => tap.close());
+
   const network = new DefaultNetworkLayer(SILENT_LOGGER);
   const manager = new ClaudeCodeServerManager({
     portManager: network,
@@ -713,24 +726,17 @@ async function runScenarioInner(
     pathProvider,
     fileSystem: new DefaultFileSystemBoundary(SILENT_LOGGER),
     logger: SILENT_LOGGER,
-    config: { hookHandlerPath: HOOK_HANDLER_PATH },
+    config: { hookHandlerPath: HOOK_HANDLER_PATH, hookPort: tap.port },
   });
   disposables.cleanups.push(() => manager.dispose());
 
   // Registers the workspace AND writes the real settings file Claude is given.
-  const bridgePort = await manager.startServer(BOUNDARY_WORKSPACE_REF);
+  bridge.port = await manager.startServer(BOUNDARY_WORKSPACE_REF);
   const settingsPath = manager.getHooksConfigPath(BOUNDARY_WORKSPACE_REF).toNative();
 
-  // Track the status the bridge reports, so the tap can sample it either side
-  // of each hook.
-  let status: AgentActivity = "none";
   manager.onStatusChange(BOUNDARY_WORKSPACE_REF, (next) => {
     status = next;
   });
-
-  const records: HookRecord[] = [];
-  const tap = await startRecordingTap(bridgePort, records, () => status);
-  disposables.cleanups.push(() => tap.close());
 
   const mode = options.mode ?? "headless";
   if (mode === "tui" && options.thenEndSession === true) {
@@ -801,7 +807,7 @@ interface AgentHandle {
  * bridge handles a hook synchronously, before it responds.
  */
 async function startRecordingTap(
-  bridgePort: number,
+  bridgePort: () => number | undefined,
   records: HookRecord[],
   readStatus: () => AgentActivity
 ): Promise<{ readonly port: number; close: () => Promise<void> }> {
@@ -813,11 +819,16 @@ async function startRecordingTap(
         const hook = /^\/hook\/([^/]+)$/.exec(req.url ?? "")?.[1];
         const toolName = readToolName(body);
         const before = readStatus();
+        // An HTTP hook names its workspace in this header; pass it on.
+        const workspace = req.headers[WORKSPACE_HEADER.toLowerCase()];
         let upstream: Response | undefined;
         try {
-          upstream = await fetch(`http://127.0.0.1:${bridgePort}${req.url ?? "/"}`, {
+          upstream = await fetch(`http://127.0.0.1:${bridgePort()}${req.url ?? "/"}`, {
             method: req.method ?? "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...(typeof workspace === "string" && { [WORKSPACE_HEADER]: workspace }),
+            },
             body,
           });
         } catch {
@@ -949,8 +960,9 @@ function agentEnv(options: SpawnAgentOptions): Record<string, string | undefined
   return {
     ...inherited,
     PATH: [...options.pathPrefix, process.env.PATH ?? ""].join(delimiter),
-    // Read by the shipped hook handler; the two together are what make it
-    // POST anything at all.
+    // Read by the shipped hook handler (SessionStart; the other hooks are
+    // HTTP hooks addressed in the settings file); the two together are what
+    // make it POST anything at all.
     _CH_BRIDGE_PORT: String(options.bridgePort),
     _CH_WORKSPACE: BOUNDARY_WORKSPACE_REF,
     ANTHROPIC_BASE_URL: options.mockUrl,

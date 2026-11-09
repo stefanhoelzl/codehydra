@@ -349,7 +349,9 @@ the shipped chain into a real `ClaudeCodeServerManager`.
   passes silently, as it should.
 - **Additive.** Nothing synthetic was retired. A synthetic failure says _our logic_ broke; a
   failure here says _Claude_ changed, and you want to be told which.
-- **Requires a real `claude` on PATH and `pnpm build:wrappers`** (the shipped hook handler).
+- **Requires a real `claude` on PATH and `pnpm build:wrappers`** (the shipped hook handler,
+  which SessionStart still runs; the other hooks are HTTP hooks the settings file points at
+  the tap through `hookPort`).
   Both throw rather than skipping, so the coverage cannot be lost by accident. CI installs
   the CLI, unpinned, in the `Build & test` jobs (build.yaml) and the `canary` job.
 - One `describe` per scenario, one `claude` per `describe`, ~8s for the file. A recording tap

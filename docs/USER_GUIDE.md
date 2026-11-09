@@ -1524,6 +1524,12 @@ Shift+Tab, not switched on), and `--disallowedTools=Artifact` (see
 [Pages and browsers](#pages-and-browsers)). It resumes the workspace's last conversation
 (`--continue`) unless the workspace is new.
 
+Claude Code 2.1.63 or newer is needed: its status hooks are HTTP hooks that
+report straight to CodeHydra, which older versions do not have. With an older
+system install, the workspace's status does not follow the agent. If a status
+report cannot reach CodeHydra, Claude Code shows a "hook error" line; it does
+no harm.
+
 ### OpenCode
 
 CodeHydra runs one `opencode serve` per workspace, with the `opencode` chosen

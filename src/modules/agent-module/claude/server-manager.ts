@@ -6,8 +6,10 @@
  * and routes them to the correct workspace based on the workspaceRef in the payload.
  *
  * The HTTP server:
- * - Listens for POST /hook/:hookName requests from hook-handler.js
- * - Routes status updates to the correct workspace based on workspaceRef in body
+ * - Listens for POST /hook/:hookName requests: Claude's own HTTP hooks, and
+ *   SessionStart's command hook (hook-handler.js)
+ * - Routes status updates to the correct workspace: the `X-CH-Workspace` header
+ *   of an HTTP hook, or the `workspaceRef` the hook handler adds to the body
  * - Updates workspace status according to HOOK_STATUS_MAP
  */
 
@@ -73,10 +75,54 @@ interface ClaudeHookCommand {
   readonly args: readonly string[];
 }
 
+/**
+ * One hook registration as an *HTTP hook*: Claude POSTs the hook's payload to
+ * `url` itself, so no process is spawned. The headers are static strings — no
+ * `$VAR` in them, so nothing is interpolated from Claude's environment.
+ */
+interface ClaudeHookHttp {
+  readonly type: "http";
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
+}
+
 /** One registration under a hook name, optionally scoped by matcher. */
 interface ClaudeHookMatcher {
   readonly matcher?: string;
-  readonly hooks: readonly ClaudeHookCommand[];
+  readonly hooks: readonly (ClaudeHookCommand | ClaudeHookHttp)[];
+}
+
+/**
+ * The header an HTTP hook names its workspace by. The bridge serves every
+ * workspace and Claude's payload carries no ref, so the settings file — one per
+ * workspace — writes it here.
+ */
+export const WORKSPACE_HEADER = "X-CH-Workspace";
+
+/**
+ * The hooks still registered as a command (the hook handler under node) rather
+ * than as an HTTP hook.
+ *
+ * Only SessionStart, and not by choice: Claude drops HTTP hooks for
+ * SessionStart ("HTTP hooks are not supported for SessionStart"). It is also the
+ * one hook that needs a process — the session's inbox
+ * (`CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`) is exported only to Claude's
+ * children, and Claude never interpolates a credential into an HTTP header. It
+ * fires once per session, so its node start costs nothing that matters; the
+ * hooks that fire on every tool call spawn nothing.
+ */
+const COMMAND_HOOKS: ReadonlySet<ClaudeCodeHookName> = new Set(["SessionStart"]);
+
+/** What the generated settings file points Claude's hooks at. */
+export interface HookTargets {
+  /** The hook handler script, run by {@link HookTargets.interpreter} for the command hooks. */
+  readonly handlerPath: string;
+  /** The interpreter the command hooks run under. */
+  readonly interpreter: string;
+  /** The port the HTTP hooks POST to. */
+  readonly port: number;
+  /** The workspace the hooks report for. */
+  readonly workspaceRef: string;
 }
 
 /**
@@ -106,7 +152,11 @@ export interface ClaudeMcpConfigFile {
 /**
  * Build Claude's settings file: one registration per hook we want sent.
  *
- * Exec form, so a path is never handed to a shell to re-split. An install
+ * Every hook but those in {@link COMMAND_HOOKS} is an HTTP hook: Claude POSTs
+ * to the bridge directly, where a command hook started a node process per hook
+ * — two for every tool call. Claude Code supports HTTP hooks since 2.1.63.
+ *
+ * The command hooks use exec form, so a path is never handed to a shell to re-split. An install
  * directory containing a space (`C:\Users\Jane Doe\...`, `/home/jane doe/...`)
  * used to break every hook silently; as an argv element it needs no quoting at
  * all.
@@ -118,16 +168,20 @@ export interface ClaudeMcpConfigFile {
  * the real values makes escaping structural instead of something each value has
  * to be safe for.
  */
-export function buildSettingsFile(
-  hookHandlerPath: string,
-  interpreter: string
-): ClaudeSettingsFile {
+export function buildSettingsFile(targets: HookTargets): ClaudeSettingsFile {
   const hooks: Record<string, ClaudeHookMatcher[]> = {};
   for (const [name, register] of registeredHooks()) {
+    const hook: ClaudeHookCommand | ClaudeHookHttp = COMMAND_HOOKS.has(name)
+      ? { type: "command", command: targets.interpreter, args: [targets.handlerPath, name] }
+      : {
+          type: "http",
+          url: `http://127.0.0.1:${targets.port}/hook/${name}`,
+          headers: { [WORKSPACE_HEADER]: targets.workspaceRef },
+        };
     hooks[name] = [
       {
         ...(register.matcher !== undefined && { matcher: register.matcher }),
-        hooks: [{ type: "command", command: interpreter, args: [hookHandlerPath, name] }],
+        hooks: [hook],
       },
     ];
   }
@@ -256,6 +310,11 @@ export type ServerStoppedCallback = (workspaceRef: WorkspaceRef, isRestart: bool
 export interface ClaudeCodeServerManagerConfig {
   /** Path to the hook-handler.js script */
   readonly hookHandlerPath?: string;
+  /**
+   * The port the generated HTTP hooks POST to, when it is not the bridge's own.
+   * The boundary tests put a recording proxy in front of the bridge.
+   */
+  readonly hookPort?: number;
 }
 
 /**
@@ -299,6 +358,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   private readonly fileSystem: FileSystemBoundary;
   private readonly logger: Logger;
   private readonly hookHandlerPath: string;
+  private readonly hookPort: number | undefined;
 
   /** Single HTTP server for all workspaces */
   private httpServer: Server | null = null;
@@ -334,6 +394,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.hookHandlerPath =
       deps.config?.hookHandlerPath ??
       this.pathProvider.runtimePath("bin/claude-code-hook-handler.cjs").toNative();
+    this.hookPort = deps.config?.hookPort;
   }
 
   /**
@@ -832,7 +893,12 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     req.on("end", () => {
       try {
-        const payload = JSON.parse(body) as ClaudeCodeBridgePayload;
+        const parsed = JSON.parse(body) as ClaudeCodeBridgePayload;
+        // An HTTP hook names its workspace in a header; the hook handler
+        // (SessionStart) puts it in the body.
+        const headerRef = req.headers[WORKSPACE_HEADER.toLowerCase()];
+        const payload =
+          typeof headerRef === "string" ? { ...parsed, workspaceRef: headerRef } : parsed;
         this.handleHook(hookName, payload);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: true }));
@@ -877,8 +943,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     const { session_id } = payload;
 
-    // A hook names its workspace by ref (`_CH_WORKSPACE`, added by the hook
-    // handler). A ref that is not tracked here is not routed anywhere.
+    // A hook names its workspace by ref (the `X-CH-Workspace` header of an HTTP
+    // hook, or `_CH_WORKSPACE` added by the hook handler). A ref that is not
+    // tracked here is not routed anywhere.
     const workspaceRef = payload.workspaceRef as WorkspaceRef | undefined;
     const state = workspaceRef !== undefined ? this.workspaces.get(workspaceRef) : undefined;
     if (workspaceRef === undefined || state === undefined) {
@@ -1067,9 +1134,19 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     await this.fileSystem.mkdir(workspaceConfigDir);
 
     // Generate the two files Claude is launched with.
+    // Called after the bridge is up, so its port is known.
+    const port = this.hookPort ?? this.port;
+    if (port === null) {
+      throw new Error("Hook settings generated before the bridge server started");
+    }
     await this.writeJsonFile(
       new Path(workspaceConfigDir, "codehydra-hooks.json"),
-      buildSettingsFile(this.hookHandlerPath, hookInterpreter(this.mcpConfig ?? null, this.logger))
+      buildSettingsFile({
+        handlerPath: this.hookHandlerPath,
+        interpreter: hookInterpreter(this.mcpConfig ?? null, this.logger),
+        port,
+        workspaceRef,
+      })
     );
     await this.writeJsonFile(
       new Path(workspaceConfigDir, "codehydra-mcp.json"),

@@ -131,7 +131,7 @@ src/modules/agent-module/
     provider.ts             # ClaudeCodeProvider (env vars + hook subscription)
     module-provider.ts      # createClaudeModuleProvider (spec definition)
     hook-status.ts          # deriveStatus: the hook → status rules, as a pure reducer
-    hook-handler.ts         # Hook POST script run by the Claude CLI
+    hook-handler.ts         # SessionStart's hook POST script, run by the Claude CLI
     wrapper.ts              # CLI wrapper (session resume, initial prompt)
 ```
 
@@ -399,7 +399,7 @@ The same env var carries the system prompt (`instructions`) and the update polic
 
 ### Claude Code MCP Configuration
 
-The server manager generates per-workspace config files (`codehydra-hooks.json`, `codehydra-mcp.json`) from JSON templates with `${VARIABLE}` substitution, stored under `<temp>/claude/configs/<workspace-name>-<ref-hash>/`. The provider exposes their paths via environment variables (`_CH_CLAUDE_SETTINGS`, `_CH_CLAUDE_MCP_CONFIG`).
+The server manager generates per-workspace config files (`codehydra-hooks.json`, `codehydra-mcp.json`) as objects serialized with `JSON.stringify` (`buildSettingsFile`, `buildMcpConfigFile`), stored under `<temp>/claude/configs/<workspace-name>-<ref-hash>/`. The provider exposes their paths via environment variables (`_CH_CLAUDE_SETTINGS`, `_CH_CLAUDE_MCP_CONFIG`).
 
 ### CodeHydra System Prompt
 
@@ -521,13 +521,16 @@ Claude Code uses a shared HTTP server with a hook-based integration model.
 
 ### Architecture
 
-Unlike OpenCode (one server per workspace), Claude Code uses a single HTTP bridge server that handles hook notifications for all workspaces. The workspace is identified by the `workspaceRef` field in the hook payload (the hook handler adds it from `_CH_WORKSPACE`), which is the key the server manager tracks the workspace by.
+Unlike OpenCode (one server per workspace), Claude Code uses a single HTTP bridge server that handles hook notifications for all workspaces. The workspace is identified by its ref, which is the key the server manager tracks the workspace by.
+
+Every registered hook but `SessionStart` is a Claude **HTTP hook** (`type: "http"`, Claude Code 2.1.63+): Claude POSTs its payload to the bridge itself, so no process is spawned per hook, and the ref travels in the `X-CH-Workspace` header the per-workspace settings file writes (`buildSettingsFile`, with the bridge's port in the URL). `SessionStart` stays a command hook — `hook-handler.cjs` under the bundled node — because Claude sends no HTTP hook for it, and because only a child process sees the session's inbox (`CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`, forwarded as `_ch_messaging`); the handler adds the ref from `_CH_WORKSPACE` to the body. The bridge takes the header when present, else the body's `workspaceRef`. While the bridge is down, Claude shows an HTTP hook's failure as a hook error.
 
 ```
 POST /hook/<HookName>
 Content-Type: application/json
+X-CH-Workspace: ch::local::/path/to/project::feature-x      (HTTP hooks)
 
-{ "workspaceRef": "ch::local::/path/to/project::feature-x", "session_id": "..." }
+{ "session_id": "...", ... }   (+ "workspaceRef", "_ch_messaging" from the SessionStart handler)
 ```
 
 ### Status Derivation
