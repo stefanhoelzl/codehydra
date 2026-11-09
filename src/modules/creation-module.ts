@@ -223,6 +223,12 @@ export interface CreationModule extends IntentModule {
    * handler cannot undo it. Unknown refs are ignored.
    */
   presetProject(projectRef: ProjectRef, deselecting: boolean): void;
+  /**
+   * Whether the form holds input the user typed or picked since the last
+   * reset (Reset, Escape, or a submitted Create). While it does and the form
+   * is on screen, nothing but the user moves the view off it.
+   */
+  isEdited(): boolean;
 }
 
 export function createCreationModule(deps: CreationModuleDeps): CreationModule {
@@ -1302,5 +1308,6 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     name: "creation",
     events,
     presetProject,
+    isEdited: () => form.dirty,
   };
 }

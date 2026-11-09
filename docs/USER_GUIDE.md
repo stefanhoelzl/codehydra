@@ -319,6 +319,13 @@ until the workspace is ready; you can select it meanwhile (its panel says
 **Loading workspace...**), and you land on it when it is done, unless you moved
 away in the meantime: then you stay where you went.
 
+While the form holds anything you typed or picked, nothing but you takes you off
+it: a workspace an agent or automation creates or wakes in the background does
+not land on its own, and an agent's `ch ws switch` does not happen (it reports
+`switched: false`). Clicking a row, shortcut mode and clicking a desktop
+notification still switch. Once the form is empty again (**Reset**,
+<kbd>Escape</kbd> or **Create**), background workspaces land as before.
+
 Every new workspace gets a blue **new** tag until you first switch to it, so
 one you left while it was being created — or one an agent or automation made —
 is easy to spot. Turn this off with `auto-tag.new`.
@@ -1683,7 +1690,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `ws delete`                                                        | Delete the workspace (`--keep-branch`, `--ignore-warnings`, `--no-wait`)                                         |
 | `ws hibernate`, `ws wake`                                          | Hibernate (`--wakeup <script>`, `--shell`, `--env`) / wake                                                       |
 | `ws wakeup set <script>\|clear\|show`                              | The [wakeup script](#wakeup-scripts) (`--shell`, `--env KEY=VALUE`; `-` reads stdin)                             |
-| `ws switch <workspace>`                                            | Make a workspace the active one                                                                                  |
+| `ws switch <workspace>`                                            | Make a workspace the active one (`switched: false` while the New workspace form has input)                       |
 | `ws title [title]`                                                 | Sidebar title; with no title, clears it and the row shows the branch again                                       |
 | `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                       |
 | `ws metadata get`, `ws metadata set <key> <value>`                 | Raw workspace metadata                                                                                           |

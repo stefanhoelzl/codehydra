@@ -287,13 +287,18 @@ export class IntentHandle<T> implements PromiseLike<T> {
   signalAccepted(value: boolean): void;
 }
 
+/** What an interceptor knows about the dispatch it runs in, besides the intent. */
+export interface InterceptContext {
+  readonly origin: DispatchOrigin | undefined; // own or inherited; see Log scope → Origin
+}
+
 /**
  * Pre-operation policy that can modify or cancel an intent.
  * Returning null from before() cancels the intent.
  */
 export interface IntentInterceptor {
   readonly id: string;
-  before(intent: Intent): Promise<Intent | null>;
+  before(intent: Intent, context: InterceptContext): Promise<Intent | null>;
 }
 
 /**
@@ -317,7 +322,7 @@ Every line any logger writes while a dispatch runs carries that dispatch's **log
 
 - **Trace.** One short hex id per dispatch. A nested dispatch gets its own; its `dispatch` line names the parent's (`parent=`) next to `causation=`, so the tree can be walked from the log.
 - **Target.** Set by `ctx.setLogTarget` at the resolve step, on the dispatch and on the one that requested it; a target with a path also names that path in the logging store's index, which is how `logger.scoped({ path })` lines anywhere — in a dispatch or not — show the workspace by name. The first target a dispatch names wins (an inherited one is replaced once; a project-only one may still gain its workspace), so a switch A→B shows B only in the switch it dispatches. Lines before resolution carry none — the `completed` line does.
-- **Origin.** `DispatchOptions` (`origin`, `caller`, `api`) are given by the entry point: `dispatch(intent, { origin })`, or `withOrigin(options, fn)` where the dispatches are spread over code the entry point does not own — the presenter's `ui:event` intake (`ui`), the plugin server's per-connection socket middleware (`cli`/`mcp`/`sidekick` + `caller` + `api`), an auto-workspace poll cycle. Nested dispatches inherit them; `caller` and `api` are logged on the dispatch line where they enter the tree.
+- **Origin.** `DispatchOptions` (`origin`, `caller`, `api`) are given by the entry point: `dispatch(intent, { origin })`, or `withOrigin(options, fn)` where the dispatches are spread over code the entry point does not own — the presenter's `ui:event` intake (`ui`), the plugin server's per-connection socket middleware (`cli`/`mcp`/`sidekick` + `caller` + `api`), an auto-workspace poll cycle. Nested dispatches inherit them; `caller` and `api` are logged on the dispatch line where they enter the tree. The origin is also policy, not only logging: interceptors receive it (`InterceptContext`), and the presenter's `keep-edited-creation-form` lets a `workspace:switch` leave an edited New workspace form only from `ui`, `shortcut` or `notification`. An entry point acting on a user's behalf must therefore name its origin; one that names none counts as not the user.
 
 The scope follows every callback created inside a dispatch — including long-lived ones (a server's output, a timer), by design. Rendering is the logger's: see ARCHITECTURE.md (Logging System).
 

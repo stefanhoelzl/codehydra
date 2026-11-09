@@ -242,6 +242,40 @@ describe("Dispatcher", () => {
     expect(order).toEqual(["first", "second"]);
   });
 
+  it("hands interceptors the dispatch's origin: own, inherited, from withOrigin, or none", async () => {
+    const dispatcher = createDispatcher();
+    dispatcher.registerOperation(
+      defineOp("test:parent", {
+        id: "parent-op",
+        execute: async (ctx) => ctx.dispatch({ type: "test:child", payload: {} }),
+      })
+    );
+    dispatcher.registerOperation(
+      defineOp("test:child", { id: "child-op", execute: async () => undefined })
+    );
+    const seen: [string, string | undefined][] = [];
+    dispatcher.addInterceptor({
+      id: "record-origin",
+      async before(intent, { origin }) {
+        seen.push([intent.type, origin]);
+        return intent;
+      },
+    });
+
+    await dispatcher.dispatch({ type: "test:child", payload: {} });
+    await dispatcher.dispatch({ type: "test:parent", payload: {} }, { origin: "notification" });
+    await dispatcher.withOrigin({ origin: "mcp" }, () =>
+      dispatcher.dispatch({ type: "test:child", payload: {} })
+    );
+
+    expect(seen).toEqual([
+      ["test:child", undefined],
+      ["test:parent", "notification"],
+      ["test:child", "notification"],
+      ["test:child", "mcp"],
+    ]);
+  });
+
   it("events emitted after execution", async () => {
     const dispatcher = createDispatcher();
 

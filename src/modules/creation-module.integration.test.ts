@@ -1325,6 +1325,21 @@ describe("CreationModule", () => {
       expect(currentPanel(s)).toBe(panel);
     });
 
+    it("is edited from the first input until a reset", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      // Seeding the project is not input.
+      const panel = await s.start();
+      expect(s.module.isEdited()).toBe(false);
+
+      panel.emitChange("name", { name: "half-typed" });
+      await flush();
+      expect(s.module.isEdited()).toBe(true);
+
+      panel.emitAction("reset", {});
+      await flush();
+      expect(s.module.isEdited()).toBe(false);
+    });
+
     it("clears every field on reset", async () => {
       const s = setup({ defaultBaseBranch: "main" });
       const panel = await filledPanel(s);

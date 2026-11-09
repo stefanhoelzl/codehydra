@@ -519,12 +519,14 @@ const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}
 // .dialog()/.notification() for any module to inject. Constructed early so the
 // consumer modules below can take it as `ui`.
 // Forwards the sidebar gear's open-settings ui event to the settings module,
-// and the question mark's open-help to the help module. Assigned once those
+// and the question mark's open-help to the help module, and asks the creation
+// module whether the New workspace form holds input. Assigned once those
 // modules are constructed below (they need the presenter for their dialogs),
 // so the presenter closes over mutable refs.
 let openSettings: () => void = () => {};
 let openHelp: () => void = () => {};
 let presetNewWorkspaceProject: (projectRef: ProjectRef, deselecting: boolean) => void = () => {};
+let creationFormEdited: () => boolean = () => false;
 // Scans the workspaces' processes: for the sidebar's process summary (the
 // presenter turns its polling on and off), for `workspace.processes`, and for
 // what hibernate and delete stop (the cleanup modules' release sweep). The IDE
@@ -566,6 +568,7 @@ const presentationModule = createPresentationModule({
   onOpenNewWorkspace: (projectRef, deselecting) => {
     if (projectRef !== null) presetNewWorkspaceProject(projectRef, deselecting);
   },
+  creationFormEdited: () => creationFormEdited(),
 });
 const settingsModule = createSettingsModule({
   ui: presentationModule,
@@ -1126,6 +1129,7 @@ dispatcher.registerModule(powerModule);
 dispatcher.registerModule(frameWatchdogModule);
 dispatcher.registerModule(deletionDialogModule);
 presetNewWorkspaceProject = creationModule.presetProject;
+creationFormEdited = creationModule.isEdited;
 dispatcher.registerModule(creationModule);
 dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
