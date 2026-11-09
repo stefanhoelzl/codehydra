@@ -35,6 +35,8 @@
  *     the runtime-only teardown that project:close dispatches); clear active
  * - hibernate-workspace → shutdown: claim the workspace ("hibernate"); clear
  *     active
+ * - app-shutdown → drain: wait (bounded) until no "delete" claim is left, so
+ *     quitting does not cut a confirmed deletion off half done
  *
  * Events:
  * - workspace:switched → track the active workspace
@@ -89,7 +91,9 @@ import {
   EVENT_WORKSPACE_HIBERNATE_FAILED,
   type HibernateShutdownHookResult,
 } from "../intents/hibernate-workspace";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { defineEvents, defineHooks } from "../intents/declarations";
+import type { Logger } from "../boundaries/platform/logging-types";
 
 /**
  * Capability the delete/hibernate "shutdown" claim provides. Teardown that must
@@ -101,10 +105,28 @@ export const WORKSPACE_CLAIMED_CAPABILITY = "workspace-claimed";
 // Module Factory
 // =============================================================================
 
+/**
+ * How long app:shutdown waits for confirmed deletions to finish. Long enough for
+ * the release sweep's worst case (SIGTERM, 5s, SIGKILL, 5s) plus the worktree
+ * removal; short enough that a hung deletion cannot keep a closed app alive.
+ */
+const DRAIN_TIMEOUT_MS = 30_000;
+
+export interface WorkspaceLifecycleModuleDeps {
+  readonly logger: Logger;
+  /** Overrides DRAIN_TIMEOUT_MS (tests). */
+  readonly drainTimeoutMs?: number;
+}
+
 /** Create the workspace lifecycle module. */
-export function createWorkspaceLifecycleModule(): IntentModule {
+export function createWorkspaceLifecycleModule(deps: WorkspaceLifecycleModuleDeps): IntentModule {
+  const drainTimeoutMs = deps.drainTimeoutMs ?? DRAIN_TIMEOUT_MS;
+
   /** workspace ref → the teardown that owns it. */
   const closingWorkspaces = new Map<WorkspaceRef, WorkspaceClosing>();
+
+  /** Notified whenever a claim is released (app:shutdown "drain" waits on these). */
+  const releaseListeners = new Set<() => void>();
 
   /**
    * The actual active surface, fed by the switch pipeline. Intentionally
@@ -131,10 +153,37 @@ export function createWorkspaceLifecycleModule(): IntentModule {
 
   function release(workspaceRef: WorkspaceRef): void {
     closingWorkspaces.delete(workspaceRef);
+    for (const listener of releaseListeners) listener();
   }
 
   function closingReasonFor(workspaceRef: WorkspaceRef): WorkspaceClosing | null {
     return closingWorkspaces.get(workspaceRef) ?? null;
+  }
+
+  /** Workspaces whose worktree removal is running. */
+  function deletionsInFlight(): WorkspaceRef[] {
+    return [...closingWorkspaces].filter(([, reason]) => reason === "delete").map(([ref]) => ref);
+  }
+
+  /**
+   * Wait until no deletion is in flight, or `drainTimeoutMs` passes.
+   * @returns the deletions still running when it gave up (empty when all finished)
+   */
+  async function waitForDeletions(): Promise<WorkspaceRef[]> {
+    if (deletionsInFlight().length === 0) return [];
+    await new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        releaseListeners.delete(onRelease);
+        resolve();
+      };
+      const onRelease = (): void => {
+        if (deletionsInFlight().length === 0) done();
+      };
+      const timer = setTimeout(done, drainTimeoutMs);
+      releaseListeners.add(onRelease);
+    });
+    return deletionsInFlight();
   }
 
   return {
@@ -220,6 +269,35 @@ export function createWorkspaceLifecycleModule(): IntentModule {
             claim(workspaceRef, payload.removeWorktree ? "delete" : "close");
             clearActiveIfMatches(workspaceRef);
             return { result: {}, provides: { [WORKSPACE_CLAIMED_CAPABILITY]: true } };
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // app-shutdown → drain: let confirmed deletions finish.
+      //
+      // Quitting mid-deletion leaves the worktree, its branch and its
+      // workspace file behind, and nothing resumes the deletion on the next
+      // start: a deletion the user confirmed would quietly be undone. The
+      // claim spans exactly the part that must not be cut off, from the
+      // teardown to the terminal event — which comes after the deletion's last
+      // auto-switch, so that switch still finds the app up.
+      // -----------------------------------------------------------------
+      [APP_SHUTDOWN_OPERATION_ID]: {
+        drain: {
+          handler: async (): Promise<void> => {
+            const running = deletionsInFlight();
+            if (running.length === 0) return;
+            deps.logger.info("Waiting for workspace deletions before shutdown", {
+              workspaces: running.join(","),
+            });
+            const unfinished = await waitForDeletions();
+            if (unfinished.length > 0) {
+              deps.logger.warn("Shutting down with workspace deletions unfinished", {
+                workspaces: unfinished.join(","),
+                timeoutMs: drainTimeoutMs,
+              });
+            }
           },
         },
       },

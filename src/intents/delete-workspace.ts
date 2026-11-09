@@ -458,27 +458,38 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
   ): Promise<{ started: boolean }> {
     const { payload } = ctx.intent;
 
-    const emitEvent = (identity: ResolvedIdentity): void => {
+    // Awaited: the deletion is complete for the caller once every consumer has
+    // taken the workspace out of its state.
+    const emitEvent = (identity: ResolvedIdentity): Promise<void> => {
       const event: WorkspaceDeletedEvent = {
         type: EVENT_WORKSPACE_DELETED,
         payload: { ...identity, worktreeRemoved: payload.removeWorktree },
       };
-      ctx.emit(event);
+      return ctx.emit(event);
     };
+
+    // If the user navigated to the workspace after the initial switch-away,
+    // switch again before the deletion completes. Before workspace:deleted,
+    // not after: that event ends the deletion for everyone waiting on it —
+    // app:shutdown's drain among them, which then destroys the window — so a
+    // switch after it can land in a window that is gone. Best-effort: never
+    // throws, so the event always follows.
+    const switchAwayIfActive = (): Promise<void> =>
+      this.autoSwitchIfActive(ctx, payload.workspaceRef);
 
     if (payload.force) {
       let identity: ResolvedIdentity | undefined;
       try {
         const result = await this.runPipeline(ctx, ctx.emit);
         identity = result.identity;
+        await switchAwayIfActive();
       } finally {
         // Force mode: always emit workspace:deleted for state cleanup (if identity resolved)
         if (identity) {
-          emitEvent(identity);
+          await emitEvent(identity);
         }
       }
     } else {
-      let failed = false;
       try {
         const result = await this.runPipeline(ctx, ctx.emit);
 
@@ -496,16 +507,21 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         }
 
         if (result.hasErrors) {
-          failed = true;
-          // Emit delete-failed to reset idempotency, allowing retry dispatch
+          // Emit delete-failed to reset idempotency, allowing retry dispatch.
+          //
+          // No switch: a failed deletion leaves the workspace in place, with
+          // its progress panel asking Retry or Dismiss. A user who navigated
+          // to it is looking at that question; switching away would hide it.
           const failedEvent: WorkspaceDeleteFailedEvent = {
             type: EVENT_WORKSPACE_DELETE_FAILED,
             payload: workspaceRefIdentity(payload.workspaceRef),
           };
           ctx.emit(failedEvent);
-        } else {
-          emitEvent(result.identity);
+          return { started: true };
         }
+
+        await switchAwayIfActive();
+        await emitEvent(result.identity);
       } catch (error) {
         // Preflight or unexpected error — emit delete-failed for idempotency reset, then propagate
         const failedEvent: WorkspaceDeleteFailedEvent = {
@@ -515,15 +531,8 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         ctx.emit(failedEvent);
         throw error;
       }
-      // A failed deletion leaves the workspace in place, with its progress
-      // panel asking Retry or Dismiss. A user who navigated to it is looking at
-      // that question; switching away would hide it.
-      if (failed) return { started: true };
     }
 
-    // If the user navigated to the workspace after the initial switch-away,
-    // switch again before the deletion completes.
-    await this.autoSwitchIfActive(ctx, payload.workspaceRef);
     return { started: true };
   }
 

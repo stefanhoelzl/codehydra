@@ -159,11 +159,14 @@ export class WindowManager {
   }
 
   /**
-   * Sets the window title.
+   * Sets the window title. A no-op once the window is gone: closing the window
+   * destroys it before app:shutdown runs, and work still in flight then (a
+   * workspace deletion switching away) can still retitle it.
    *
    * @param title - The new window title
    */
   setTitle(title: string): void {
+    if (this.windowLayer.isDestroyed(this.windowHandle)) return;
     this.windowLayer.setTitle(this.windowHandle, title);
   }
 

@@ -1,15 +1,19 @@
 /**
  * AppShutdownOperation - Orchestrates application shutdown.
  *
- * Runs three hook points in sequence:
- * 1. "stop" - All modules dispose their resources (independent, best-effort).
+ * Runs four hook points in sequence:
+ * 1. "drain" - Lets work the user already started finish, bounded by each
+ *    handler (a confirmed workspace deletion). Runs before "stop" because
+ *    "stop" handlers run concurrently: work still in flight while they dispose
+ *    the window and servers would be cut off half done.
+ * 2. "stop" - All modules dispose their resources (independent, best-effort).
  *    collect() catches errors from each handler and continues to the next,
  *    ensuring all modules get a chance to dispose even if earlier ones fail.
  *    The dispatcher logs hook errors centrally.
- * 2. "handoff" - Hands control to whatever outlives the process (the update
+ * 3. "handoff" - Hands control to whatever outlives the process (the update
  *    installer). Runs after every resource is released, so nothing it starts
  *    races the teardown, and before "quit", so it has its turn before the exit.
- * 3. "quit" - Terminates the process (runs after all cleanup).
+ * 4. "quit" - Terminates the process (runs after all cleanup).
  *
  * The operation ignores all results and errors because shutdown is
  * best-effort -- individual module errors are logged by the dispatcher
@@ -19,8 +23,8 @@
  *
  * Contract schemas (item 2): zod is the single source of truth. The payload schema is
  * declared once and hung on the operation's `schemas` field; the `Intent` and payload
- * types are **derived** from that bundle via `IntentOf`/`z.infer`. Both hook points
- * ("stop", "handoff", "quit") return void, so no per-hook-point result schema is declared.
+ * types are **derived** from that bundle via `IntentOf`/`z.infer`. All hook points
+ * ("drain", "stop", "handoff", "quit") return void, so no per-hook-point result schema is declared.
  */
 
 import { z } from "zod/v4";
@@ -58,6 +62,7 @@ export const schemas = {
   type: INTENT_APP_SHUTDOWN,
   payload: appShutdownPayloadSchema,
   hooks: {
+    drain: { input: shutdownHookInputSchema },
     stop: { input: shutdownHookInputSchema },
     handoff: { input: shutdownHookInputSchema },
     quit: { input: shutdownHookInputSchema },
@@ -83,6 +88,9 @@ export class AppShutdownOperation implements Operation<typeof schemas> {
     const hookCtx: HookContext = {
       intent: ctx.intent,
     };
+
+    // Hook: "drain" -- Let confirmed work in flight finish (each handler bounds its wait)
+    await ctx.hooks.collect("drain", hookCtx);
 
     // Hook: "stop" -- All modules dispose (independent, best-effort)
     // collect() catches errors from each handler and continues to the next.

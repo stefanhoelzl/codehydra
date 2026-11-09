@@ -57,6 +57,14 @@ import {
   WORKSPACE_CLAIMED_CAPABILITY,
 } from "./workspace-lifecycle-module";
 import type { WorkspaceClosing } from "../intents/contract";
+import {
+  AppShutdownOperation,
+  APP_SHUTDOWN_OPERATION_ID,
+  INTENT_APP_SHUTDOWN,
+  type AppShutdownIntent,
+} from "../intents/app-shutdown";
+import { createWindowTitleModule } from "./window-title-module";
+import { ShellError } from "../shared/errors/shell-errors";
 
 // =============================================================================
 // Fixtures
@@ -77,7 +85,13 @@ const CLAIMED = { [WORKSPACE_CLAIMED_CAPABILITY]: ANY_VALUE };
  * does, and are registered *before* the lifecycle module: the capability, not
  * registration order, is what puts them after it.
  */
-function setup(options?: { deleteError?: string; hibernateShutdownError?: string }) {
+function setup(options?: {
+  deleteError?: string;
+  hibernateShutdownError?: string;
+  /** Runs inside the delete's "delete" hook point, while the worktree is being removed. */
+  duringDelete?: (dispatcher: Dispatcher) => Promise<void>;
+  drainTimeoutMs?: number;
+}) {
   const dispatcher = new Dispatcher({ logger: SILENT_LOGGER, logScope: new AsyncLogScopeStore() });
   dispatcher.registerOperation(new DeleteWorkspaceOperation());
   dispatcher.registerOperation(new HibernateWorkspaceOperation());
@@ -121,6 +135,7 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
         delete: {
           handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
             await record("delete:delete")(ctx);
+            await options?.duringDelete?.(dispatcher);
             return { result: options?.deleteError ? { error: options.deleteError } : {} };
           },
         },
@@ -140,7 +155,12 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
     },
   };
   dispatcher.registerModule(probe);
-  dispatcher.registerModule(createWorkspaceLifecycleModule());
+  dispatcher.registerModule(
+    createWorkspaceLifecycleModule({
+      logger: SILENT_LOGGER,
+      ...(options?.drainTimeoutMs !== undefined && { drainTimeoutMs: options.drainTimeoutMs }),
+    })
+  );
 
   return { dispatcher, observed };
 }
@@ -387,6 +407,108 @@ describe("WorkspaceLifecycleModule", () => {
       // switching back on wake would short-circuit as already-active and the
       // workspace would never reopen.
       expect(await isActive(dispatcher, WORKSPACE_PATH)).toBe(false);
+    });
+  });
+
+  describe("app shutdown", () => {
+    /**
+     * The app's shutdown as far as this race goes: app:shutdown, whose "stop"
+     * destroys the window, and window-title, which retitles it on every
+     * workspace:switched — throwing, as the real window boundary does, once the
+     * window is gone.
+     */
+    function withShutdown(dispatcher: Dispatcher) {
+      const window = { destroyed: false, titlesAfterDestroy: [] as string[] };
+      dispatcher.registerOperation(new AppShutdownOperation());
+      dispatcher.registerModule(
+        createWindowTitleModule({
+          windowManager: {
+            setTitle: (title: string): void => {
+              if (!window.destroyed) return;
+              window.titlesAfterDestroy.push(title);
+              throw new ShellError("WINDOW_NOT_FOUND", "Window window-1 not found", "window-1");
+            },
+          },
+          titleVersion: undefined,
+        })
+      );
+      dispatcher.registerModule({
+        name: "test-view",
+        hooks: {
+          [APP_SHUTDOWN_OPERATION_ID]: {
+            stop: {
+              handler: async (): Promise<void> => {
+                window.destroyed = true;
+              },
+            },
+          },
+        },
+      });
+      const shutdown = async (): Promise<void> => {
+        await dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} } as AppShutdownIntent);
+      };
+      return { window, shutdown };
+    }
+
+    /** Resolves after `ms`, so a step can give the shutdown a chance to run. */
+    const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it("lets a deletion still running finish, last switch included, before the window goes", async () => {
+      // The race behind "Window window-1 not found": the user deletes
+      // feature-1, lands on it again while it is being removed (another
+      // deletion's auto-switch picked it), and closes the window. A shutdown
+      // that did not wait destroyed the window while the deletion ran; the
+      // deletion then switched away from feature-1 into a window that was gone
+      // — or, had the app exited first, never finished at all.
+      let shutdownDone: Promise<unknown> = Promise.resolve();
+      let destroyedDuringDelete: boolean | undefined;
+      const { dispatcher } = setup({
+        duringDelete: async (d) => {
+          await d.dispatch({
+            type: INTENT_SWITCH_WORKSPACE,
+            payload: { workspaceRef: WORKSPACE_REF, focus: false },
+          } as SwitchWorkspaceIntent);
+          shutdownDone = shutdown();
+          await settle(20);
+          destroyedDuringDelete = window.destroyed;
+        },
+      });
+      const { window, shutdown } = withShutdown(dispatcher);
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspaceRef: workspaceRefIn(PROJECT_PATH, "feature-2"), focus: false },
+      } as SwitchWorkspaceIntent);
+
+      await dispatcher.dispatch(deleteIntent());
+      await shutdownDone;
+
+      expect(destroyedDuringDelete).toBe(false);
+      expect(window.destroyed).toBe(true);
+      expect(window.titlesAfterDestroy).toEqual([]);
+    });
+
+    it("stops waiting for a deletion that does not finish in time", async () => {
+      let releaseDelete = (): void => {};
+      const deleteHangs = new Promise<void>((resolve) => (releaseDelete = resolve));
+      const { dispatcher } = setup({ drainTimeoutMs: 10, duringDelete: () => deleteHangs });
+      const { window, shutdown } = withShutdown(dispatcher);
+
+      const deletion = dispatcher.dispatch(deleteIntent());
+      await settle(0);
+      await shutdown();
+
+      expect(window.destroyed).toBe(true);
+      releaseDelete();
+      await deletion;
+    });
+
+    it("does not wait when no deletion is running", async () => {
+      const { dispatcher } = setup({ drainTimeoutMs: 60_000 });
+      const { window, shutdown } = withShutdown(dispatcher);
+
+      await shutdown();
+
+      expect(window.destroyed).toBe(true);
     });
   });
 });

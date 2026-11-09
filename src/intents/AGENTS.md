@@ -47,6 +47,7 @@ A fatal failure runs the `error` hook point before rethrowing.
 
 ## app:shutdown
 
+- `drain`: let confirmed work in flight finish first, each handler bounding its wait (workspace deletions, 30 s). Runs before `stop`, whose handlers run concurrently.
 - `stop`: best-effort disposal. The dispatcher's `collect()` runs every handler even when one throws and logs the failure as a `hook error` warning, so a handler needs no try/catch of its own, only around steps that must not stop the rest of its own disposal.
 - `handoff`: what outlives the process (the update installer).
 - `quit`.

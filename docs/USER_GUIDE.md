@@ -442,6 +442,11 @@ and **Dismiss**, which force-removes the workspace from CodeHydra even if files
 remain on disk (a branch you chose to keep is kept). <kbd>Escape</kbd> on a
 failed panel means Dismiss.
 
+Deleting closes every terminal of the workspace, the ones you opened as well as
+the agent's. Closing the window or quitting while a deletion runs lets it finish
+first, for up to 30 seconds, so a workspace you deleted does not come back on
+the next start.
+
 ### Notifications and updates
 
 - **Sound** — played when a workspace's idle count goes up (including an agent
@@ -1259,10 +1264,11 @@ consequence: an open goes on without what it would have returned, and a
 deletion stops with Retry and Dismiss. Cancel is not offered while the trust
 question is open.
 
-Quitting CodeHydra cancels every hook still running, `on-` entries included,
-the same way, and starts no new ones — a hook never outlives the app. A
-deletion whose gate was canceled by the quit stays undone; the workspace is
-still there on the next start.
+Quitting CodeHydra first lets deletions already running finish, for up to 30
+seconds, their `before-worktree-deleted` hooks included. Then it cancels every
+hook still running, `on-` entries included, the same way, and starts no new
+ones — a hook never outlives the app. A deletion whose gate was canceled by the
+quit stays undone; the workspace is still there on the next start.
 
 ### Trust
 
