@@ -111,8 +111,11 @@ export interface ScenarioOptions {
    * The tests only care about hooks, never about a clean exit, so a scenario
    * whose point is a still-running background shell need not wait out Claude's
    * ~5s grace period before it gives up on one.
+   *
+   * `progress` is what the mock model has seen, for a scenario whose milestone
+   * is a request rather than a hook.
    */
-  readonly until: (records: readonly HookRecord[]) => boolean;
+  readonly until: (records: readonly HookRecord[], progress: ScenarioProgress) => boolean;
   /** Extra PATH entries for the spawned agent (the `ch-bg` scenario needs one). */
   readonly pathPrefix?: readonly string[];
   /**
@@ -144,7 +147,21 @@ export interface ScenarioOptions {
   readonly message?: AgentMessage;
   readonly messageWaitMs?: number;
   /** With `message`: once it reached the model, also wait for the recording to satisfy this. */
-  readonly afterMessageUntil?: (records: readonly HookRecord[]) => boolean;
+  readonly afterMessageUntil?: (
+    records: readonly HookRecord[],
+    progress: ScenarioProgress
+  ) => boolean;
+}
+
+/** What the mock model has seen so far in a scenario. */
+export interface ScenarioProgress {
+  /**
+   * How long ago the prompt-suggestion fork's opening request reached the mock,
+   * or undefined while it has not. The fork's request is the only sign it ran
+   * that every Claude version gives: since 2.1.321 it no longer runs
+   * `PreToolUse` for the tool call it is answered with.
+   */
+  readonly suggestionForkAgeMs: number | undefined;
 }
 
 /** Every scenario the boundary tests drive, and the fixtures that produce it. */
@@ -267,9 +284,11 @@ function isSuggestionForkOpening(req: ChatCompletionRequest): boolean {
 /**
  * The call the fork makes in the report this scenario reproduces: a model deep
  * in an interview answers "what will the user type next?" with a question of
- * its own. Claude denies it ("No tools needed for suggestion") — but only after
- * `PreToolUse` has run, and nothing follows it: no `PostToolUse`, no
- * `PostToolUseFailure`.
+ * its own. Up to 2.1.319 Claude denies it ("No tools needed for suggestion") —
+ * but only after `PreToolUse` has run, and nothing follows it: no
+ * `PostToolUse`, no `PostToolUseFailure`. From 2.1.321 ("Fixed prompt
+ * suggestions making extra API requests when the model replied with a tool
+ * call") the fork drops the call without running a hook at all.
  */
 const SUGGESTION_ASK_CALL = {
   reasoning: "Asking which option to take.",
@@ -573,8 +592,16 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
       // Delegate in the background, then end the turn waiting on it. Two
       // assistant messages (the call and the reply) are what the fork needs
       // before it runs at all ("early_conversation" otherwise).
+      //
+      // Only the opening turn delegates: the wake-up Claude sends when the
+      // sub-agent finishes carries no tool result, and serving it another
+      // background agent would start one per wake-up, forever.
       mock.addFixture({
-        match: {},
+        match: { predicate: (req) => !isFirstAgentTurn(req) },
+        response: { content: "Done." },
+      });
+      mock.addFixture({
+        match: { predicate: isFirstAgentTurn },
         response: {
           reasoning: "Delegating to a background sub-agent.",
           toolCalls: [
@@ -679,10 +706,14 @@ async function runScenarioInner(
   // says no never answers anything.
   const mock = new LLMock({ port: 0, strict: true });
   const requests: ChatCompletionRequest[] = [];
+  let suggestionForkStartedAt: number | undefined;
   mock.addFixture({
     match: {
       predicate: (req: ChatCompletionRequest) => {
         requests.push(req);
+        if (suggestionForkStartedAt === undefined && isSuggestionForkOpening(req)) {
+          suggestionForkStartedAt = Date.now();
+        }
         return false;
       },
     },
@@ -757,7 +788,11 @@ async function runScenarioInner(
   disposables.cleanups.push(() => agent.kill());
   await agent.sendPrompt();
 
-  await waitForRecording(records, options.until, agent);
+  const progress = (): ScenarioProgress => ({
+    suggestionForkAgeMs:
+      suggestionForkStartedAt === undefined ? undefined : Date.now() - suggestionForkStartedAt,
+  });
+  await waitForRecording(records, options.until, agent, progress);
 
   let deliveredMessage: string | undefined;
   if (options.message !== undefined) {
@@ -772,13 +807,13 @@ async function runScenarioInner(
       await new Promise((done) => setTimeout(done, 100));
     }
     if (deliveredMessage !== undefined && options.afterMessageUntil !== undefined) {
-      await waitForRecording(records, options.afterMessageUntil, agent);
+      await waitForRecording(records, options.afterMessageUntil, agent, progress);
     }
   }
 
   if (options.thenEndSession === true) {
     agent.endSession();
-    await waitForRecording(records, (entries) => seen(entries, "SessionEnd"), agent);
+    await waitForRecording(records, (entries) => seen(entries, "SessionEnd"), agent, progress);
   }
 
   return buildRun(records, deliveredMessage);
@@ -1192,14 +1227,15 @@ const POST_EXIT_GRACE_MS = 3_000;
 /** Poll until the recording satisfies `until`, or the agent dies, or time runs out. */
 async function waitForRecording(
   records: readonly HookRecord[],
-  until: (records: readonly HookRecord[]) => boolean,
-  agent: AgentHandle
+  until: (records: readonly HookRecord[], progress: ScenarioProgress) => boolean,
+  agent: AgentHandle,
+  progress: () => ScenarioProgress
 ): Promise<void> {
   const deadline = Date.now() + SCENARIO_TIMEOUT_MS;
   const hooksSeen = (): string => records.map((entry) => entry.hook).join(", ") || "(none)";
 
   while (Date.now() < deadline) {
-    if (until(records)) return;
+    if (until(records, progress())) return;
     if (agent.state.spawnError !== undefined) {
       throw new Error(`could not start claude: ${agent.state.spawnError.message}`);
     }
@@ -1209,7 +1245,7 @@ async function waitForRecording(
       // `SessionEnd` routinely land after exit. Give them room before calling it
       // a failure.
       await new Promise((done) => setTimeout(done, POST_EXIT_GRACE_MS));
-      if (until(records)) return;
+      if (until(records, progress())) return;
       throw new Error(
         `claude exited before the scenario completed.\n` +
           `hooks seen: ${hooksSeen()}\n${agent.diagnostics()}`
