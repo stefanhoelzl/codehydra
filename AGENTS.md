@@ -155,6 +155,7 @@ One line each; the full text is where the arrow points.
 
 - **Project** — a git repository (container, not viewable); local path or cloned from URL → docs/ARCHITECTURE.md (Core Concepts)
 - **Workspace** — a git worktree CodeHydra manages (created by it or adopted), shown in the embedded VSCodium; **named once** at creation, never derived from its path → docs/ARCHITECTURE.md (Core Concepts)
+- **Workspace registry** — the core registry of every open workspace and its metadata; a project type's module feeds it, the registry answers resolve/switch/list/metadata → docs/INTENTS.md (The workspace registry)
 - **Remote Project** — a project cloned from a git URL and identified by it → docs/ARCHITECTURE.md (Core Concepts)
 - **Ref** — the one identity of a workspace/project (`ch::<machine>::<type>::<identifier>[::<name>]`); build with `makeWorkspaceRef`/`makeProjectRef` (git: `gitProjectRef`), never by hand → docs/ARCHITECTURE.md (Core Concepts)
 - **UI View** — the app's single WebContentsView; workspaces are VSCodium iframes inside it → docs/ARCHITECTURE.md

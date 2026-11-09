@@ -62,7 +62,7 @@
 - A project with no managed worktrees (e.g. a fresh clone) has 0 workspaces. With no workspace active, the main view shows the New workspace form (the creation ground state).
 - Workspaces are not separate views: the app has one WebContentsView (the Svelte UI), and each workspace renders as a VSCodium iframe inside its DOM (the `WorkspaceFrames` component). See [View Architecture](#view-architecture).
 
-**Workspace names.** A workspace is named once, after its branch when it is created or adopted, and keeps that name whatever is checked out later: the name is part of its identity (its [ref](#refs)). A detached HEAD falls back to the worktree's directory name (un-sanitized, `%` back to `/`, for a worktree under CodeHydra's own workspaces directory; `:` replaced by `-`). The name is recorded in the protected `name` metadata key (`NAME_METADATA_KEY`, `src/boundaries/platform/git-worktree-provider.ts`). Creation refuses a name a workspace of the project already has, compared case-insensitively, even if that workspace has since switched branches (`src/modules/git-worktree-workspace-module.ts`).
+**Workspace names.** A workspace is named once, after its branch when it is created or adopted, and keeps that name whatever is checked out later: the name is part of its identity (its [ref](#refs)). A detached HEAD falls back to the worktree's directory name (un-sanitized, `%` back to `/`, for a worktree under CodeHydra's own workspaces directory; `:` replaced by `-`). The name is recorded in the protected `name` metadata key: by the workspace registry when a workspace is created, by git's discovery for a workspace from before names were recorded (`NAME_METADATA_KEY`, `legacyWorkspaceName`, `src/boundaries/platform/git-worktree-provider.ts`). Creation refuses a name a workspace of the project already has, compared case-insensitively, even if that workspace has since switched branches: the registry checks it before the type's "create" handler runs (`WORKSPACE_NAME_FREE_CAPABILITY`, `src/modules/workspace-registry-module.ts`).
 
 The name is therefore never the path basename: `feature/x` lives in the directory `feature%x` (`sanitizeWorkspaceName`, `src/boundaries/platform/paths.ts`), an adopted directory can be called anything, and `Path` lowercases on Windows. Code that needs a workspace's name looks it up (`workspace:resolve`) or reads it from the ref (`workspaceNameOf`), never derives it from a path.
 
@@ -458,7 +458,7 @@ is shared with the other workspaces.
 
 ### Workspace Metadata Storage
 
-Each workspace's metadata (flat string key → value) lives in one JSON file in the worktree's private git directory, `.git/worktrees/<id>/codehydra.json` (`WorkspaceMetadataStore`, `src/boundaries/platform/workspace-metadata-store.ts`, owned by `GitWorktreeProvider`). The git directory is resolved once per workspace with `git rev-parse --absolute-git-dir` (`IGitClient.getWorktreeGitDir`).
+Each workspace's metadata (flat string key → value) lives in one JSON file. The store (`WorkspaceMetadataStore`, `src/boundaries/platform/workspace-metadata-store.ts`) belongs to the core workspace registry (`src/modules/workspace-registry-module.ts`), the same for every project type; where the file lives is the type's call, handed to the registry as a locator that runs on the first write. Git's is the worktree's private git directory, `.git/worktrees/<id>/codehydra.json` (`GitWorktreeProvider.metadataFileOf`, resolved with `git rev-parse --absolute-git-dir`, `IGitClient.getWorktreeGitDir`). A type that names no location gets `<dataRoot>/projects/<record dir>/workspace-metadata/<name>.json`, next to its project's record; the registry reads that file when the workspace is tracked and deletes it with the workspace.
 
 ```json
 {
@@ -471,7 +471,7 @@ Each workspace's metadata (flat string key → value) lives in one JSON file in 
 
 **Why the worktree's git directory?** It belongs to the worktree, not the branch: it survives a branch rename and a detached HEAD, follows `git worktree move`/`repair`, and goes away with `git worktree remove`/`prune` (no orphan pruning). Writing it takes no git lock, unlike `git config`, which rewrites the shared `.git/config` through `config.lock`.
 
-**Memory is authoritative while running.** `discover()` reads every managed worktree's file once; `createWorkspace()` and `adoptWorktree()` write one. Every later read (`getMetadata`, `countUnmergedCommits`, `listBases`) is served from memory with no git process. A write replaces the file atomically (temp file + rename) before memory changes; writes to one workspace queue, different workspaces write in parallel. A hand edit to a file takes effect at the next project open.
+**Memory is authoritative while running.** A type hands the registry each workspace with the metadata its file holds: git's `discover()` reads every managed worktree's file once (and writes it itself for a legacy migration, a missing `name` or an adoption — all before the registry holds the workspace). The registry writes a created workspace's first file (`trackCreated`, with its `name`). Every later read (`workspace:get-metadata`, resolve, the agent resolver, git's `countUnmergedCommits` and `listBases`) is served from the registry's memory with no git process. A write replaces the file atomically (temp file + rename) before memory changes; writes to one workspace queue, different workspaces write in parallel. A hand edit to a file takes effect at the next project open.
 
 **Tiers** (`src/utils/metadata-tier.ts`) decide what the outside — API/MCP/`ch`, the sidekick extension, plugin actions, automation items — may do with a key; CodeHydra's own modules read and write every key:
 
@@ -1731,12 +1731,15 @@ User: Click [+], fill dialog, click OK
       → If valid: continue
   → IPC: api:workspace:create → workspace:open intent dispatched
   → OpenWorkspaceOperation runs hook points:
-      → "create": GitWorktreeWorkspaceModule creates git worktree
+      → "create": WorkspaceRegistryModule refuses a taken name, then
+                  GitWorktreeWorkspaceModule creates git worktree and hands
+                  it to the registry, which writes its metadata file
       → "provision": PluginModule runs the plugins' after-worktree-created
       → "prepare": PluginModule runs the plugins' before-workspace-opened
                    (its env goes to the agent and the editor's terminals)
       → "setup": AgentModule starts agent server (with that env)
-      → "finalize": IdeServerModule creates .code-workspace file
+      → "finalize": IdeServerModule creates .code-workspace file;
+                    WorkspaceRegistryModule reports the metadata it holds now
   → Operation dispatches workspace:switch to activate the new workspace
   → Emits workspace:created domain event → UiIpcModule → sendToUI → Renderer
 ```
