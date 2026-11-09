@@ -88,11 +88,14 @@ export interface ClaudeCodeBackgroundTask {
 }
 
 /**
- * Extended payload with the workspace ref added by hook-handler.
- * This is what the bridge server receives.
+ * Extended payload with the workspace ref the bridge routes by.
+ * This is what the bridge server handles.
  */
 export interface ClaudeCodeBridgePayload extends ClaudeCodeHookPayload {
-  /** Workspace ref (added by hook-handler from `_CH_WORKSPACE`) */
+  /**
+   * Workspace ref: from an HTTP hook's `X-CH-Workspace` header, or added by
+   * hook-handler (SessionStart) from `_CH_WORKSPACE`
+   */
   readonly workspaceRef?: string;
   /**
    * The session's inbox (added by hook-handler to SessionStart only, from the
