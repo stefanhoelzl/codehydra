@@ -87,12 +87,12 @@ type LogContext = Record<string, string | number | boolean | null>;
 
 ### Usage Examples
 
-#### Check if Workspace Has Uncommitted Changes
+#### Check if Deleting the Workspace Would Lose Work
 
 ```typescript
 const status = await api.workspace.getStatus();
-if (status.isDirty) {
-  console.log("You have uncommitted changes");
+if (status.statusDescription !== undefined) {
+  console.log(status.statusDescription); // git: "Uncommitted changes · 2 commits not merged into main"
 }
 ```
 
@@ -280,11 +280,11 @@ export async function activate(context: vscode.ExtensionContext) {
   const disposable = vscode.commands.registerCommand("myext.showStatus", async () => {
     try {
       const status = await api.workspace.getStatus();
-      const dirty = status.isDirty ? "dirty" : "clean";
+      const work = status.status ?? "unknown"; // git: clean | dirty | unmerged | dirty-unmerged
       const agents =
         status.agent.type === "none" ? "no agents" : `${status.agent.counts.total} agent(s)`;
 
-      vscode.window.showInformationMessage(`Workspace: ${dirty}, ${agents}`);
+      vscode.window.showInformationMessage(`Workspace: ${work}, ${agents}`);
     } catch (error) {
       vscode.window.showErrorMessage(`API error: ${error}`);
     }
@@ -315,8 +315,12 @@ type AgentStatus =
   | { readonly type: "mixed"; readonly counts: AgentStatusCounts; readonly changedAt?: string };
 
 interface WorkspaceStatus {
-  readonly isDirty: boolean;
-  readonly unmergedCommits: number;
+  /** A value the project type declares (git: "clean" | "dirty" | "unmerged" | "dirty-unmerged") */
+  readonly status?: string;
+  /** Set only when deleting would lose work (git: "Uncommitted changes · 3 commits not merged into main") */
+  readonly statusDescription?: string;
+  /** The type's own data, as-is (git: { isDirty, unmergedCommits }) */
+  readonly details?: Readonly<Record<string, unknown>>;
   readonly agent: AgentStatus;
 }
 
@@ -772,7 +776,7 @@ const client = new CodehydraClient(parseInt(port), "/path/to/workspace");
 
 await client.whenReady();
 const status = await client.getStatus();
-console.log("Dirty:", status.isDirty);
+console.log("Status:", status.status, status.statusDescription ?? "");
 ```
 
 ### Server-to-Client Commands
@@ -1483,7 +1487,9 @@ interface WorkspaceLocator {
 
 ```typescript
 interface WorkspaceStatus {
-  readonly isDirty: boolean;
+  readonly status?: string; // a value the project type declares (git: clean | dirty | unmerged | dirty-unmerged)
+  readonly statusDescription?: string; // set only when deleting would lose work
+  readonly details?: Readonly<Record<string, unknown>>; // the type's own data (git: { isDirty, unmergedCommits })
   readonly agent: AgentStatus;
 }
 ```

@@ -2,9 +2,9 @@
  * DeletionDialogModule - Owns the dialogs of the workspace-deletion flow:
  *
  * 1. Remove confirmation: the "confirm" hook on workspace:delete (interactive
- *    dispatches). Opens instantly, runs the dirty/unmerged status check in
- *    the background and updates the warnings in, parks the dispatch until the
- *    user answers (the project type's delete options — git: Keep branch — or
+ *    dispatches). Opens instantly, runs the status check in the background
+ *    and shows the project type's status description as its warning, parks
+ *    the dispatch until the user answers (the project type's delete options — git: Keep branch — or
  *    cancel).
  * 2. Deletion progress: shown only when the workspace being deleted is the
  *    active (selected) workspace. Subscribes to
@@ -38,7 +38,6 @@ import {
   INTENT_GET_WORKSPACE_STATUS,
   type GetWorkspaceStatusIntent,
 } from "../intents/get-workspace-status";
-import { INTENT_GET_METADATA, type GetMetadataIntent } from "../intents/get-metadata";
 import { INTENT_REFRESH_PROJECT, type RefreshProjectIntent } from "../intents/refresh-project";
 import type { OptionField, ProjectTypeOptions } from "../intents/project-type-options";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
@@ -176,14 +175,14 @@ function buildConfig(progress: DeletionProgress): DialogConfig {
 /** Display state of the remove confirmation dialog. */
 interface RemoveConfirmState {
   readonly workspaceName: string;
-  /** The background dirty/unmerged status check is still running. */
+  /** The background status check is still running. */
   readonly checking: boolean;
-  /** The background status check failed — dirty/unmerged state is unknown. */
+  /** The background status check failed — what a delete would lose is unknown. */
   readonly checkFailed: boolean;
-  readonly isDirty: boolean;
-  readonly unmergedCommits: number;
-  /** Base branch name (workspace metadata), for the unmerged warning text. */
-  readonly base: string | undefined;
+  /** The type's description of what a delete would lose; undefined when nothing. */
+  readonly statusDescription: string | undefined;
+  /** What the type's delete objects to, as a phrase (`deleteObjections`), for the unknown case. */
+  readonly objections: string | undefined;
   /** The workspace's project type's delete options, in declared order. */
   readonly fields: readonly (readonly [string, OptionField])[];
   /** Their values as the dispatch carried them (checked, defaults applied). */
@@ -246,25 +245,14 @@ function buildRemoveConfirmConfig(state: RemoveConfirmState): DialogConfig {
     sections.push({
       type: "text",
       content:
-        "Could not check workspace status. Uncommitted changes or unmerged commits may be lost.",
+        state.objections === undefined
+          ? "Could not check workspace status. Work in it may be lost."
+          : `Could not check workspace status, so it may have ${state.objections}.`,
       style: "warning",
     });
-  } else {
-    if (state.isDirty) {
-      sections.push({
-        type: "text",
-        content: "This workspace has uncommitted changes that will be lost.",
-        style: "warning",
-      });
-    }
-    if (state.unmergedCommits > 0) {
-      const plural = state.unmergedCommits === 1 ? "" : "s";
-      sections.push({
-        type: "text",
-        content: `This branch has ${state.unmergedCommits} commit${plural} not merged into ${state.base ?? "base"}.`,
-        style: "warning",
-      });
-    }
+  } else if (state.statusDescription !== undefined) {
+    // The type sets a description only when a delete would lose something.
+    sections.push({ type: "text", content: state.statusDescription, style: "warning" });
   }
 
   for (const [name, field] of state.fields) {
@@ -428,24 +416,25 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
 
   /**
    * The "confirm" hook on workspace:delete (interactive dispatches only):
-   * opens the confirmation dialog immediately, fills the dirty/unmerged
-   * warnings in when the background status check lands, and parks the
+   * opens the confirmation dialog immediately, fills the type's
+   * status description in as its warning when the background status check
+   * lands, and parks the
    * dispatch until the user answers. A Remove closes the dialog at once but
    * returns only once the status read in flight has settled (see below).
    */
   async function confirmRemove(
     input: HookInput<typeof DELETE_WORKSPACE_OPERATION_ID, "confirm">
   ): Promise<HookOutput<ConfirmHookResult>> {
+    const type = deps.projectTypes.typeOf(input.projectRef);
     let state: RemoveConfirmState = {
       workspaceName: input.workspaceName,
       checking: true,
       checkFailed: false,
-      isDirty: false,
-      unmergedCommits: 0,
-      base: undefined,
-      fields: Object.entries(
-        deps.projectTypes.fieldsOf(deps.projectTypes.typeOf(input.projectRef), "delete")
-      ).filter(([, field]) => field.dialog !== false),
+      statusDescription: undefined,
+      objections: deps.projectTypes.of(type)?.deleteObjections,
+      fields: Object.entries(deps.projectTypes.fieldsOf(type, "delete")).filter(
+        ([, field]) => field.dialog !== false
+      ),
       values: input.intent.payload.options ?? {},
     };
 
@@ -479,23 +468,15 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     };
     const readStatusOnce = async (): Promise<boolean> => {
       try {
-        const [status, metadata] = await Promise.all([
-          deps.dispatcher.dispatch<GetWorkspaceStatusIntent>({
-            type: INTENT_GET_WORKSPACE_STATUS,
-            payload: { workspaceRef: input.workspaceRef },
-          }),
-          deps.dispatcher.dispatch<GetMetadataIntent>({
-            type: INTENT_GET_METADATA,
-            payload: { workspaceRef: input.workspaceRef },
-          }),
-        ]);
+        const status = await deps.dispatcher.dispatch<GetWorkspaceStatusIntent>({
+          type: INTENT_GET_WORKSPACE_STATUS,
+          payload: { workspaceRef: input.workspaceRef },
+        });
         state = {
           ...state,
           checking: false,
           checkFailed: false,
-          isDirty: status.isDirty,
-          unmergedCommits: status.unmergedCommits,
-          base: metadata["base"],
+          statusDescription: status.statusDescription,
         };
         return true;
       } catch (error) {

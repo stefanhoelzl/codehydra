@@ -22,7 +22,6 @@ import type { ConfirmHookResult } from "../intents/delete-workspace";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_REFRESH_PROJECT } from "../intents/refresh-project";
 import { testProjectTypes } from "../intents/project-type-options.test-utils";
-import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { createDeletionDialogModule } from "./deletion-dialog-module";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
@@ -606,9 +605,8 @@ describe("DeletionDialogModule", () => {
 describe("DeletionDialogModule - remove confirm", () => {
   interface ConfirmSetup {
     dialogManager: ReturnType<typeof createMockDialogManager>;
-    /** Resolve the background status/metadata dispatches. */
-    resolveStatus(status: { isDirty: boolean; unmergedCommits: number }): void;
-    resolveMetadata(metadata: Record<string, string>): void;
+    /** Resolve the background status dispatch. */
+    resolveStatus(status: { status?: string; statusDescription?: string }): void;
     rejectStatus(error: Error): void;
     /** Settle the remote fetch (project:get-bases) the check runs after the local status. */
     resolveBases(): void;
@@ -631,10 +629,6 @@ describe("DeletionDialogModule - remove confirm", () => {
       resolveStatusFn = resolve;
       rejectStatusFn = reject;
     });
-    let resolveMetadataFn!: (metadata: unknown) => void;
-    const metadataPromise = new Promise((resolve) => {
-      resolveMetadataFn = resolve;
-    });
     let resolveBasesFn!: () => void;
     const basesPromise = new Promise<void>((resolve) => {
       resolveBasesFn = resolve;
@@ -645,7 +639,6 @@ describe("DeletionDialogModule - remove confirm", () => {
       dispatch: vi.fn((intent: { type: string; payload?: unknown }) => {
         dispatched.push(intent);
         if (intent.type === INTENT_GET_WORKSPACE_STATUS) return statusPromise;
-        if (intent.type === INTENT_GET_METADATA) return metadataPromise;
         if (intent.type === INTENT_REFRESH_PROJECT) return basesPromise;
         return Promise.resolve();
       }),
@@ -688,7 +681,6 @@ describe("DeletionDialogModule - remove confirm", () => {
     return {
       dialogManager,
       resolveStatus: (status) => resolveStatusFn(status),
-      resolveMetadata: (metadata) => resolveMetadataFn(metadata),
       rejectStatus: (error) => rejectStatusFn(error),
       resolveBases: () => resolveBasesFn(),
       dispatched,
@@ -742,8 +734,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     const handle = setup.dialogManager.lastHandle!;
 
     handle.emitChange("keepBranch", { keepBranch: "true" });
-    setup.resolveStatus({ isDirty: false, unmergedCommits: 1 });
-    setup.resolveMetadata({ base: "main" });
+    setup.resolveStatus({ status: "unmerged", statusDescription: "1 commit not merged into main" });
     await vi.waitFor(() => {
       expect(textsOf(handle.config).some((text) => text.includes("not merged"))).toBe(true);
     });
@@ -759,8 +750,10 @@ describe("DeletionDialogModule - remove confirm", () => {
     const setup = createConfirmSetup();
     const pending = setup.confirm();
 
-    setup.resolveStatus({ isDirty: true, unmergedCommits: 2 });
-    setup.resolveMetadata({ base: "develop" });
+    setup.resolveStatus({
+      status: "dirty-unmerged",
+      statusDescription: "Uncommitted changes · 2 commits not merged into develop",
+    });
     await vi.waitFor(() => {
       const handle = setup.dialogManager.lastHandle!;
       expect(handle.configs.length).toBeGreaterThan(1);
@@ -768,14 +761,33 @@ describe("DeletionDialogModule - remove confirm", () => {
 
     const handle = setup.dialogManager.lastHandle!;
     const texts = textsOf(handle.config);
-    expect(texts).toContain("This workspace has uncommitted changes that will be lost.");
-    expect(texts).toContain("This branch has 2 commits not merged into develop.");
+    // The type's description, shown as-is: core does not word it.
+    expect(texts).toContain("Uncommitted changes · 2 commits not merged into develop");
     expect(texts).not.toContain("Checking workspace status...");
     // Warnings carry the warning style.
     const warnings = handle.config.sections.filter(
       (s) => s.type === "text" && "style" in s && s.style === "warning"
     );
-    expect(warnings).toHaveLength(2);
+    expect(warnings).toHaveLength(1);
+
+    handle.emitAction("cancel");
+    await pending;
+  });
+
+  it("shows no warning for a status the type gives no description", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+
+    setup.resolveStatus({ status: "clean" });
+    await vi.waitFor(() => {
+      expect(setup.dialogManager.lastHandle!.configs.length).toBeGreaterThan(1);
+    });
+
+    const handle = setup.dialogManager.lastHandle!;
+    const warnings = handle.config.sections.filter(
+      (s) => s.type === "text" && "style" in s && s.style === "warning"
+    );
+    expect(warnings).toEqual([]);
 
     handle.emitAction("cancel");
     await pending;
@@ -794,7 +806,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     expect(textsOf(config)).toEqual([
       "Remove Workspace",
       `Remove workspace "${WS_NAME_A}"?`,
-      "Could not check workspace status. Uncommitted changes or unmerged commits may be lost.",
+      "Could not check workspace status, so it may have uncommitted changes, or unmerged commits on a branch that is not kept.",
     ]);
     // A failed check must not render as a verified-clean workspace.
     const warnings = config.sections.filter(
@@ -812,8 +824,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     const handle = setup.dialogManager.lastHandle!;
 
     handle.emitAction("remove", { keepBranch: "true" });
-    setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
-    setup.resolveMetadata({});
+    setup.resolveStatus({ status: "clean" });
 
     await expect(pending).resolves.toEqual({ options: { keepBranch: true } });
     expect(handle.closed).toBe(true);
@@ -851,8 +862,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     const pending = setup.confirm();
     const handle = setup.dialogManager.lastHandle!;
 
-    setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
-    setup.resolveMetadata({});
+    setup.resolveStatus({ status: "clean" });
     await settle();
     // The local read fetches nothing; the fetch is the project's, not the workspace's.
     expect(statusReads(setup)).toEqual([{ workspaceRef: WS_PATH_A }]);
@@ -875,8 +885,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     const setup = createConfirmSetup();
     const pending = setup.confirm();
     const handle = setup.dialogManager.lastHandle!;
-    setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
-    setup.resolveMetadata({});
+    setup.resolveStatus({ status: "clean" });
     await settle();
 
     handle.emitAction("remove", { keepBranch: "false" });
@@ -892,8 +901,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     const pending = setup.confirm();
     setup.dialogManager.lastHandle!.emitAction("remove", { keepBranch: "false" });
 
-    setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
-    setup.resolveMetadata({});
+    setup.resolveStatus({ status: "clean" });
     await pending;
     await settle();
 
@@ -909,8 +917,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     await settle();
     const configCount = handle.configs.length;
 
-    setup.resolveStatus({ isDirty: true, unmergedCommits: 1 });
-    setup.resolveMetadata({});
+    setup.resolveStatus({ status: "dirty", statusDescription: "Uncommitted changes" });
     await pending;
     // Give the background task a chance to (incorrectly) update.
     await settle();
@@ -936,8 +943,7 @@ describe("DeletionDialogModule - remove confirm", () => {
       expect(handle.closed).toBe(true);
       expect(settled).toBe(false);
 
-      setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
-      setup.resolveMetadata({});
+      setup.resolveStatus({ status: "clean" });
       await expect(pending).resolves.toEqual({ options: { keepBranch: false } });
     });
 
@@ -955,8 +961,7 @@ describe("DeletionDialogModule - remove confirm", () => {
       const setup = createConfirmSetup();
       const pending = setup.confirm();
       const handle = setup.dialogManager.lastHandle!;
-      setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
-      setup.resolveMetadata({});
+      setup.resolveStatus({ status: "clean" });
       await settle();
 
       // The re-read dispatches the same (resolved) status promise, so hold it
@@ -978,7 +983,7 @@ describe("DeletionDialogModule - remove confirm", () => {
       expect(handle.closed).toBe(true);
       expect(settled).toBe(false);
 
-      resolveReread({ isDirty: false, unmergedCommits: 0 });
+      resolveReread({ status: "clean" });
       await expect(pending).resolves.toEqual({ options: { keepBranch: false } });
     });
 

@@ -30,7 +30,7 @@
  * - project:list-add-actions / project:add → the "Clone from Git" button and its dialog
  * - workspace:delete    → preflight: uncommitted changes, unmerged commits
  * - workspace:delete    → delete:    remove the worktree
- * - workspace:get-status → get:      dirty, unmerged commits
+ * - workspace:get-status → get:      status (clean|dirty|unmerged|dirty-unmerged) and its description
  * - list-projects       → list-workspaces: each project's default base branch
  */
 

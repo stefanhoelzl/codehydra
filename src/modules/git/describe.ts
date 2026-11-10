@@ -1,6 +1,7 @@
 /**
  * How the git type describes a workspace to core: its branch as the subtitle
- * (with the branch icon), and `{ branch?, base? }` as its opaque details.
+ * (with the branch icon), `{ branch?, base? }` as its opaque details, and its
+ * work status (`describeWorkStatus`).
  *
  * Both detail fields are absent rather than substituted when unknown: a
  * detached HEAD has no branch, and a worktree the user adopted by hand never
@@ -10,6 +11,10 @@
 
 import { z } from "zod/v4";
 import type { WorkspaceDescription, WorkspaceDetails } from "../../intents/contract";
+import type { GetStatusHookResult } from "../../intents/get-workspace-status";
+
+/** A workspace's work status as a type reports it (no agent part). */
+type WorkspaceWorkStatus = Omit<GetStatusHookResult, "agentStatus">;
 import type { Workspace } from "../../boundaries/platform/git-types";
 import type { RegisteredWorkspace } from "../../utils/workspace-conversion";
 
@@ -48,6 +53,35 @@ export function describeWorktree(
   return {
     ...(branch !== null && { subtitle: branch, subtitleIcon: "branch" as const }),
     details,
+  };
+}
+
+/** The status values a git workspace reports. */
+export type GitWorkspaceStatus = "clean" | "dirty" | "unmerged" | "dirty-unmerged";
+
+/**
+ * A worktree's work status: uncommitted changes and commits not merged into
+ * `base`. The description is set only when there is something a delete would
+ * lose, so the delete dialog shows it as its warning as-is.
+ */
+export function describeWorkStatus(
+  isDirty: boolean,
+  unmergedCommits: number,
+  base: string | undefined
+): WorkspaceWorkStatus {
+  const unmerged = unmergedCommits > 0;
+  const status: GitWorkspaceStatus =
+    isDirty && unmerged ? "dirty-unmerged" : isDirty ? "dirty" : unmerged ? "unmerged" : "clean";
+  const parts: string[] = [];
+  if (isDirty) parts.push("Uncommitted changes");
+  if (unmerged) {
+    const plural = unmergedCommits === 1 ? "" : "s";
+    parts.push(`${unmergedCommits} commit${plural} not merged into ${base ?? "its base"}`);
+  }
+  return {
+    status,
+    ...(parts.length > 0 && { statusDescription: parts.join(" · ") }),
+    details: { isDirty, unmergedCommits },
   };
 }
 

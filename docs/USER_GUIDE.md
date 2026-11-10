@@ -428,8 +428,11 @@ ch ws hibernate --wakeup 'gh pr checks 12 >/dev/null && echo "{\"action\":\"wake
 ### Deleting a workspace
 
 Hover a ready row (or one that could not be opened) and click its trash icon
-(or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>Delete</kbd>). The dialog checks the worktree and warns about uncommitted
-changes and commits not merged into its base; confirming deletes anyway. Tick
+(or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>Delete</kbd>). The dialog checks the
+workspace and warns about what deleting it would lose, as its project type
+words it — for a git project, uncommitted changes and commits not merged into
+its base, e.g. "Uncommitted changes · 2 commits not merged into main";
+confirming deletes anyway. Tick
 **Keep branch** to keep the git branch. (From `ch` or MCP, a workspace with
 uncommitted or unmerged work is refused unless told to ignore warnings.)
 
@@ -1836,36 +1839,36 @@ running CodeHydra by itself; if none is running, it exits 3.
 `ch --help` lists the commands (it needs the running app), and
 `ch <command> --help` shows one command's arguments:
 
-| Command                                                            | Purpose                                                                                                          |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `ws status`                                                        | Dirty flag, unmerged commits, agent status and wakeup script (`--refresh` fetches first)                         |
-| `ws processes`                                                     | The [processes](#processes) running in the workspace, as a tree with CPU, memory and ports                       |
-| `ws create <name> [base]`                                          | New workspace (`--project`, `--tracking`, `--prompt`, `--agent`, `--model`, `--permission-mode`, `--agent-name`) |
-| `ws delete`                                                        | Delete the workspace (`--keep-branch`, `--ignore-warnings`, `--no-wait`)                                         |
-| `ws hibernate`, `ws wake`                                          | Hibernate (`--wakeup <script>`, `--shell`, `--env`) / wake                                                       |
-| `ws wakeup set <script>\|clear\|show`                              | The [wakeup script](#wakeup-scripts) (`--shell`, `--env KEY=VALUE`; `-` reads stdin)                             |
-| `ws switch <workspace>`                                            | Make a workspace the active one (`switched: false` while the New workspace form has input)                       |
-| `ws title [title]`                                                 | Sidebar title; with no title, clears it and the row shows the branch again                                       |
-| `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                       |
-| `ws metadata get`, `ws metadata set <key> <value>`                 | Raw workspace metadata                                                                                           |
-| `ws agent open\|close\|restart\|session`                           | The agent terminal and server                                                                                    |
-| `ws agent message <text>`                                          | [Message the running agent](#messages-to-a-running-agent) (`-` reads stdin, `--wake`)                            |
-| `ws status set <idle\|busy>`                                       | Report the agent's status                                                                                        |
-| `ws notify`, `ws status-bar`                                       | For you: a toast or status-bar text in the editor; neither waits                                                 |
-| `ws ask`, `ws select`, `ws input`, `ws pick-file`                  | For you: a question that waits for your answer, see [Asking you](#asking-you)                                    |
-| `notification show <title>`, `notification close <id>`             | For you: a card in CodeHydra's sidebar, see below                                                                |
-| `ws goto`, `ws diff`, `ws preview`, `ws browser`                   | Open a file (`file:line:col`), a diff, a markdown preview, a URL in the editor                                   |
-| `ws vscode-command <command>`                                      | Run a VS Code command                                                                                            |
-| `ws open <path>`                                                   | Open with the OS (`--reveal` shows it in the file manager)                                                       |
-| `project list`, `project open <target>`, `project close <project>` | Projects (a path, a git URL or `org/repo`; `--remove-local-repo`)                                                |
-| `lock take`, `lock release`, `lock ls`, `lock run`                 | Locks, see below                                                                                                 |
-| `config list\|get\|set\|reset`                                     | Settings, see [Configuration](#configuration)                                                                    |
-| `plugin list\|enable\|disable\|errors\|schema\|render`             | Plugins, see [Managing plugins](#managing-plugins)                                                               |
-| `guide [section]`                                                  | This guide, or one `##` section of it                                                                            |
-| `log <level> <message>`                                            | Write to CodeHydra's log                                                                                         |
-| `report-issue <description>`                                       | File a bug report                                                                                                |
-| `bg <cmd…>`                                                        | Run a command without keeping the workspace busy                                                                 |
-| `mcp`, `claude`, `opencode`                                        | The MCP server and agent launchers CodeHydra itself uses; extra arguments go to the agent                        |
+| Command                                                            | Purpose                                                                                                                                                                                                                |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ws status`                                                        | The project type's `status` and `statusDescription` (git: `clean`, `dirty`, `unmerged`, `dirty-unmerged`; `isDirty` and `unmergedCommits` under `details`), agent status and wakeup script (`--refresh` fetches first) |
+| `ws processes`                                                     | The [processes](#processes) running in the workspace, as a tree with CPU, memory and ports                                                                                                                             |
+| `ws create <name> [base]`                                          | New workspace (`--project`, `--tracking`, `--prompt`, `--agent`, `--model`, `--permission-mode`, `--agent-name`)                                                                                                       |
+| `ws delete`                                                        | Delete the workspace (`--keep-branch`, `--ignore-warnings`, `--no-wait`)                                                                                                                                               |
+| `ws hibernate`, `ws wake`                                          | Hibernate (`--wakeup <script>`, `--shell`, `--env`) / wake                                                                                                                                                             |
+| `ws wakeup set <script>\|clear\|show`                              | The [wakeup script](#wakeup-scripts) (`--shell`, `--env KEY=VALUE`; `-` reads stdin)                                                                                                                                   |
+| `ws switch <workspace>`                                            | Make a workspace the active one (`switched: false` while the New workspace form has input)                                                                                                                             |
+| `ws title [title]`                                                 | Sidebar title; with no title, clears it and the row shows the branch again                                                                                                                                             |
+| `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                                                                                                                             |
+| `ws metadata get`, `ws metadata set <key> <value>`                 | Raw workspace metadata                                                                                                                                                                                                 |
+| `ws agent open\|close\|restart\|session`                           | The agent terminal and server                                                                                                                                                                                          |
+| `ws agent message <text>`                                          | [Message the running agent](#messages-to-a-running-agent) (`-` reads stdin, `--wake`)                                                                                                                                  |
+| `ws status set <idle\|busy>`                                       | Report the agent's status                                                                                                                                                                                              |
+| `ws notify`, `ws status-bar`                                       | For you: a toast or status-bar text in the editor; neither waits                                                                                                                                                       |
+| `ws ask`, `ws select`, `ws input`, `ws pick-file`                  | For you: a question that waits for your answer, see [Asking you](#asking-you)                                                                                                                                          |
+| `notification show <title>`, `notification close <id>`             | For you: a card in CodeHydra's sidebar, see below                                                                                                                                                                      |
+| `ws goto`, `ws diff`, `ws preview`, `ws browser`                   | Open a file (`file:line:col`), a diff, a markdown preview, a URL in the editor                                                                                                                                         |
+| `ws vscode-command <command>`                                      | Run a VS Code command                                                                                                                                                                                                  |
+| `ws open <path>`                                                   | Open with the OS (`--reveal` shows it in the file manager)                                                                                                                                                             |
+| `project list`, `project open <target>`, `project close <project>` | Projects (a path, a git URL or `org/repo`; `--remove-local-repo`)                                                                                                                                                      |
+| `lock take`, `lock release`, `lock ls`, `lock run`                 | Locks, see below                                                                                                                                                                                                       |
+| `config list\|get\|set\|reset`                                     | Settings, see [Configuration](#configuration)                                                                                                                                                                          |
+| `plugin list\|enable\|disable\|errors\|schema\|render`             | Plugins, see [Managing plugins](#managing-plugins)                                                                                                                                                                     |
+| `guide [section]`                                                  | This guide, or one `##` section of it                                                                                                                                                                                  |
+| `log <level> <message>`                                            | Write to CodeHydra's log                                                                                                                                                                                               |
+| `report-issue <description>`                                       | File a bug report                                                                                                                                                                                                      |
+| `bg <cmd…>`                                                        | Run a command without keeping the workspace busy                                                                                                                                                                       |
+| `mcp`, `claude`, `opencode`                                        | The MCP server and agent launchers CodeHydra itself uses; extra arguments go to the agent                                                                                                                              |
 
 ```sh
 ch ws status
