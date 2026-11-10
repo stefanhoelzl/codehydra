@@ -49,10 +49,7 @@
 
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
-import {
-  INTENT_GET_PROJECT_BASES,
-  type GetProjectBasesIntent,
-} from "../../intents/get-project-bases";
+import { INTENT_REFRESH_PROJECT, type RefreshProjectIntent } from "../../intents/refresh-project";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
 import {
@@ -79,7 +76,7 @@ import { buildAgentSpec } from "../../api/entries/workspace";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
 import { looksLikeGitUrl, matchOpenProject } from "../../utils/project-reference";
-import { CREATE_ACTION, type AutomationItem, type CreateItem } from "./items";
+import { CREATE_ACTION, createItemOf, type AutomationItem, type CreateItem } from "./items";
 import { safeJsonParse } from "./util";
 import { projectPathSchema, type ProjectRef, type WorkspaceRef } from "../../intents/contract";
 import { asProjectRef } from "../../utils/ref";
@@ -170,8 +167,8 @@ interface WorkspaceDefinition {
   readonly key: string;
   /** An open project's name, a path or a git URL. */
   readonly project: string;
-  readonly base?: string;
-  readonly tracking?: string;
+  /** The project type's create options, passed through to workspace:open. */
+  readonly options: Readonly<Record<string, unknown>>;
   readonly focus: boolean;
   readonly prompt?: string;
   readonly agent?: AgentSpec;
@@ -266,8 +263,7 @@ function definitionOf(item: CreateItem, ownProject: string | undefined): Workspa
     project,
     focus: item.stealFocus,
     metadata: flattenMetadata(item.metadata),
-    ...(item.base !== undefined && { base: item.base }),
-    ...(item.tracking !== undefined && { tracking: item.tracking }),
+    options: item.options,
     ...(item.prompt !== undefined && { prompt: item.prompt }),
     ...(agent !== undefined && { agent }),
   };
@@ -459,10 +455,17 @@ export function createAutomations<S extends AutomationSource>(
     projectRef: ProjectRef
   ): Promise<StateEntry | null> {
     try {
-      await deps.dispatcher.dispatch<GetProjectBasesIntent>({
-        type: INTENT_GET_PROJECT_BASES,
-        payload: { projectRef, refresh: true, wait: true },
-      });
+      // Up to date with upstream first (git: fetch), so a remote base or
+      // tracking branch the item names is there. Best-effort, as it always was:
+      // what is there locally stands.
+      try {
+        await deps.dispatcher.dispatch<RefreshProjectIntent>({
+          type: INTENT_REFRESH_PROJECT,
+          payload: { projectRef },
+        });
+      } catch {
+        // The create below reports what it cannot find.
+      }
 
       const agent: AgentSpec = definition.agent ?? { type: "default" };
 
@@ -470,8 +473,7 @@ export function createAutomations<S extends AutomationSource>(
         type: INTENT_OPEN_WORKSPACE,
         payload: {
           workspaceName: definition.name,
-          ...(definition.base !== undefined && { base: definition.base }),
-          ...(definition.tracking !== undefined && { tracking: definition.tracking }),
+          options: definition.options,
           stealFocus: definition.focus,
           projectRef,
           agent,
@@ -693,7 +695,7 @@ export function createAutomations<S extends AutomationSource>(
         continue;
       }
 
-      const create = item.input as unknown as CreateItem;
+      const create = createItemOf(item.input);
       let definition: WorkspaceDefinition;
       try {
         definition = definitionOf(create, source.project);

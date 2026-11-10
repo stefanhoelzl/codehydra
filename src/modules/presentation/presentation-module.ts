@@ -1145,7 +1145,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       type: INTENT_DELETE_WORKSPACE,
       payload: {
         workspaceRef,
-        keepBranch: false,
         force: false,
         removeWorktree: true,
         interactive: true,

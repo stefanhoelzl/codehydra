@@ -23,6 +23,8 @@ import { createRegistry } from "../entries";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { targetFields } from "../entries/target";
 import { testPath, workspaceRefIn } from "../../shared/test-fixtures";
+import { sealedProjectTypeOptions } from "../../intents/project-type-options";
+import { GIT_PROJECT_OPTIONS } from "../../modules/git/options";
 
 /** The real registry, for the tests that assert on the real mappings. */
 function realRegistry() {
@@ -447,5 +449,77 @@ describe("client kinds", () => {
     for (const kind of ["sidekick", "cli", "mcp"] as const) {
       expect(realWire(kind).channels(), kind).toContain("api:registry:describe");
     }
+  });
+});
+
+describe("API server adapter: the sidekick's workspace channels", () => {
+  /** The real workspace entries over a dispatcher that records what it is asked. */
+  function sidekick() {
+    const dispatched: { type: string; payload: Record<string, unknown> }[] = [];
+    const dispatcher = {
+      dispatch: vi.fn((intent: { type: string; payload: Record<string, unknown> }) => {
+        dispatched.push(intent);
+        const handle = Promise.resolve({ ref: WS, name: "new" }) as Promise<unknown> & {
+          accepted: Promise<boolean>;
+        };
+        handle.accepted = Promise.resolve(true);
+        return handle;
+      }),
+    };
+    const registry = createRegistry(
+      {
+        dispatcher: dispatcher as never,
+        appLayer: { openPath: async () => undefined },
+        awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
+        locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER })
+          .locks,
+        config: createMockConfig(),
+        wakeups: { set: async () => {}, show: async () => null },
+        processes: { list: async () => null },
+        readUserGuide: async () => "",
+        plugins: () => {
+          throw new Error("this test reaches no plugins");
+        },
+        projectTypes: sealedProjectTypeOptions(GIT_PROJECT_OPTIONS),
+      },
+      SILENT_LOGGER
+    );
+    const harness = fakeSocket();
+    attachApiServerAdapter({
+      socket: harness.socket,
+      registry,
+      workspaceRef: WS,
+      logger: SILENT_LOGGER,
+      kind: "sidekick",
+    });
+    return { harness, dispatched };
+  }
+
+  it("creates through workspace.create: the type's options travel opaquely", async () => {
+    const { harness, dispatched } = sidekick();
+
+    const result = await harness.call("api:workspace:create", {
+      name: "new",
+      base: "main",
+      prompt: "go",
+    });
+
+    expect(result.success).toBe(true);
+    expect(dispatched[0]).toMatchObject({
+      type: "workspace:open",
+      payload: { workspaceName: "new", options: { base: "main" } },
+    });
+    expect(dispatched[0]!.payload).not.toHaveProperty("base");
+  });
+
+  it("deletes through workspace.delete: git's keepBranch is its option", async () => {
+    const { harness, dispatched } = sidekick();
+
+    await harness.call("api:workspace:delete", { keepBranch: true, wait: false });
+
+    expect(dispatched[0]).toMatchObject({
+      type: "workspace:delete",
+      payload: { workspaceRef: WS, options: { keepBranch: true } },
+    });
   });
 });

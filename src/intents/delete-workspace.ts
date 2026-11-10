@@ -63,6 +63,7 @@ import {
 } from "./lib/workspace-identity";
 import { activeWorkspaceRef } from "./lib/active-workspace";
 import { throwHookErrors, collectErrorMessages, onlyDefined } from "./lib/hook-helpers";
+import type { ProjectTypeOptions } from "./project-type-options";
 
 export const INTENT_DELETE_WORKSPACE = "workspace:delete" as const;
 export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
@@ -93,7 +94,13 @@ export const CAPABILITY_AGENT_STOPPED = "agent-stopped" as const;
 export const deleteWorkspacePayloadSchema = z
   .object({
     workspaceRef: workspaceRefSchema,
-    keepBranch: z.boolean(),
+    /**
+     * The project type's delete options (git: `keepBranch`), opaque to core.
+     * Checked against the type's description, its defaults applied, before the
+     * first hook point — so every hook reads the checked values here. Absent:
+     * the type's defaults.
+     */
+    options: z.record(z.string(), z.unknown()).readonly().optional(),
     force: z.boolean(),
     /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
     removeWorktree: z.boolean(),
@@ -105,7 +112,7 @@ export const deleteWorkspacePayloadSchema = z
     /**
      * The dispatch is user-interactive: the "confirm" hook point runs before the
      * pipeline, parking the dispatch on a confirmation dialog that contributes
-     * keepBranch or cancels. Programmatic callers (MCP, API server, automations)
+     * the options the user picked, or cancels. Programmatic callers (MCP, API server, automations)
      * omit it and never see a dialog. Only honored on the full-pipeline path
      * (removeWorktree, not force).
      */
@@ -124,14 +131,14 @@ export const deleteWorkspaceResultSchema = z.object({ started: z.boolean() }).re
  * only). The handler opens a confirmation dialog and parks until the user
  * answers: canceled aborts the dispatch (workspace:delete-failed is emitted
  * so the per-key idempotency guard resets — the event means "ended without
- * deletion", not only errors); otherwise keepBranch overrides the payload and
- * the pipeline proceeds with ignoreWarnings semantics (the user just saw the
- * warnings).
+ * deletion", not only errors); otherwise the options the user picked override
+ * the payload's and the pipeline proceeds with ignoreWarnings semantics (the
+ * user just saw the warnings).
  */
 export const confirmResultSchema = z
   .object({
     canceled: z.boolean().optional(),
-    keepBranch: z.boolean().optional(),
+    options: z.record(z.string(), z.unknown()).readonly().optional(),
   })
   .readonly();
 
@@ -453,6 +460,11 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
   readonly schemas = schemas;
 
+  constructor(
+    /** Every project type's options: what a delete's `options` is checked against. */
+    private readonly projectTypes: ProjectTypeOptions
+  ) {}
+
   async execute(
     ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>
   ): Promise<{ started: boolean }> {
@@ -553,12 +565,20 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     // Parks on the confirmation dialog BEFORE any pipeline work or progress
     // emission (and outside the safety net below — a confirm failure aborts
     // like a preflight failure, it never fakes a terminal progress event).
-    // A confirmed dispatch proceeds with the user's keepBranch answer and
+    // A confirmed dispatch proceeds with the options the user picked and
     // ignoreWarnings semantics: the dialog just showed the warnings.
-    let effectivePayload = payload;
+    //
+    // Options are checked against the workspace's project type first, before
+    // the dialog and before any teardown: a foreign one is the caller's mistake
+    // and fails the call with nothing touched.
+    let effectivePayload: DeleteWorkspacePayload = {
+      ...payload,
+      options: this.projectTypes.resolve(projectRef, "delete", payload.options),
+    };
     if (payload.interactive && payload.removeWorktree && !payload.force) {
       const confirmCtx: DeletePipelineHookInput = {
-        intent: ctx.intent,
+        // The checked options: the dialog starts from them.
+        intent: { ...ctx.intent, payload: effectivePayload },
         ...target,
         workspaceName,
         active,
@@ -571,17 +591,21 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       if (confirmResults.some((r) => r.canceled)) {
         return { hasErrors: false, identity, canceled: true };
       }
+      const picked = onlyDefined(confirmResults, "options", "workspace:delete confirm");
       effectivePayload = {
-        ...payload,
-        keepBranch:
-          onlyDefined(confirmResults, "keepBranch", "workspace:delete confirm") ??
-          payload.keepBranch,
+        ...effectivePayload,
+        ...(picked !== undefined && {
+          options: this.projectTypes.resolve(projectRef, "delete", {
+            ...payload.options,
+            ...picked,
+          }),
+        }),
         ignoreWarnings: true,
       };
     }
 
     // Build enriched context for downstream hooks. The intent carries the
-    // effective payload so hooks (e.g. the delete hook's keepBranch) see the
+    // effective payload so hooks (e.g. git's delete reading its keepBranch) see the
     // confirmed values.
     const pipelineCtx: DeletePipelineHookInput = {
       intent: { ...ctx.intent, payload: effectivePayload },
@@ -968,7 +992,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       type: EVENT_WORKSPACE_DELETION_PROGRESS,
       payload: {
         ...identity,
-        keepBranch: payload.keepBranch,
+        options: payload.options ?? {},
         operations,
         completed,
         hasErrors,

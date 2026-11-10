@@ -64,7 +64,19 @@ export const coreInputSchema = z.object({
 
 export type CoreInput = z.infer<typeof coreInputSchema>;
 
-const afterWorktreeCreatedInputSchema = coreInputSchema;
+/**
+ * The project type's options a creation or deletion ran with, by name, checked
+ * and with the type's defaults applied (git: `base`/`tracking` as the caller
+ * gave them; `keepBranch`, always present). Nested rather than spread into the
+ * input, so a type's option can never shadow a core field.
+ */
+const optionsSchema = z.record(z.string(), z.union([z.string(), z.boolean()]));
+
+/**
+ * Only a fresh creation fires this, so it alone among the open entries carries
+ * the create options: a reopen has none to give (`tracking` is never stored).
+ */
+const afterWorktreeCreatedInputSchema = coreInputSchema.extend({ options: optionsSchema });
 
 /**
  * Every entry that fires on an open says which kind of open it is. A genuinely
@@ -80,8 +92,8 @@ const openInputSchema = coreInputSchema.extend({
 const beforeWorkspaceOpenedInputSchema = openInputSchema;
 
 const beforeWorktreeDeletedInputSchema = coreInputSchema.extend({
-  /** The branch survives the deletion — so unmerged commits stay reachable. */
-  keepBranch: z.boolean(),
+  /** git: `keepBranch` — the branch survives, so unmerged commits stay reachable. */
+  options: optionsSchema,
 });
 
 const onWorkspaceOpenedInputSchema = openInputSchema;

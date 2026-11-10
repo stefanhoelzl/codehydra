@@ -9,14 +9,20 @@
  * and sends a dismiss both for Escape and when the panel is shown, so a
  * dismiss simply means "give me a fresh form".
  *
- * Responsibilities:
- * - Project row: dropdown of open projects + folder-open (native picker via
- *   the project:open select-folder hook) + git-clone (modal sub-dialog).
- * - Two-phase branch loading per project selection: cached bases display
- *   immediately (project:get-bases with refresh), the loading spinner stays
- *   on until the background refresh confirms via bases:updated.
- * - Per-field validation (name format / duplicates, no base branches) and
- *   Create-button gating, driven by field-change events.
+ * The form knows no project type. What differs by type comes from the type:
+ *
+ * - Project row: the add-project buttons modules contribute
+ *   (project:list-add-actions — core's folder picker, git's clone), then the
+ *   dropdown of open projects. A button runs its module's flow (project:add).
+ * - Option fields: the selected project's type's create options
+ *   (`ProjectTypeOptions`, from app:start), rendered after Name. A select with
+ *   dynamic choices loads in two phases per project selection: the type's fast
+ *   answer displays at once (project:get-option-choices with refresh), the
+ *   loading spinner stays on until the background refresh confirms via
+ *   option-choices:updated. The same answer carries the type's Name
+ *   suggestions; picking one sets the options it names (git: its base).
+ * - Per-field validation (name format / duplicates, a select without a value)
+ *   and Create-button gating, driven by field-change events.
  * - Submit: dispatches workspace:open (source "creation"). The enriched
  *   workspace:loading event drives the renderer's optimistic placeholder;
  *   workspace:create-failed rolls it back. The module just resets the form.
@@ -32,26 +38,30 @@ import type { UiPresenter } from "./presentation/presentation-module";
 import type { DialogConfig, DialogSection, DropdownSuggestionGroup } from "../shared/dialog-types";
 import type { Logger } from "../boundaries/platform/logging";
 import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";
-import type { Project, BaseInfo, AgentSpec } from "../shared/api/types";
+import type { Project, AgentSpec } from "../shared/api/types";
 import { validateWorkspaceName } from "../shared/api/types";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../boundaries/platform/config";
-import type { AppBoundary } from "../boundaries/shell/app";
-import { extractGitHubOwnerRepo, buildGitHubNewRepoUrl } from "../shared/github-utils";
 import { getErrorMessage } from "../shared/error-utils";
 import { EVENT_APP_STARTED } from "../intents/app-ready";
-import {
-  EVENT_PROJECT_OPENED,
-  EVENT_CLONE_PROGRESS,
-  INTENT_OPEN_PROJECT,
-  type OpenProjectIntent,
-} from "../intents/open-project";
+import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import { EVENT_PROJECT_CLOSED } from "../intents/close-project";
 import {
-  EVENT_BASES_UPDATED,
-  INTENT_GET_PROJECT_BASES,
-  type GetProjectBasesIntent,
-} from "../intents/get-project-bases";
+  EVENT_OPTION_CHOICES_UPDATED,
+  INTENT_GET_OPTION_CHOICES,
+  type FieldChoices,
+  type GetOptionChoicesIntent,
+  type GetOptionChoicesResult,
+  type NameSuggestion,
+} from "../intents/get-option-choices";
+import {
+  INTENT_ADD_PROJECT,
+  INTENT_LIST_ADD_ACTIONS,
+  type AddProjectAction,
+  type AddProjectIntent,
+  type ListAddActionsIntent,
+} from "../intents/add-project";
+import type { OptionField, ProjectTypeOptions } from "../intents/project-type-options";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import {
   INTENT_OPEN_WORKSPACE,
@@ -75,7 +85,8 @@ import { defineEvents } from "../intents/declarations";
 export interface CreationModuleDeps {
   readonly ui: Pick<UiPresenter, "dialog">;
   readonly dispatcher: Dispatcher;
-  readonly appBoundary: Pick<AppBoundary, "openUrl">;
+  /** Every project type's create options: the fields a selected project's type adds. */
+  readonly projectTypes: ProjectTypeOptions;
   /** Global default agent (config.agent). */
   readonly agentConfig: PersistedAccessor<ConfigAgentType>;
   /** Agents whose binaries are currently present (same source as app:ready). */
@@ -89,60 +100,36 @@ export interface CreationModuleDeps {
 
 const FIELD_PROJECT = "project";
 const FIELD_NAME = "name";
-const FIELD_BASE = "base";
 const FIELD_PROMPT = "prompt";
 const FIELD_AGENT = "agent";
 const FIELD_AGENT_NAME = "agent-name";
 const FIELD_PERMISSION_MODE = "permission-mode";
-const ACTION_OPEN_FOLDER = "open-folder";
-const ACTION_CLONE = "clone";
 const ACTION_CREATE = "create";
 const ACTION_RESET = "reset";
 
-const CLONE_FIELD_URL = "url";
-const CLONE_ACTION_SUBMIT = "do-clone";
-const CLONE_ACTION_CANCEL = "cancel";
-const CLONE_ACTION_BACKGROUND = "background";
-const CLONE_ACTION_GITHUB_CREATE = "github-create";
-const CLONE_ACTION_RETRY = "retry";
-
 /**
- * The line of a clone error worth showing: git's last output line (its
- * `fatal: …` reason), without the "Cloning into bare repository '<path>'"
- * progress line before it. Display only — it decides nothing; the full text
- * stays in the log.
+ * Ids the form uses itself. A type's option is a field of its own name (option
+ * names are camelCase and the core input's names are reserved, so they cannot
+ * meet these); a contributed button with one of these ids is not shown.
  */
-function cloneFailureReason(error: string): string {
-  const lines = error
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-  return lines[lines.length - 1] ?? error;
-}
-
-// =============================================================================
-// Clone URL validation (mirrors the old GitCloneDialog rules)
-// =============================================================================
-
-/** Returns an error message for an invalid clone URL, or null when valid/empty. */
-export function validateCloneUrl(url: string): string | null {
-  const trimmed = url.trim();
-  if (!trimmed) return null;
-  // Full URL formats (HTTPS, HTTP, SSH, git://, ssh://)
-  if (/^https?:\/\/[^\s]+/.test(trimmed)) return null;
-  if (/^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+:[^\s]+/.test(trimmed)) return null;
-  if (/^git:\/\/[^\s]+/.test(trimmed)) return null;
-  if (/^ssh:\/\/[^\s]+/.test(trimmed)) return null;
-  // Shorthand: org/repo (GitHub shorthand - no dots in first segment)
-  if (/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/.test(trimmed)) return null;
-  // Partial URL: github.com/org/repo (domain without protocol)
-  if (/^[a-z0-9.-]+\/[^\s]+$/i.test(trimmed) && trimmed.includes(".")) return null;
-  return "Enter a git URL, org/repo, or github.com/org/repo";
-}
+const CORE_IDS: ReadonlySet<string> = new Set([
+  FIELD_PROJECT,
+  FIELD_NAME,
+  FIELD_PROMPT,
+  FIELD_AGENT,
+  FIELD_AGENT_NAME,
+  FIELD_PERMISSION_MODE,
+  ACTION_CREATE,
+  ACTION_RESET,
+  "project-placeholder",
+]);
 
 // =============================================================================
 // Form state
 // =============================================================================
+
+/** A select's choices as the form shows them: what the type answered, or none yet. */
+const NO_CHOICES: FieldChoices = { choices: [] };
 
 /** What the creation form shows. One per session: a reset starts from `initialForm()`. */
 interface FormState {
@@ -158,12 +145,20 @@ interface FormState {
   /** The backend whose launch options are currently being fetched (if any). */
   loadingLaunchOptionsFor: LifecycleAgentType | null;
   projectRef: ProjectRef | null;
-  branches: readonly BaseInfo[];
-  branchesLoading: boolean;
-  branchesError: string | null;
-  /** Raw name field value (a branch ref after a suggestion pick). */
+  /** The selected project's type's dynamic choices, by option name. */
+  choices: Readonly<Record<string, FieldChoices>>;
+  /** The type's suggestions for the Name field. */
+  nameSuggestions: readonly NameSuggestion[];
+  /** Waiting for the type's choices to be confirmed by a refresh. */
+  choicesLoading: boolean;
+  choicesError: string | null;
+  /** Raw name field value (a suggestion's value after a pick). */
   name: string;
-  base: string;
+  /**
+   * The selected project's type's option values, by option name. A checkbox
+   * holds "true"/"false", as the dialog reports it.
+   */
+  options: Record<string, string>;
   /**
    * Prompt / agent-name / permission-mode field values.
    *
@@ -182,9 +177,9 @@ interface FormState {
    * (selectProject) never counts as input.
    */
   dirty: boolean;
-  /** Native folder picker in flight. */
-  pickerBusy: boolean;
-  /** Form-level error (e.g. folder-open failure), shown above the footer. */
+  /** The add-project action whose flow is running (a picker, a sub-dialog). */
+  busyAction: string | null;
+  /** Form-level error (e.g. an add-project failure), shown above the footer. */
   error: string | null;
 }
 
@@ -194,16 +189,17 @@ function initialForm(): FormState {
     launchOptions: null,
     loadingLaunchOptionsFor: null,
     projectRef: null,
-    branches: [],
-    branchesLoading: false,
-    branchesError: null,
+    choices: {},
+    nameSuggestions: [],
+    choicesLoading: false,
+    choicesError: null,
     name: "",
-    base: "",
+    options: {},
     prompt: "",
     agentName: "",
     permissionMode: "",
     dirty: false,
-    pickerBusy: false,
+    busyAction: null,
     error: null,
   };
 }
@@ -256,8 +252,10 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
   let presetProjectRef: ProjectRef | null = null;
   /** Guards against overlapping resets (dismiss bursts). */
   let resetting = false;
-  /** Invalidates in-flight branch fetches when the selection changes. */
+  /** Invalidates in-flight choice fetches when the selection changes. */
   let selectionEpoch = 0;
+  /** The add-project buttons modules contribute, fetched at each session open. */
+  let addActions: readonly AddProjectAction[] = [];
 
   let handle: DialogHandle | null = null;
   /** Strips the autofocus flag for one config build (focus re-arm nudge). */
@@ -267,6 +265,49 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
 
   function selectedProject(): Project | undefined {
     return projects.find((p) => p.ref === form.projectRef);
+  }
+
+  /** The create options the selected project's type shows in the dialog, in declared order. */
+  function optionFields(projectRef: ProjectRef | null = form.projectRef): [string, OptionField][] {
+    if (projectRef === null) return [];
+    const type = deps.projectTypes.typeOf(projectRef);
+    return Object.entries(deps.projectTypes.fieldsOf(type, "create")).filter(
+      ([, field]) => field.dialog !== false
+    );
+  }
+
+  /** A select's choices: static from the description, dynamic from the type's answer. */
+  function choicesOf(name: string, field: OptionField): FieldChoices {
+    if (field.choices === "dynamic") return form.choices[name] ?? NO_CHOICES;
+    return { choices: field.choices ?? [] };
+  }
+
+  /** Whether a value is one of a select's current choices. */
+  function isChoice(name: string, value: string): boolean {
+    const field = optionFields().find(([n]) => n === name)?.[1];
+    if (field === undefined || field.kind !== "select") return false;
+    return choicesOf(name, field).choices.some((choice) => choice.value === value);
+  }
+
+  /** A select's value for fresh choices: the type's default when offered, else the first. */
+  function pickDefault(choices: FieldChoices): string {
+    if (choices.default !== undefined && choices.choices.some((c) => c.value === choices.default)) {
+      return choices.default;
+    }
+    return choices.choices[0]?.value ?? "";
+  }
+
+  /** The option values a project's type starts from: its declared defaults. */
+  function initialOptions(projectRef: ProjectRef): Record<string, string> {
+    const options: Record<string, string> = {};
+    for (const [name, field] of optionFields(projectRef)) {
+      if (field.kind === "checkbox") options[name] = String(field.default === true);
+      else if (typeof field.default === "string") options[name] = field.default;
+      else if (field.kind === "select" && field.choices !== "dynamic") {
+        options[name] = field.choices?.[0]?.value ?? "";
+      } else options[name] = "";
+    }
+    return options;
   }
 
   /** The configured global default agent (already validated by the store). */
@@ -355,12 +396,11 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
   }
 
   /**
-   * Resolve the raw name field value: a suggestion pick reports the branch
-   * ref (unique value) while displaying its derivable name — map it back.
+   * Resolve the raw name field value: a suggestion pick reports the
+   * suggestion's unique value while displaying the name it gives — map it back.
    */
   function resolveName(raw: string): string {
-    const branch = form.branches.find((b) => b.name === raw && b.derives !== undefined);
-    return branch?.derives ?? raw;
+    return form.nameSuggestions.find((s) => s.value === raw)?.label ?? raw;
   }
 
   /** Per-field name error: format violations and duplicates. Empty = no error. */
@@ -380,97 +420,99 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     return (
       selectedProject() !== undefined &&
       resolveName(form.name).trim() !== "" &&
-      form.base !== "" &&
+      // A select always carries a value; without one there is nothing to create from.
+      optionFields().every(
+        ([name, field]) => field.kind !== "select" || (form.options[name] ?? "") !== ""
+      ) &&
       nameError(form.name) === null &&
-      !form.pickerBusy
+      form.busyAction === null
     );
-  }
-
-  /** Pick the base to select for a fresh branch list. */
-  function pickDefaultBase(
-    defaultBaseBranch: string | undefined,
-    bases: readonly BaseInfo[]
-  ): string {
-    if (defaultBaseBranch !== undefined && bases.some((b) => b.name === defaultBaseBranch)) {
-      return defaultBaseBranch;
-    }
-    return bases[0]?.name ?? "";
   }
 
   // ---- Config building ----
 
-  /** Branch list grouped Local/Remote (label = value = ref name). */
-  function baseSuggestions(): DropdownSuggestionGroup[] {
-    const local = form.branches.filter((b) => !b.isRemote);
-    const remote = form.branches.filter((b) => b.isRemote);
-    const groups: DropdownSuggestionGroup[] = [];
-    if (local.length > 0) {
-      groups.push({
-        header: "Local Branches",
-        items: local.map((b) => ({ value: b.name, label: b.name })),
-      });
-    }
-    if (remote.length > 0) {
-      groups.push({
-        header: "Remote Branches",
-        items: remote.map((b) => ({ value: b.name, label: b.name })),
-      });
+  /** Items grouped under their headings, in the order the groups first appear. */
+  function grouped(
+    items: readonly {
+      readonly value: string;
+      readonly label?: string | undefined;
+      readonly group?: string | undefined;
+    }[]
+  ): DropdownSuggestionGroup[] {
+    const groups: { header?: string; items: { value: string; label: string }[] }[] = [];
+    for (const item of items) {
+      let group = groups.find((g) => g.header === item.group);
+      if (group === undefined) {
+        group = item.group === undefined ? { items: [] } : { header: item.group, items: [] };
+        groups.push(group);
+      }
+      group.items.push({ value: item.value, label: item.label ?? item.value });
     }
     return groups;
   }
 
-  /**
-   * Name suggestions: derivable branches grouped Local/Remote. The option
-   * value is the unique branch ref; the label is the derivable workspace name
-   * (what the input displays after a pick).
-   */
-  function nameSuggestions(): DropdownSuggestionGroup[] {
-    const derivable = form.branches.filter((b) => b.derives !== undefined);
-    const local = derivable.filter((b) => !b.isRemote);
-    const remote = derivable.filter((b) => b.isRemote);
-    const groups: DropdownSuggestionGroup[] = [];
-    if (local.length > 0) {
-      groups.push({
-        header: "Local Branches",
-        items: local.map((b) => ({ value: b.name, label: b.derives! })),
-      });
+  /** One of the selected project's type's options, as a form field. */
+  function optionSection(name: string, field: OptionField, hasProject: boolean): DialogSection {
+    const common = {
+      id: name,
+      label: field.label ?? name,
+      disabled: !hasProject || form.busyAction !== null,
+      changeEvent: true,
+    } as const;
+    const value = form.options[name] ?? "";
+    switch (field.kind) {
+      case "checkbox":
+        return { type: "checkbox", ...common, value: value === "true" };
+      case "text":
+        return {
+          type: "input",
+          ...common,
+          // Seeded, not controlled — see FIELD_NAME: echoing typed text back races typing.
+          initialValue: value,
+          ...(field.placeholder !== undefined && { placeholder: field.placeholder }),
+        };
+      case "select": {
+        const dynamic = field.choices === "dynamic";
+        const choices = choicesOf(name, field);
+        const error = dynamic
+          ? (form.choicesError ??
+            (!form.choicesLoading && choices.choices.length === 0 ? choices.empty : undefined))
+          : undefined;
+        return {
+          type: "dropdown",
+          ...common,
+          suggestions: grouped(choices.choices),
+          value,
+          placeholder: field.placeholder ?? "Select...",
+          ...(dynamic && { loading: form.choicesLoading }),
+          ...(error !== undefined && { error }),
+        };
+      }
     }
-    if (remote.length > 0) {
-      groups.push({
-        header: "Remote Branches",
-        items: remote.map((b) => ({ value: b.name, label: b.derives! })),
-      });
-    }
-    return groups;
   }
 
   function buildConfig(): DialogConfig {
     const hasProject = selectedProject() !== undefined;
     const currentNameError = nameError(form.name);
+    const busy = form.busyAction !== null;
+    const buttons = addActions.filter((action) => !CORE_IDS.has(action.id));
     const sections: DialogSection[] = [
       { type: "text", content: "New workspace", style: "heading" },
       {
         type: "group",
         label: "Project",
         items: [
-          // Icon buttons lead the row so the tab order matches the visuals:
-          // folder -> clone -> project dropdown.
-          {
+          // The contributed buttons lead the row so the tab order matches the
+          // visuals: buttons (in module registration order) -> project dropdown.
+          ...buttons.map((action, index) => ({
             type: "button" as const,
-            id: ACTION_OPEN_FOLDER,
-            icon: "folder-opened",
-            title: "Open project folder",
-            busy: form.pickerBusy,
-            // Without a project the picker buttons are the only way forward.
-            ...(!hasProject && { autofocus: true }),
-          },
-          {
-            type: "button" as const,
-            id: ACTION_CLONE,
-            icon: "source-control",
-            title: "Clone from Git",
-            disabled: form.pickerBusy,
-          },
+            id: action.id,
+            icon: action.icon,
+            title: action.title,
+            ...(form.busyAction === action.id ? { busy: true } : { disabled: busy }),
+            // Without a project the buttons are the only way forward.
+            ...(!hasProject && index === 0 && { autofocus: true }),
+          })),
           ...(projects.length > 0
             ? [
                 {
@@ -479,14 +521,14 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
                   suggestions: [{ items: projects.map((p) => ({ value: p.ref, label: p.name })) }],
                   value: form.projectRef ?? "",
                   changeEvent: true,
-                  disabled: form.pickerBusy,
+                  disabled: busy,
                 },
               ]
             : [
                 {
                   type: "input" as const,
                   id: "project-placeholder",
-                  placeholder: "Open folder or clone from Git",
+                  placeholder: "Open or add a project",
                   disabled: true,
                 },
               ]),
@@ -497,7 +539,7 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
         id: FIELD_NAME,
         label: "Name",
         freeText: true,
-        suggestions: nameSuggestions(),
+        suggestions: grouped(form.nameSuggestions),
         // Seeded (not controlled) so a remembered name survives the Form
         // remount the panel does on every show. `initialValue` applies on first
         // sight only and never re-seeds a live field, so echoing the user's own
@@ -507,24 +549,16 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
         // A restored name arrives selected, so typing replaces it instead of
         // appending to text the user would have to clear by hand.
         selectInitialValue: true,
-        placeholder: "Enter name or select branch...",
+        placeholder:
+          form.nameSuggestions.length > 0
+            ? "Enter name or select a suggestion..."
+            : "Enter name...",
         changeEvent: true,
-        disabled: !hasProject || form.pickerBusy,
+        disabled: !hasProject || busy,
         ...(hasProject && !suppressAutofocus && { autofocus: true }),
         ...(currentNameError !== null && { error: currentNameError }),
       },
-      {
-        type: "dropdown",
-        id: FIELD_BASE,
-        label: "Base Branch",
-        suggestions: baseSuggestions(),
-        value: form.base,
-        placeholder: "Select branch...",
-        changeEvent: true,
-        loading: form.branchesLoading,
-        disabled: !hasProject || form.pickerBusy,
-        ...(form.branchesError !== null && { error: form.branchesError }),
-      },
+      ...optionFields().map(([name, field]) => optionSection(name, field, hasProject)),
       {
         type: "input",
         id: FIELD_PROMPT,
@@ -633,26 +667,45 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     }
   }
 
+  async function refreshAddActions(): Promise<void> {
+    try {
+      const intent: ListAddActionsIntent = { type: INTENT_LIST_ADD_ACTIONS, payload: {} };
+      addActions = await dispatcher.dispatch(intent);
+    } catch (error) {
+      logger.warn("Creation form: add-project actions failed", { error: getErrorMessage(error) });
+    }
+  }
+
+  /** Take a choices answer: dynamic selects re-default to it (all, or only stale ones). */
+  function applyChoices(result: GetOptionChoicesResult, keepValid: boolean): void {
+    form.choices = result.fields;
+    form.nameSuggestions = result.nameSuggestions;
+    for (const [name, field] of optionFields()) {
+      if (field.kind !== "select" || field.choices !== "dynamic") continue;
+      const choices = choicesOf(name, field);
+      const current = form.options[name] ?? "";
+      if (keepValid && choices.choices.some((c) => c.value === current)) continue;
+      form.options[name] = pickDefault(choices);
+    }
+  }
+
   /**
-   * Select a project: clear branch data, push the loading state, then fetch
-   * the cached bases (refresh kicks the background git fetch whose result
-   * arrives via bases:updated and turns the spinner off).
+   * Select a project: start from its type's option defaults, push the loading
+   * state, then fetch the type's choices (its fast answer first; refresh kicks
+   * the background refresh whose result arrives via option-choices:updated and
+   * turns the spinner off).
    *
    * refocusName re-arms the renderer's autofocus-move detection (a push
    * without the flag, then the regular config) so the name field gets focused
-   * even when it already carried the flag — used by the folder-open and
-   * git-clone flows.
+   * even when it already carried the flag — used after an add-project flow.
    */
   function selectProject(projectRef: ProjectRef, options?: { refocusName?: boolean }): void {
     form.projectRef = projectRef;
-    form.branches = [];
-    form.branchesLoading = true;
-    form.branchesError = null;
-    // Seed the base field from the project's known default (computed at
-    // project:open, carried on the project list) so it paints on the first
-    // frame instead of after the git round-trip. The async list/refresh below
-    // validates and, if needed, re-defaults it.
-    form.base = projects.find((p) => p.ref === projectRef)?.defaultBaseBranch ?? "";
+    form.choices = {};
+    form.nameSuggestions = [];
+    form.choicesLoading = true;
+    form.choicesError = null;
+    form.options = initialOptions(projectRef);
     form.error = null;
     const epoch = ++selectionEpoch;
     if (options?.refocusName) {
@@ -662,22 +715,21 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     }
     pushConfig();
 
-    const intent: GetProjectBasesIntent = {
-      type: INTENT_GET_PROJECT_BASES,
+    const intent: GetOptionChoicesIntent = {
+      type: INTENT_GET_OPTION_CHOICES,
       payload: { projectRef, refresh: true },
     };
     dispatcher.dispatch(intent).then(
       (result) => {
         if (epoch !== selectionEpoch) return;
-        form.branches = result.bases;
-        form.base = pickDefaultBase(result.defaultBaseBranch, result.bases);
-        // Loading stays on until bases:updated confirms the fresh list.
+        applyChoices(result, false);
+        // Loading stays on until option-choices:updated confirms the fresh list.
         pushConfig();
       },
       (error: unknown) => {
         if (epoch !== selectionEpoch) return;
-        form.branchesError = getErrorMessage(error);
-        form.branchesLoading = false;
+        form.choicesError = getErrorMessage(error);
+        form.choicesLoading = false;
         pushConfig();
       }
     );
@@ -707,12 +759,14 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     form = initialForm();
 
     await refreshProjects();
+    await refreshAddActions();
     availableAgents = await deps.getAvailableAgents();
     form.agentType = resolveInitialAgentType();
     const seed = computeSeedProject();
     if (seed !== null) {
       form.projectRef = seed;
-      form.branchesLoading = true;
+      form.options = initialOptions(seed);
+      form.choicesLoading = true;
     }
 
     const newHandle = ui.dialog(buildConfig(), { kind: "modeless" });
@@ -722,7 +776,7 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     // Fetch the selected backend's launch options for the opening form.
     void loadLaunchOptions();
 
-    // Kick the branch load for the seeded project (re-selects to fetch).
+    // Kick the choices load for the seeded project (re-selects to fetch).
     if (seed !== null) {
       selectProject(seed);
     }
@@ -733,7 +787,6 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     if (resetting) return;
     resetting = true;
     try {
-      closeCloneDialog();
       handle?.close();
       handle = null;
       await openSession();
@@ -758,15 +811,12 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     [FIELD_NAME]: (value) => {
       form.name = value;
       form.error = null;
-      // Picking an existing branch suggests its base.
-      const branch = form.branches.find((b) => b.name === value && b.derives !== undefined);
-      if (branch?.base !== undefined && form.branches.some((b) => b.name === branch.base)) {
-        form.base = branch.base;
+      // Picking a suggestion sets the options it names (git: an existing
+      // branch suggests its base), each only when it is one of the choices.
+      const suggestion = form.nameSuggestions.find((s) => s.value === value);
+      for (const [name, optionValue] of Object.entries(suggestion?.sets ?? {})) {
+        if (isChoice(name, optionValue)) form.options[name] = optionValue;
       }
-      pushConfig();
-    },
-    [FIELD_BASE]: (value) => {
-      form.base = value;
       pushConfig();
     },
     [FIELD_PROMPT]: (value) => {
@@ -801,7 +851,15 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
         form.dirty = true;
         pushConfig();
       }
-      fieldChanges[event.fieldId]?.(event.data[event.fieldId] ?? "");
+      const value = event.data[event.fieldId] ?? "";
+      const change = fieldChanges[event.fieldId];
+      if (change !== undefined) {
+        change(value);
+      } else if (optionFields().some(([name]) => name === event.fieldId)) {
+        // One of the project type's options.
+        form.options[event.fieldId] = value;
+        pushConfig();
+      }
     });
 
     sessionHandle.onEvent((event) => {
@@ -810,10 +868,8 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
         handleCreate(event.data ?? {});
       } else if (event.actionId === ACTION_RESET) {
         void resetSession();
-      } else if (event.actionId === ACTION_OPEN_FOLDER) {
-        handleOpenFolder();
-      } else if (event.actionId === ACTION_CLONE) {
-        openCloneDialog();
+      } else if (addActions.some((action) => action.id === event.actionId)) {
+        handleAddAction(event.actionId);
       }
     });
 
@@ -829,19 +885,24 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     // Adopt the snapshot (the debounced name change may not have arrived yet)
     // and re-validate before dispatching.
     form.name = data[FIELD_NAME] ?? form.name;
-    form.base = data[FIELD_BASE] ?? form.base;
+    for (const [name] of optionFields()) {
+      const value = data[name];
+      if (value !== undefined) form.options[name] = value;
+    }
     const project = selectedProject();
     const workspaceName = resolveName(form.name).trim();
-    const base = form.base;
 
-    if (
-      project === undefined ||
-      workspaceName === "" ||
-      base === "" ||
-      nameError(form.name) !== null
-    ) {
+    if (project === undefined || workspaceName === "" || !isFormValid()) {
       pushConfig();
       return;
+    }
+
+    // The type's options as its declaration types them; an empty text is "not given".
+    const options: Record<string, string | boolean> = {};
+    for (const [name, field] of optionFields()) {
+      const value = form.options[name] ?? "";
+      if (field.kind === "checkbox") options[name] = value === "true";
+      else if (value.trim() !== "") options[name] = value.trim();
     }
 
     const prompt = (data[FIELD_PROMPT] ?? "").trim();
@@ -886,7 +947,7 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
       payload: {
         projectRef: project.ref,
         workspaceName,
-        base,
+        options,
         ...(agent !== undefined && { agent }),
         source: "creation",
       },
@@ -910,20 +971,25 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     void resetSession();
   }
 
-  function handleOpenFolder(): void {
-    if (form.pickerBusy) return;
-    form.pickerBusy = true;
+  /**
+   * Run a contributed add-project button's flow. While it runs, its button
+   * spins and the rest of the row waits; the project it opens becomes the
+   * form's selection.
+   */
+  function handleAddAction(action: string): void {
+    if (form.busyAction !== null) return;
+    form.busyAction = action;
     form.error = null;
     pushConfig();
+    const session = handle;
 
-    // `initial`: the user is adding this project right now, so the add-project
-    // worktree picker may interrupt. Startup restore and auto-workspace omit it.
-    const intent: OpenProjectIntent = { type: INTENT_OPEN_PROJECT, payload: { initial: true } };
+    const intent: AddProjectIntent = { type: INTENT_ADD_PROJECT, payload: { action } };
     dispatcher.dispatch(intent).then(
       (project) => {
-        form.pickerBusy = false;
+        if (handle !== session) return;
+        form.busyAction = null;
         if (project === null) {
-          // User canceled the native picker.
+          // Canceled, or left to finish in the background.
           pushConfig();
           return;
         }
@@ -933,247 +999,16 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
         });
       },
       (error: unknown) => {
-        form.pickerBusy = false;
+        if (handle !== session) return;
+        form.busyAction = null;
         form.error = getErrorMessage(error);
-        logger.warn("Failed to open project from creation form", { error: form.error });
+        logger.warn("Failed to add a project from the creation form", {
+          action,
+          error: form.error,
+        });
         pushConfig();
       }
     );
-  }
-
-  // ---- Clone sub-dialog ----
-
-  interface CloneViewState {
-    url: string;
-    /** The URL this dialog submitted (null = not cloning). */
-    cloneUrl: string | null;
-    error: string | null;
-    /** Latest clone progress (from clone:progress events) while cloning. */
-    progress: { stage: string; progress: number } | null;
-  }
-
-  interface CloneDialogState extends CloneViewState {
-    readonly handle: DialogHandle;
-  }
-
-  let cloneDialog: CloneDialogState | null = null;
-
-  function buildCloneConfig(state: CloneViewState): DialogConfig {
-    const cloning = state.cloneUrl !== null;
-    const validationError = validateCloneUrl(state.url);
-    const gitHubInfo = state.error !== null ? extractGitHubOwnerRepo(state.url.trim()) : null;
-
-    const sections: DialogSection[] = [
-      { type: "text", content: "Clone from Git Repository", style: "heading" },
-      {
-        type: "input",
-        id: CLONE_FIELD_URL,
-        label: "Repository URL",
-        placeholder: "org/repo or https://github.com/org/repo.git",
-        // Immediate so the Clone button's enabled state can't lag behind the
-        // typed URL when the user hits Enter right after typing.
-        changeEvent: { debounceMs: 0 },
-        disabled: cloning,
-        autofocus: true,
-        ...(validationError !== null && { error: validationError }),
-      },
-    ];
-
-    if (cloning) {
-      sections.push({
-        type: "progress",
-        items: [
-          {
-            id: "clone",
-            label: "Cloning repository",
-            status: "running",
-            ...(state.progress !== null && {
-              progress: state.progress.progress,
-              message: state.progress.stage,
-            }),
-          },
-        ],
-      });
-    }
-
-    if (state.error !== null && gitHubInfo !== null) {
-      // GitHub answers a missing repository and one the user's credentials
-      // cannot read alike, so the dialog never claims which it is: it offers
-      // both ways out (git's own reason is in the log).
-      sections.push(
-        {
-          type: "text",
-          content:
-            "GitHub reports a missing repository and one your git credentials can't read " +
-            "the same way. If the repository exists, check that git on this machine is " +
-            "signed in with an account or token that can access it.",
-          style: "subtitle",
-        },
-        { type: "text", content: "Repository doesn't exist yet?" },
-        {
-          type: "group",
-          align: "left",
-          items: [
-            {
-              type: "button",
-              id: CLONE_ACTION_GITHUB_CREATE,
-              label: "Create on GitHub",
-              icon: "github",
-            },
-          ],
-        },
-        {
-          type: "text",
-          content: "Initialize it with a README so it can be cloned.",
-          icon: "warning",
-          style: "subtitle",
-        }
-      );
-    } else if (state.error !== null) {
-      sections.push({ type: "text", content: cloneFailureReason(state.error), icon: "error" });
-    }
-
-    const footer: DialogSection = cloning
-      ? {
-          type: "group",
-          align: "right",
-          // role "cancel": mid-clone, Escape detaches like this button.
-          items: [
-            {
-              type: "button",
-              id: CLONE_ACTION_BACKGROUND,
-              label: "Continue in background",
-              role: "cancel",
-            },
-          ],
-        }
-      : {
-          // Tab order: input -> Clone -> Cancel; visually Cancel sits left of
-          // the primary (reverse rendering).
-          type: "group",
-          align: "right",
-          reverse: true,
-          items: [
-            gitHubInfo !== null
-              ? { type: "button" as const, id: CLONE_ACTION_RETRY, label: "Retry Clone" }
-              : {
-                  type: "button" as const,
-                  id: CLONE_ACTION_SUBMIT,
-                  label: "Clone",
-                  variant: "primary" as const,
-                  disabled: state.url.trim() === "" || validationError !== null,
-                },
-            {
-              type: "button" as const,
-              id: CLONE_ACTION_CANCEL,
-              label: "Cancel",
-              variant: "secondary" as const,
-              role: "cancel" as const,
-            },
-          ],
-        };
-    sections.push(footer);
-
-    return { sections, layout: "form" };
-  }
-
-  function updateCloneDialog(): void {
-    if (cloneDialog === null) return;
-    cloneDialog.handle.update(buildCloneConfig(cloneDialog));
-  }
-
-  function closeCloneDialog(): void {
-    if (cloneDialog === null) return;
-    cloneDialog.handle.close();
-    cloneDialog = null;
-  }
-
-  function startClone(state: CloneDialogState): void {
-    const url = state.url.trim();
-    if (url === "" || validateCloneUrl(url) !== null || state.cloneUrl !== null) return;
-    state.error = null;
-    state.cloneUrl = url;
-    state.progress = null;
-    updateCloneDialog();
-    logger.debug("Cloning repository", { url });
-
-    const intent: OpenProjectIntent = {
-      type: INTENT_OPEN_PROJECT,
-      payload: { git: url, initial: true },
-    };
-    dispatcher.dispatch(intent).then(
-      (project) => {
-        // Only react if this dialog instance still owns the clone.
-        if (cloneDialog !== state || state.cloneUrl !== url) return;
-        closeCloneDialog();
-        if (project !== null) {
-          pendingSeedProjectRef = null;
-          void refreshProjects().then(() => {
-            selectProject(project.ref, { refocusName: true });
-          });
-        }
-      },
-      (error: unknown) => {
-        if (cloneDialog !== state || state.cloneUrl !== url) return;
-        state.error = getErrorMessage(error);
-        state.cloneUrl = null;
-        state.progress = null;
-        logger.warn("Clone failed", { url, error: state.error });
-        updateCloneDialog();
-      }
-    );
-  }
-
-  function openCloneDialog(): void {
-    if (cloneDialog !== null) return;
-    const initial: CloneViewState = { url: "", cloneUrl: null, error: null, progress: null };
-    const cloneHandle = ui.dialog(buildCloneConfig(initial));
-    const state: CloneDialogState = { ...initial, handle: cloneHandle };
-    cloneDialog = state;
-
-    cloneHandle.onChange((event) => {
-      if (cloneDialog !== state) return;
-      if (event.fieldId === CLONE_FIELD_URL) {
-        state.url = event.data[CLONE_FIELD_URL] ?? "";
-        // Clear the submit error when the user types (mirrors the old dialog).
-        if (state.error !== null) state.error = null;
-        updateCloneDialog();
-      }
-    });
-
-    // Escape is declarative: the footer's cancel-role button (Cancel when
-    // idle/error, "Continue in background" mid-clone) is clicked through the
-    // action path below.
-    cloneHandle.onEvent((event) => {
-      if (cloneDialog !== state) return;
-      state.url = event.data?.[CLONE_FIELD_URL] ?? state.url;
-      switch (event.actionId) {
-        case CLONE_ACTION_SUBMIT:
-          startClone(state);
-          break;
-        case CLONE_ACTION_RETRY:
-          state.error = null;
-          startClone(state);
-          break;
-        case CLONE_ACTION_BACKGROUND:
-          // Detach: the clone keeps running; project:opened lands silently.
-          logger.debug("Clone continuing in background", { url: state.cloneUrl });
-          closeCloneDialog();
-          break;
-        case CLONE_ACTION_CANCEL:
-          if (state.cloneUrl === null) closeCloneDialog();
-          break;
-        case CLONE_ACTION_GITHUB_CREATE: {
-          const gitHubInfo = extractGitHubOwnerRepo(state.url.trim());
-          if (gitHubInfo !== null) {
-            const createUrl = buildGitHubNewRepoUrl(gitHubInfo.owner, gitHubInfo.repo);
-            logger.info("Opening GitHub repo creation", { url: createUrl });
-            void deps.appBoundary.openUrl(createUrl);
-          }
-          break;
-        }
-      }
-    });
   }
 
   // ---- Domain event subscriptions ----
@@ -1210,41 +1045,25 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
             return;
           }
           form.projectRef = null;
-          form.branches = [];
-          form.branchesLoading = false;
-          form.branchesError = null;
-          form.base = "";
+          form.choices = {};
+          form.nameSuggestions = [];
+          form.choicesLoading = false;
+          form.choicesError = null;
+          form.options = {};
         }
         pushConfig();
       },
     },
-    [EVENT_BASES_UPDATED]: {
+    [EVENT_OPTION_CHOICES_UPDATED]: {
       handler: async (event): Promise<void> => {
         const payload = event.payload;
         if (payload.projectRef !== form.projectRef) return;
-        form.branches = payload.bases;
-        form.branchesLoading = false;
-        form.branchesError = payload.bases.length === 0 ? "No base branches available" : null;
-        // The fresh list is authoritative: re-default a selection it no
+        form.choicesLoading = false;
+        form.choicesError = null;
+        // The fresh answer is authoritative: re-default a selection it no
         // longer contains.
-        if (!payload.bases.some((b) => b.name === form.base)) {
-          form.base = pickDefaultBase(payload.defaultBaseBranch, payload.bases);
-        }
+        applyChoices(payload, true);
         pushConfig();
-      },
-    },
-    [EVENT_CLONE_PROGRESS]: {
-      handler: async (event): Promise<void> => {
-        // Inline progress in the clone sub-dialog (the clone-notification
-        // module independently shows the sidebar notification). The event
-        // carries progress 0-1; ProgressItem expects 0-100.
-        const payload = event.payload;
-        if (cloneDialog === null || cloneDialog.cloneUrl !== payload.url) return;
-        cloneDialog.progress = {
-          stage: payload.stage,
-          progress: Math.round(payload.progress * 100),
-        };
-        updateCloneDialog();
       },
     },
     [EVENT_WORKSPACE_SWITCHED]: {

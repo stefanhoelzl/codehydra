@@ -589,9 +589,12 @@ export async function collapseSidebar(ui: Page): Promise<void> {
   );
 }
 
-/** The workspace-name field. Its placeholder also contains "select branch", so match exactly. */
+/**
+ * The workspace-name field: "Enter name..." until the project's type offers
+ * name suggestions, "Enter name or select a suggestion..." once it does.
+ */
 export function nameField(ui: Page): Locator {
-  return ui.getByRole("combobox", { name: "Enter name or select branch...", exact: true });
+  return ui.getByRole("combobox", { name: /^Enter name/ });
 }
 
 /** The base-branch field. */

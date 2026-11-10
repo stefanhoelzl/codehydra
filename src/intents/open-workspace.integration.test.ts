@@ -80,6 +80,8 @@ import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 import { makeWorkspaceRef } from "../utils/ref";
 import { gitProjectRef } from "../modules/git/ref";
 import type { WorkspacePath } from "./contract";
+import { testProjectTypes } from "./project-type-options.test-utils";
+import { ApiError } from "../api/errors";
 
 // =============================================================================
 // Test Constants
@@ -184,7 +186,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(new OpenWorkspaceOperation());
+  dispatcher.registerOperation(new OpenWorkspaceOperation(testProjectTypes()));
 
   // Tracks known project paths for project:resolve resolution.
   // Only PROJECT_ROOT is known by default; tests can add more.
@@ -280,7 +282,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
             const workspace = await provider.createWorkspace(
               intent.payload.workspaceName!,
-              intent.payload.base!
+              intent.payload.options?.["base"] as string
             );
 
             opened.set(wsPath(workspace.path.toString()), {
@@ -292,7 +294,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
                 workspacePath: wsPath(workspace.path.toString()),
                 branch: workspace.branch,
                 metadata: workspace.metadata,
-                resolvedBase: intent.payload.base!,
+                resolvedBase: intent.payload.options?.["base"] as string,
               },
             };
           },
@@ -406,7 +408,7 @@ function createIntent(overrides?: Partial<OpenWorkspacePayload>): OpenWorkspaceI
     payload: {
       projectRef: PROJECT_REF,
       workspaceName: "feature-x",
-      base: "main",
+      options: { base: "main" },
       ...overrides,
     },
   };
@@ -466,30 +468,76 @@ describe("OpenWorkspace Operation", () => {
       expect(event.payload.fresh).toBe(true);
     });
 
-    it("includes tracking in event when provided", async () => {
+    it("carries none of the type's options in the event", async () => {
       const receivedEvents: DomainEvent[] = [];
       setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
         receivedEvents.push(event);
       });
 
-      await setup.dispatcher.dispatch(createIntent({ tracking: "origin/feature-login" }));
+      await setup.dispatcher.dispatch(
+        createIntent({ options: { base: "main", tracking: "origin/feature-login" } })
+      );
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.tracking).toBe("origin/feature-login");
+      expect(event.payload).not.toHaveProperty("tracking");
+      expect(event.payload).not.toHaveProperty("options");
+    });
+  });
+
+  describe("project type options", () => {
+    it("hands the create hook the options the project's type declares", async () => {
+      const setup = createTestSetup();
+      const seen: unknown[] = [];
+      setup.dispatcher.registerModule({
+        name: "options-probe",
+        hooks: {
+          [OPEN_WORKSPACE_OPERATION_ID]: {
+            create: {
+              handler: async (ctx: HookContext) => {
+                seen.push((ctx.intent as OpenWorkspaceIntent).payload.options);
+                return {};
+              },
+            },
+          },
+        },
+      });
+
+      await setup.dispatcher.dispatch(
+        createIntent({ options: { base: "main", tracking: "origin/feature-login" } })
+      );
+
+      expect(seen).toEqual([{ base: "main", tracking: "origin/feature-login" }]);
     });
 
-    it("omits tracking from event when not provided", async () => {
-      const receivedEvents: DomainEvent[] = [];
-      setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
-        receivedEvents.push(event);
+    it("fails a creation with an option the project's type does not declare, as usage", async () => {
+      const setup = createTestSetup();
+      const loading: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_LOADING, (event) => {
+        loading.push(event);
       });
 
-      await setup.dispatcher.dispatch(createIntent());
+      const failure = await setup.dispatcher
+        .dispatch(createIntent({ options: { template: "readme" } }))
+        .then(
+          () => undefined,
+          (error: unknown) => error
+        );
 
-      expect(receivedEvents).toHaveLength(1);
-      const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.tracking).toBeUndefined();
+      // The fake type's option, sent to a git project: the caller's mistake,
+      // reported before the loading row.
+      expect(failure).toBeInstanceOf(ApiError);
+      expect((failure as ApiError).category).toBe("usage");
+      expect((failure as ApiError).message).toMatch(/"template" is not a create option of git/);
+      expect(loading).toHaveLength(0);
+    });
+
+    it("fails a value its declaration rejects, as usage", async () => {
+      const setup = createTestSetup();
+
+      await expect(
+        setup.dispatcher.dispatch(createIntent({ options: { base: true } }))
+      ).rejects.toMatchObject({ category: "usage" });
     });
   });
 
@@ -500,34 +548,13 @@ describe("OpenWorkspace Operation", () => {
       setup = createTestSetup();
     });
 
-    it("carries workspaceName, projectRef, and base from the intent", async () => {
+    it("carries workspaceName and projectRef, and none of the type's options", async () => {
       const receivedEvents: DomainEvent[] = [];
       setup.dispatcher.subscribe(EVENT_WORKSPACE_LOADING, (event) => {
         receivedEvents.push(event);
       });
 
       await setup.dispatcher.dispatch(createIntent());
-
-      expect(receivedEvents).toHaveLength(1);
-      const event = receivedEvents[0] as WorkspaceLoadingEvent;
-      expect(event.payload).toEqual({
-        workspaceName: "feature-x",
-        projectRef: PROJECT_REF,
-        base: "main",
-      });
-    });
-
-    it("omits base when the intent has none", async () => {
-      const receivedEvents: DomainEvent[] = [];
-      setup.dispatcher.subscribe(EVENT_WORKSPACE_LOADING, (event) => {
-        receivedEvents.push(event);
-      });
-
-      const intentWithoutBase: OpenWorkspaceIntent = {
-        type: INTENT_OPEN_WORKSPACE,
-        payload: { projectRef: PROJECT_REF, workspaceName: "feature-x" },
-      };
-      await setup.dispatcher.dispatch(intentWithoutBase);
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceLoadingEvent;
@@ -553,7 +580,6 @@ describe("OpenWorkspace Operation", () => {
       expect(event.payload).toEqual({
         workspaceName: "feature-x",
         projectRef: PROJECT_REF,
-        base: "main",
         stealFocus: false,
       });
     });
@@ -645,7 +671,7 @@ describe("OpenWorkspace Operation", () => {
         payload: {
           projectRef: gitProjectRef(projPath("/nonexistent/project")),
           workspaceName: "feature-x",
-          base: "main",
+          options: { base: "main" },
         },
       };
 
@@ -808,7 +834,7 @@ describe("OpenWorkspace Operation", () => {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
           workspaceName: "feature-y",
-          base: "main",
+          options: { base: "main" },
           existingWorkspace,
           projectRef: PROJECT_REF,
         },
@@ -854,7 +880,7 @@ describe("OpenWorkspace Operation", () => {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
           workspaceName: "my-ws",
-          base: "develop",
+          options: { base: "develop" },
           existingWorkspace,
           projectRef: gitProjectRef(customProjectPath),
         },
@@ -916,7 +942,7 @@ describe("OpenWorkspace Operation", () => {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
           workspaceName: "SDK-214",
-          base: "main",
+          options: { base: "main" },
           existingWorkspace,
           projectRef: PROJECT_REF,
         },
@@ -1000,7 +1026,7 @@ describe("OpenWorkspace Operation", () => {
         payload: {
           projectRef: gitProjectRef(projPath("/nonexistent/project")),
           workspaceName: "feature-x",
-          base: "main",
+          options: { base: "main" },
         },
       };
 
@@ -1037,7 +1063,7 @@ describe("OpenWorkspace Operation", () => {
       // Re-create setup with the extra module
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(new OpenWorkspaceOperation());
+      dispatcher.registerOperation(new OpenWorkspaceOperation(testProjectTypes()));
 
       registerTestInfrastructure(dispatcher, {
         workspaces: Object.assign(
@@ -1315,7 +1341,7 @@ describe("OpenWorkspaceOperation project references", () => {
     const result = await open(dispatcher, {
       project: "test",
       workspaceName: "by-name",
-      base: "main",
+      options: { base: "main" },
     });
 
     expect(result.name).toBe("by-name");
@@ -1330,7 +1356,7 @@ describe("OpenWorkspaceOperation project references", () => {
     await open(dispatcher, {
       project: PROJECT_ROOT,
       workspaceName: "by-path",
-      base: "main",
+      options: { base: "main" },
     });
 
     expect(openedWith).toEqual({ path: PROJECT_ROOT });
@@ -1346,7 +1372,7 @@ describe("OpenWorkspaceOperation project references", () => {
     await open(dispatcher, {
       project: "https://github.com/org/repo",
       workspaceName: "from-url",
-      base: "main",
+      options: { base: "main" },
     });
 
     expect(openedWith).toEqual({ git: "https://github.com/org/repo" });
@@ -1360,7 +1386,7 @@ describe("OpenWorkspaceOperation project references", () => {
       open(dispatcher, {
         project: "https://github.com/org/nope",
         workspaceName: "doomed",
-        base: "main",
+        options: { base: "main" },
       })
     ).rejects.toThrow(/Could not open project/);
   });
@@ -1380,7 +1406,7 @@ describe("OpenWorkspaceOperation project references", () => {
     const result = await open(dispatcher, {
       projectRef: PROJECT_REF,
       workspaceName: "explicit",
-      base: "main",
+      options: { base: "main" },
     });
 
     expect(result.name).toBe("explicit");

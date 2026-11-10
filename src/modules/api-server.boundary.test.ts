@@ -39,7 +39,6 @@ import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { z } from "zod/v4";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
-import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { WorkspacePath } from "../intents/contract";
 import { gitProjectRef } from "./git/ref";
 import { AsyncLogScopeStore, ScopedLogger } from "../boundaries/platform/log-scope";
@@ -933,106 +932,6 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("Command not found: invalid.command");
-    });
-
-    it("delete returns started:true when accepted", async () => {
-      env.mockDispatch.mockImplementation(() => resolvedHandle(undefined));
-
-      const client = createClient(wsPath("/test/workspace"));
-      await waitForConnect(client);
-
-      const result = await new Promise<{
-        success: boolean;
-        data?: { started: boolean };
-        error?: string;
-      }>((resolve) => {
-        client.emit("api:workspace:delete", {}, (res) => resolve(res));
-      });
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).toEqual({ started: true });
-      }
-      expect(env.mockDispatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: INTENT_DELETE_WORKSPACE,
-          payload: expect.objectContaining({
-            workspaceRef: testWorkspaceRef(testPath("/test/workspace").toString()),
-            keepBranch: true,
-            force: false,
-            removeWorktree: true,
-          }),
-        })
-      );
-    });
-
-    it("delete returns started:false when rejected by interceptor", async () => {
-      env.mockDispatch.mockImplementation(() => resolvedHandle(undefined, { accepted: false }));
-
-      const client = createClient(wsPath("/test/workspace"));
-      await waitForConnect(client);
-
-      const result = await new Promise<{
-        success: boolean;
-        data?: { started: boolean };
-        error?: string;
-      }>((resolve) => {
-        client.emit("api:workspace:delete", {}, (res) => resolve(res));
-      });
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).toEqual({ started: false });
-      }
-    });
-
-    it("create dispatches correct intent with optional fields", async () => {
-      const workspace = {
-        projectId: "proj-1",
-        name: "my-ws",
-        branch: "my-ws",
-        metadata: {},
-        path: testPath("/workspaces/my-ws").toNative(),
-      };
-      env.mockDispatch.mockImplementation(() => resolvedHandle(workspace));
-
-      const client = createClient(wsPath("/test/workspace"));
-      await waitForConnect(client);
-
-      const result = await new Promise<{
-        success: boolean;
-        data?: unknown;
-        error?: string;
-      }>((resolve) => {
-        client.emit(
-          "api:workspace:create",
-          {
-            name: "my-ws",
-            base: "main",
-            agent: { type: "default", prompt: "Do something" },
-            stealFocus: false,
-          },
-          (res) => resolve(res)
-        );
-      });
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).toEqual(workspace);
-      }
-      expect(env.mockDispatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: INTENT_OPEN_WORKSPACE,
-          payload: expect.objectContaining({
-            // The caller's own project: the one its ref extends.
-            projectRef: gitProjectRef(testPath("/test").toString()),
-            workspaceName: "my-ws",
-            base: "main",
-            agent: { type: "default", prompt: "Do something" },
-            stealFocus: false,
-          }),
-        })
-      );
     });
   });
 

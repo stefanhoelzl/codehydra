@@ -2,11 +2,11 @@
  * The CodeHydra API the sidekick exports to other VS Code extensions
  * (`exports.codehydra`, declared for them in `../api.d.ts`).
  */
-import type { CodehydraApi } from "../api";
+import type { CodehydraApi, WorkspaceCreateOptions } from "../api";
 import { TAGS_METADATA_KEY_PREFIX, extractTags } from "../../../src/shared/api/types";
 import type { WorkspaceTag } from "../../../src/shared/api/types";
 import { emitApiCall, log, whenReady } from "./connection";
-import type { AgentSession, AgentSpec, WorkspaceCreateRequest, WorkspaceStatus } from "./types";
+import type { AgentSession, WorkspaceCreateRequest, WorkspaceStatus } from "./types";
 
 /** The metadata key a workspace tag is stored under. */
 export function tagKey(name: string): string {
@@ -93,37 +93,27 @@ export const codehydraApi = {
       return emitApiCall<unknown>("api:workspace:executeCommand", { command, args });
     },
 
-    create(name: string, base: string, options?: { agent?: AgentSpec; stealFocus?: boolean }) {
+    create(name: string, options?: WorkspaceCreateOptions) {
       // Client-side validation
       if (typeof name !== "string" || name.trim().length === 0) {
         return Promise.reject(new Error("Name must be a non-empty string"));
       }
-      if (typeof base !== "string" || base.trim().length === 0) {
-        return Promise.reject(new Error("Base must be a non-empty string"));
+      // The base used to be the second argument; it is an option now, and only
+      // a git project's. Say so instead of sending a string the server rejects
+      // with a less helpful message.
+      if (typeof (options as unknown) === "string") {
+        return Promise.reject(
+          new Error(
+            "create(name, base) is gone: pass the base as an option, create(name, { base })"
+          )
+        );
       }
-      // Validate the agent spec if provided
-      if (options?.agent !== undefined) {
-        const agent = options.agent;
-        if (typeof agent !== "object" || agent === null) {
-          return Promise.reject(new Error("agent must be an object"));
-        }
-        if (agent.type !== "default" && agent.type !== "claude" && agent.type !== "opencode") {
-          return Promise.reject(new Error('agent.type must be "default", "claude" or "opencode"'));
-        }
-        if (
-          agent.prompt !== undefined &&
-          (typeof agent.prompt !== "string" || agent.prompt.length === 0)
-        ) {
-          return Promise.reject(new Error("agent.prompt must be a non-empty string"));
-        }
+      if (options !== undefined && (typeof options !== "object" || options === null)) {
+        return Promise.reject(new Error("Options must be an object"));
       }
-      // Build request
-      const request: WorkspaceCreateRequest = {
-        name,
-        base,
-        agent: options?.agent,
-        stealFocus: options?.stealFocus,
-      };
+      // Everything else — which options the project's type takes, and their
+      // values — is checked by the server, as for `ch ws create`.
+      const request: WorkspaceCreateRequest = { ...options, name };
       return emitApiCall("api:workspace:create", request);
     },
   },

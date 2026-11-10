@@ -366,7 +366,7 @@ describe("TerminalFocusModule", () => {
 
     const deletion: DeleteWorkspaceIntent = {
       type: INTENT_DELETE_WORKSPACE,
-      payload: { workspaceRef: WS, keepBranch: true, force: false, removeWorktree: false },
+      payload: { workspaceRef: WS, force: false, removeWorktree: false },
     };
     await s.dispatcher.dispatch(deletion);
     await settle();

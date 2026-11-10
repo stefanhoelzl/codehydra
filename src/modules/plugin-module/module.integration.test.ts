@@ -34,10 +34,7 @@ import {
 } from "../../boundaries/platform/git-client.state-mock";
 import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import { INTENT_OPEN_PROJECT } from "../../intents/open-project";
-import {
-  INTENT_GET_PROJECT_BASES,
-  type GetProjectBasesIntent,
-} from "../../intents/get-project-bases";
+import { INTENT_REFRESH_PROJECT, type RefreshProjectIntent } from "../../intents/refresh-project";
 import { remoteDirName } from "./remotes";
 import {
   registerTestInfrastructure,
@@ -103,6 +100,7 @@ import { makeWorkspaceRef } from "../../utils/ref";
 import { gitProjectRef } from "../git/ref";
 import type { ProjectRef } from "../../intents/contract";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import { testProjectTypes } from "../../intents/project-type-options.test-utils";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
@@ -263,8 +261,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     activeWorkspaceRef: null,
     viewManager: views.viewManager,
   });
-  dispatcher.registerOperation(new OpenWorkspaceOperation());
-  dispatcher.registerOperation(new DeleteWorkspaceOperation());
+  dispatcher.registerOperation(new OpenWorkspaceOperation(testProjectTypes()));
+  dispatcher.registerOperation(new DeleteWorkspaceOperation(testProjectTypes()));
   dispatcher.registerOperation(new SetMetadataOperation());
 
   const fileSystem = createFileSystemMock({
@@ -617,7 +615,7 @@ async function reopenWorkspace(setup: TestSetup): Promise<void> {
 async function deleteWorkspace(setup: TestSetup, force = false): Promise<void> {
   await setup.dispatcher.dispatch<DeleteWorkspaceIntent>({
     type: INTENT_DELETE_WORKSPACE,
-    payload: { workspaceRef: WORKSPACE_REF, keepBranch: false, removeWorktree: true, force },
+    payload: { workspaceRef: WORKSPACE_REF, removeWorktree: true, force },
   });
 }
 
@@ -684,11 +682,32 @@ describe("after-worktree-created", () => {
       project: PROJECT_REF,
       branch: "feature-x",
       base: "main",
+      // The creation's options, as workspace:open checked them: none were given.
+      options: {},
     });
     expect(new Path(setup.envs[0]!.CH_PLUGIN_DIR!).equals(new Path(LOCAL_PLUGINS, "setup"))).toBe(
       true
     );
     expect(new Path(setup.envs[0]!.CH_WORKSPACE_DIR!).equals(new Path(WORKSPACE_PATH))).toBe(true);
+  });
+
+  it("hands the script the create options it was made with", async () => {
+    const setup = createTestSetup({
+      local: { "setup/plugin.yaml": hooksManifest({ "after-worktree-created": "echo setup" }) },
+      outcomes: { "echo setup": {} },
+    });
+    await setup.dispatcher.dispatch<OpenWorkspaceIntent>({
+      type: INTENT_OPEN_WORKSPACE,
+      payload: {
+        workspaceName: "feature-x",
+        projectRef: PROJECT_REF,
+        options: { base: "develop", tracking: "origin/feature-x" },
+      },
+    });
+
+    expect(setup.stdin[0]).toMatchObject({
+      options: { base: "develop", tracking: "origin/feature-x" },
+    });
   });
 
   it("merges titles and tags across plugins, later plugins winning", async () => {
@@ -862,6 +881,18 @@ describe("before-worktree-deleted", () => {
     // The worktree removal never ran.
     const last = setup.progress.at(-1)!.payload;
     expect(last.operations.find((op) => op.id === "cleanup-workspace")?.status).toBe("pending");
+  });
+
+  it("hands the script the delete options in effect, nested, the type's defaults applied", async () => {
+    const setup = createTestSetup({
+      local: { "a.yaml": hooksManifest({ "before-worktree-deleted": "echo a" }) },
+      outcomes: { "echo a": {} },
+    });
+    await deleteWorkspace(setup);
+
+    // Nothing was asked for: git's default is what the deletion runs with.
+    expect(setup.stdin[0]).toMatchObject({ options: { keepBranch: false } });
+    expect(setup.stdin[0]).not.toHaveProperty("keepBranch");
   });
 
   it("fails closed when a gate breaks", async () => {
@@ -1642,16 +1673,16 @@ function registerProjects(setup: TestSetup): void {
     }
   }
   const basesSchemas = {
-    type: INTENT_GET_PROJECT_BASES,
-    payload: z.custom<GetProjectBasesIntent["payload"]>(),
+    type: INTENT_REFRESH_PROJECT,
+    payload: z.custom<RefreshProjectIntent["payload"]>(),
     result: z.unknown(),
   } satisfies OperationSchemas;
   class BasesOp implements Operation<typeof basesSchemas> {
-    readonly id = "get-project-bases";
+    readonly id = "refresh-project";
     readonly schemas = basesSchemas;
     async execute(ctx: { intent: { payload: unknown } }): Promise<unknown> {
       setup.fetched.push(ctx.intent.payload);
-      return { bases: [] };
+      return undefined;
     }
   }
   // A path is opened, which for an open project answers with that project.
@@ -2147,7 +2178,7 @@ describe("a repository's automations", () => {
 
       await setup.module.api.update();
 
-      expect(setup.fetched).toEqual([{ projectRef: PROJECT_REF, refresh: true, wait: true }]);
+      expect(setup.fetched).toEqual([{ projectRef: PROJECT_REF }]);
     });
 
     it("the app's start fetches them too", async () => {
@@ -2159,7 +2190,7 @@ describe("a repository's automations", () => {
       });
       await settle();
 
-      expect(setup.fetched).toEqual([{ projectRef: PROJECT_REF, refresh: true }]);
+      expect(setup.fetched).toEqual([{ projectRef: PROJECT_REF }]);
     });
   });
 });

@@ -10,6 +10,7 @@
  * per-workspace facts contributed to workspace:resolve. What remains here:
  * - app-start `init` hook (window + UI view creation, HTML load, focus)
  * - open-project `select-folder` (native folder picker)
+ * - the New workspace form's folder-open button (project:list-add-actions / project:add)
  * - app-shutdown/stop (UI view + layer disposal)
  *
  */
@@ -29,6 +30,10 @@ import { GLOBAL_SESSION_PARTITION } from "../boundaries/shell/ui-view-manager";
 import { APP_START_OPERATION_ID, type InitResult } from "../intents/app-start";
 import type { SelectFolderHookResult } from "../intents/open-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
+import { ADD_PROJECT_OPERATION_ID, LIST_ADD_ACTIONS_OPERATION_ID } from "../intents/add-project";
+
+/** The `project:add` action id of the folder-open button. */
+export const OPEN_FOLDER_ACTION_ID = "open-folder";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
 import { projectPathSchema } from "../intents/contract";
@@ -153,6 +158,29 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               result: { folderPath: projectPathSchema.parse(result.filePaths[0]!.toString()) },
             };
           },
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // The New workspace form's folder-open button. No project type's: a
+      // folder goes to project:open, which asks for one (select-folder above)
+      // and lets the types decide whether it is theirs.
+      // -------------------------------------------------------------------
+      [LIST_ADD_ACTIONS_OPERATION_ID]: {
+        list: {
+          handler: async () => ({
+            result: {
+              actions: [
+                { id: OPEN_FOLDER_ACTION_ID, icon: "folder-opened", title: "Open project folder" },
+              ],
+            },
+          }),
+        },
+      },
+      [ADD_PROJECT_OPERATION_ID]: {
+        run: {
+          handler: async (ctx) =>
+            ctx.intent.payload.action === OPEN_FOLDER_ACTION_ID ? { result: { open: {} } } : {},
         },
       },
 

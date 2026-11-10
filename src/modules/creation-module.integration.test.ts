@@ -12,30 +12,35 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
-import { createCreationModule, validateCloneUrl } from "./creation-module";
+import { createCreationModule } from "./creation-module";
 import type { CreationModule, CreationModuleDeps } from "./creation-module";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import type { MockDialogHandle } from "./presentation/dialog-manager.state-mock";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DialogConfig, DialogSection } from "../shared/dialog-types";
 import type { ConfigAgentType } from "../boundaries/platform/config";
-import type { Project, ProjectId, WorkspaceName, BaseInfo } from "../shared/api/types";
+import type { Project, ProjectId, WorkspaceName } from "../shared/api/types";
+import type { BaseInfo } from "../boundaries/platform/git-types";
 import type { AgentInfo } from "../shared/ipc";
 import { EVENT_APP_STARTED } from "../intents/app-ready";
-import {
-  EVENT_PROJECT_OPENED,
-  EVENT_CLONE_PROGRESS,
-  INTENT_OPEN_PROJECT,
-} from "../intents/open-project";
+import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import { EVENT_PROJECT_CLOSED } from "../intents/close-project";
-import { EVENT_BASES_UPDATED, INTENT_GET_PROJECT_BASES } from "../intents/get-project-bases";
+import {
+  EVENT_OPTION_CHOICES_UPDATED,
+  INTENT_GET_OPTION_CHOICES,
+  type GetOptionChoicesResult,
+} from "../intents/get-option-choices";
+import { INTENT_ADD_PROJECT, INTENT_LIST_ADD_ACTIONS } from "../intents/add-project";
+import { testProjectTypes } from "../intents/project-type-options.test-utils";
+import { branchChoices } from "./git/choices";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 import { INTENT_GET_LAUNCH_OPTIONS } from "../intents/agent-launch-options";
-import { wsPath, projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
+import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import { makeWorkspaceRef } from "../utils/ref";
 import { gitProjectRef } from "./git/ref";
+import { fakeProjectRef } from "./fake-project-type.test-utils";
 
 // =============================================================================
 // Fixtures
@@ -69,6 +74,30 @@ const PROJECT_B: Project = {
 const BASES_A: readonly BaseInfo[] = [
   { name: "main", isRemote: false, derives: "main" },
   { name: "origin/feature-x", isRemote: true, base: "origin/feature-x", derives: "feature-x" },
+];
+
+/** A git project's choices answer for these branches, as the git module gives it. */
+function choicesOf(
+  project: Project,
+  bases: readonly BaseInfo[],
+  defaultBase?: string
+): GetOptionChoicesResult {
+  const answer = branchChoices(bases, defaultBase);
+  return {
+    fields: answer.fields ?? {},
+    nameSuggestions: answer.nameSuggestions ?? [],
+    projectRef: project.ref,
+    projectId: project.id,
+  };
+}
+
+/** The option-choices:updated payload for a project's fresh branches. */
+const updated = choicesOf;
+
+/** The add-project buttons the folder picker (view-module) and git contribute. */
+const ADD_ACTIONS = [
+  { id: "open-folder", icon: "folder-opened", title: "Open project folder" },
+  { id: "git-clone", icon: "source-control", title: "Clone from Git" },
 ];
 
 const CLAUDE_AGENT: AgentInfo = { agent: "claude", label: "Claude Code", icon: "claude" };
@@ -162,7 +191,6 @@ interface Setup {
   module: CreationModule;
   dialogs: ReturnType<typeof createMockDialogManager>;
   dispatcher: MockDispatcher;
-  openUrl: ReturnType<typeof vi.fn>;
   emit(eventType: string, payload?: unknown): Promise<void>;
   start(): Promise<MockDialogHandle>;
 }
@@ -177,20 +205,14 @@ function setup(options?: {
 }): Setup {
   const dialogs = createMockDialogManager();
   const dispatcher = createDispatcher();
-  const openUrl = vi.fn().mockResolvedValue(undefined);
 
   const projects = options?.projects ?? [PROJECT_A];
   dispatcher.results.set(INTENT_LIST_PROJECTS, () => projects);
-  dispatcher.results.set(INTENT_GET_PROJECT_BASES, (payload) => {
+  dispatcher.results.set(INTENT_LIST_ADD_ACTIONS, () => ADD_ACTIONS);
+  dispatcher.results.set(INTENT_GET_OPTION_CHOICES, (payload) => {
     const p = payload as { projectRef: string };
-    return {
-      bases: options?.bases ?? BASES_A,
-      ...(options?.defaultBaseBranch !== undefined && {
-        defaultBaseBranch: options.defaultBaseBranch,
-      }),
-      projectRef: p.projectRef,
-      projectId: PROJECT_A.id,
-    };
+    const project = projects.find((candidate) => candidate.ref === p.projectRef) ?? PROJECT_A;
+    return choicesOf(project, options?.bases ?? BASES_A, options?.defaultBaseBranch);
   });
   dispatcher.results.set(INTENT_GET_LAUNCH_OPTIONS, (payload) => {
     // Mirror real backends: Claude reports permission modes, OpenCode none.
@@ -203,7 +225,7 @@ function setup(options?: {
   const deps: CreationModuleDeps = {
     ui: dialogs.ui,
     dispatcher: dispatcher.dispatcher,
-    appBoundary: { openUrl },
+    projectTypes: testProjectTypes(),
     agentConfig: createMockAccessor<ConfigAgentType>("agent", options?.defaultAgent ?? "claude"),
     getAvailableAgents: vi.fn().mockResolvedValue(options?.agents ?? [CLAUDE_AGENT]),
     logger: SILENT_LOGGER,
@@ -233,7 +255,7 @@ function setup(options?: {
     return panel!;
   };
 
-  return { module, dialogs, dispatcher, openUrl, emit, start };
+  return { module, dialogs, dispatcher, emit, start };
 }
 
 /** The currently open (non-closed) creation session. */
@@ -307,7 +329,7 @@ describe("CreationModule", () => {
       // Same session (nothing reset it), now on PROJECT_B with its bases fetched.
       expect(currentPanel(s)).toBe(panel);
       expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
-      const fetched = s.dispatcher.byType(INTENT_GET_PROJECT_BASES).at(-1);
+      const fetched = s.dispatcher.byType(INTENT_GET_OPTION_CHOICES).at(-1);
       expect((fetched?.payload as { projectRef: string }).projectRef).toBe(PROJECT_B.ref);
     });
 
@@ -359,12 +381,12 @@ describe("CreationModule", () => {
     it("does not re-fetch bases when the panel is opened from the same project", async () => {
       const s = setup({ projects: [PROJECT_A, PROJECT_B], activeWorkspaceProjectId: PROJECT_A.id });
       await s.start();
-      const before = s.dispatcher.byType(INTENT_GET_PROJECT_BASES).length;
+      const before = s.dispatcher.byType(INTENT_GET_OPTION_CHOICES).length;
 
       await s.emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(PROJECT_A));
       await s.emit(EVENT_WORKSPACE_SWITCHED, null);
 
-      expect(s.dispatcher.byType(INTENT_GET_PROJECT_BASES)).toHaveLength(before);
+      expect(s.dispatcher.byType(INTENT_GET_OPTION_CHOICES)).toHaveLength(before);
     });
 
     it("falls back to the first project when the last active project is no longer open", async () => {
@@ -388,7 +410,8 @@ describe("CreationModule", () => {
       expect(sectionById(panel.config, "project")).toBeUndefined();
       expect(field(panel.config, "project-placeholder")["disabled"]).toBe(true);
       expect(field(panel.config, "name")["disabled"]).toBe(true);
-      expect(field(panel.config, "base")["disabled"]).toBe(true);
+      // No project, so no project type whose options could be shown.
+      expect(sectionById(panel.config, "base")).toBeUndefined();
       expect(field(panel.config, "create")["disabled"]).toBe(true);
     });
 
@@ -469,8 +492,8 @@ describe("CreationModule", () => {
     });
   });
 
-  describe("branch loading (two-phase)", () => {
-    it("loads cached bases on seed and keeps loading until bases:updated confirms", async () => {
+  describe("option choices (two-phase)", () => {
+    it("loads the type's first answer on seed and keeps loading until option-choices:updated confirms", async () => {
       const s = setup({ defaultBaseBranch: "main" });
       const panel = await s.start();
 
@@ -480,32 +503,74 @@ describe("CreationModule", () => {
       expect(suggestionValues(base)).toEqual(["main", "origin/feature-x"]);
       expect(base["value"]).toBe("main");
 
-      await s.emit(EVENT_BASES_UPDATED, {
-        projectId: PROJECT_A.id,
-        projectRef: PROJECT_A.ref,
-        bases: BASES_A,
-        defaultBaseBranch: "main",
-      });
+      await s.emit(EVENT_OPTION_CHOICES_UPDATED, updated(PROJECT_A, BASES_A, "main"));
       expect(field(panel.config, "base")["loading"]).toBe(false);
     });
 
-    it("seeds the base field from the project's defaultBaseBranch before bases load", async () => {
+    it("renders the selected project's type's options after Name, from its description", async () => {
+      const s = setup();
+      const panel = await s.start();
+
+      // git's: base (a dynamic select); tracking is not a dialog field.
+      const ids = panel.config.sections.flatMap((section) => ("id" in section ? [section.id] : []));
+      expect(ids.slice(0, 3)).toEqual(["name", "base", "prompt"]);
+      expect(sectionById(panel.config, "tracking")).toBeUndefined();
+      expect(field(panel.config, "base")).toMatchObject({
+        type: "dropdown",
+        label: "Base Branch",
+        placeholder: "Select branch...",
+      });
+    });
+
+    it("renders another type's own options instead, and submits them", async () => {
+      const fake: Project = {
+        ...PROJECT_B,
+        ref: fakeProjectRef(projPath("/projects/f")),
+        name: "folders",
+      };
+      const s = setup({ projects: [fake] });
+      s.dispatcher.results.set(INTENT_GET_OPTION_CHOICES, () => ({
+        fields: {},
+        nameSuggestions: [],
+        projectRef: fake.ref,
+        projectId: fake.id,
+      }));
+      const panel = await s.start();
+
+      expect(sectionById(panel.config, "base")).toBeUndefined();
+      const template = field(panel.config, "template");
+      expect(template).toMatchObject({ type: "dropdown", label: "Template", value: "empty" });
+      expect(suggestionValues(template)).toEqual(["empty", "readme"]);
+
+      panel.emitChange("template", { template: "readme" });
+      panel.emitChange("name", { name: "notes" });
+      await flush();
+      panel.emitAction("create", { project: fake.ref, name: "notes", template: "readme" });
+      await flush();
+
+      expect(s.dispatcher.byType(INTENT_OPEN_WORKSPACE)[0]!.payload).toMatchObject({
+        projectRef: fake.ref,
+        workspaceName: "notes",
+        options: { template: "readme" },
+      });
+    });
+
+    it("does not read the project list's defaultBaseBranch", async () => {
       const seeded: Project = { ...PROJECT_A, defaultBaseBranch: "origin/seeded" };
       const s = setup({ projects: [seeded] });
-      // Hang the bases fetch so only the synchronous first-paint seed is visible.
-      s.dispatcher.results.set(INTENT_GET_PROJECT_BASES, () => new Promise(() => {}));
+      s.dispatcher.results.set(INTENT_GET_OPTION_CHOICES, () => new Promise(() => {}));
 
       const panel = await s.start();
 
+      // The default comes from the type's choices answer, which is pending.
       const base = field(panel.config, "base");
-      // Value painted from the project list, not from the (pending) git round-trip.
-      expect(base["value"]).toBe("origin/seeded");
+      expect(base["value"]).toBe("");
       expect(base["loading"]).toBe(true);
     });
 
     it("leaves the base field empty when the project has no known default", async () => {
       const s = setup({ projects: [PROJECT_A] });
-      s.dispatcher.results.set(INTENT_GET_PROJECT_BASES, () => new Promise(() => {}));
+      s.dispatcher.results.set(INTENT_GET_OPTION_CHOICES, () => new Promise(() => {}));
 
       const panel = await s.start();
 
@@ -532,22 +597,14 @@ describe("CreationModule", () => {
     it("ignores bases:updated for a different project", async () => {
       const s = setup();
       const panel = await s.start();
-      await s.emit(EVENT_BASES_UPDATED, {
-        projectId: PROJECT_B.id,
-        projectRef: PROJECT_B.ref,
-        bases: [],
-      });
+      await s.emit(EVENT_OPTION_CHOICES_UPDATED, updated(PROJECT_B, []));
       expect(field(panel.config, "base")["loading"]).toBe(true);
     });
 
     it("shows 'No base branches available' when the fresh list is empty", async () => {
       const s = setup({ bases: [] });
       const panel = await s.start();
-      await s.emit(EVENT_BASES_UPDATED, {
-        projectId: PROJECT_A.id,
-        projectRef: PROJECT_A.ref,
-        bases: [],
-      });
+      await s.emit(EVENT_OPTION_CHOICES_UPDATED, updated(PROJECT_A, []));
       const base = field(panel.config, "base");
       expect(base["error"]).toBe("No base branches available");
       expect(field(panel.config, "create")["disabled"]).toBe(true);
@@ -561,7 +618,7 @@ describe("CreationModule", () => {
       panel.emitChange("project", { project: PROJECT_B.ref });
       await flush();
 
-      const calls = s.dispatcher.byType(INTENT_GET_PROJECT_BASES);
+      const calls = s.dispatcher.byType(INTENT_GET_OPTION_CHOICES);
       expect(calls.map((c) => (c.payload as { projectRef: string }).projectRef)).toEqual([
         PROJECT_A.ref,
         PROJECT_B.ref,
@@ -574,12 +631,7 @@ describe("CreationModule", () => {
   describe("validation and Create gating", () => {
     async function startValid(s: Setup): Promise<MockDialogHandle> {
       const panel = await s.start();
-      await s.emit(EVENT_BASES_UPDATED, {
-        projectId: PROJECT_A.id,
-        projectRef: PROJECT_A.ref,
-        bases: BASES_A,
-        defaultBaseBranch: "main",
-      });
+      await s.emit(EVENT_OPTION_CHOICES_UPDATED, updated(PROJECT_A, BASES_A, "main"));
       return panel;
     }
 
@@ -630,12 +682,7 @@ describe("CreationModule", () => {
   describe("submit", () => {
     async function readyPanel(s: Setup): Promise<MockDialogHandle> {
       const panel = await s.start();
-      await s.emit(EVENT_BASES_UPDATED, {
-        projectId: PROJECT_A.id,
-        projectRef: PROJECT_A.ref,
-        bases: BASES_A,
-        defaultBaseBranch: "main",
-      });
+      await s.emit(EVENT_OPTION_CHOICES_UPDATED, updated(PROJECT_A, BASES_A, "main"));
       return panel;
     }
 
@@ -661,7 +708,7 @@ describe("CreationModule", () => {
       expect(opens[0]!.payload).toEqual({
         projectRef: PROJECT_A.ref,
         workspaceName: "new-feature",
-        base: "main",
+        options: { base: "main" },
         agent: { type: "claude" },
         source: "creation",
       });
@@ -686,7 +733,7 @@ describe("CreationModule", () => {
       const opens = s.dispatcher.byType(INTENT_OPEN_WORKSPACE);
       expect(opens[0]!.payload).toMatchObject({
         workspaceName: "feature-x",
-        base: "origin/feature-x",
+        options: { base: "origin/feature-x" },
       });
     });
 
@@ -835,52 +882,54 @@ describe("CreationModule", () => {
     });
   });
 
-  describe("folder-open side-flow", () => {
-    it("dispatches project:open (native picker) and selects the opened project", async () => {
+  describe("add-project buttons", () => {
+    it("runs a contributed button's flow (project:add) and selects the project it opened", async () => {
       const s = setup({ projects: [PROJECT_A, PROJECT_B] });
       const panel = await s.start();
 
       let resolveOpen: (value: Project | null) => void = () => {};
       s.dispatcher.results.set(
-        INTENT_OPEN_PROJECT,
+        INTENT_ADD_PROJECT,
         () => new Promise<Project | null>((resolve) => (resolveOpen = resolve))
       );
 
       panel.emitAction("open-folder", {});
       await flush();
 
-      // Picker in flight: button busy, fields disabled.
+      // Flow in flight: its button busy, the other button and the fields waiting.
       expect(field(panel.config, "open-folder")["busy"]).toBe(true);
+      expect(field(panel.config, "git-clone")["disabled"]).toBe(true);
       expect(field(panel.config, "name")["disabled"]).toBe(true);
-      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)).toHaveLength(1);
-      // `initial`: an add the user is standing in front of, so the worktree picker may run.
-      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)[0]!.payload).toEqual({ initial: true });
+      expect(s.dispatcher.byType(INTENT_ADD_PROJECT)).toHaveLength(1);
+      expect(s.dispatcher.byType(INTENT_ADD_PROJECT)[0]!.payload).toEqual({
+        action: "open-folder",
+      });
 
       resolveOpen(PROJECT_B);
       await flush();
       await flush();
 
-      expect(field(panel.config, "open-folder")["busy"]).toBe(false);
+      expect(field(panel.config, "open-folder")["busy"]).toBeUndefined();
       expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
     });
 
     it("handles a cancelled picker (null result)", async () => {
       const s = setup();
       const panel = await s.start();
-      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () => null);
+      s.dispatcher.results.set(INTENT_ADD_PROJECT, () => null);
 
       panel.emitAction("open-folder", {});
       await flush();
       await flush();
 
-      expect(field(panel.config, "open-folder")["busy"]).toBe(false);
+      expect(field(panel.config, "open-folder")["busy"]).toBeUndefined();
       expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
     });
 
-    it("re-arms the name autofocus after a folder-open selects the project", async () => {
+    it("re-arms the name autofocus after an add-project flow selects the project", async () => {
       const s = setup({ projects: [PROJECT_A, PROJECT_B] });
       const panel = await s.start();
-      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () => PROJECT_B);
+      s.dispatcher.results.set(INTENT_ADD_PROJECT, () => PROJECT_B);
 
       panel.emitAction("open-folder", {});
       await flush();
@@ -899,7 +948,7 @@ describe("CreationModule", () => {
     it("shows a form error when the open fails", async () => {
       const s = setup();
       const panel = await s.start();
-      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () =>
+      s.dispatcher.results.set(INTENT_ADD_PROJECT, () =>
         Promise.reject(new Error("not a git repository"))
       );
 
@@ -912,307 +961,41 @@ describe("CreationModule", () => {
       );
       expect(errorSection).toMatchObject({ content: "not a git repository" });
     });
-  });
 
-  describe("git-clone sub-dialog", () => {
-    it("opens a modal dialog with URL validation gating the Clone button", async () => {
+    it("renders the contributed buttons, in the order they were listed, before the dropdown", async () => {
       const s = setup();
       const panel = await s.start();
 
-      panel.emitAction("clone", {});
-      await flush();
-
-      const clone = s.dialogs.modalHandles()[0]!;
-      expect(clone.kind).toBe("modal");
-      expect(field(clone.config, "do-clone")["disabled"]).toBe(true);
-
-      clone.emitChange("url", { url: "not a url" });
-      await flush();
-      expect(field(clone.config, "url")["error"]).toMatch(/git URL/);
-      expect(field(clone.config, "do-clone")["disabled"]).toBe(true);
-
-      clone.emitChange("url", { url: "org/repo" });
-      await flush();
-      expect(field(clone.config, "url")["error"]).toBeUndefined();
-      expect(field(clone.config, "do-clone")["disabled"]).toBe(false);
+      const row = panel.config.sections.find(
+        (section) => section.type === "group" && section.label === "Project"
+      ) as { items: readonly { type: string; id: string; icon?: string; title?: string }[] };
+      expect(row.items.map((item) => item.id)).toEqual(["open-folder", "git-clone", "project"]);
+      expect(row.items[1]).toMatchObject({ icon: "source-control", title: "Clone from Git" });
     });
 
-    it("clones via project:open {git} and selects the project on success", async () => {
-      const s = setup({ projects: [PROJECT_A, PROJECT_B] });
+    it("renders only the buttons modules contribute (a type need not have one)", async () => {
+      const s = setup({ projects: [] });
+      s.dispatcher.results.set(INTENT_LIST_ADD_ACTIONS, () => [ADD_ACTIONS[0]!]);
       const panel = await s.start();
 
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-
-      let resolveClone: (value: Project) => void = () => {};
-      s.dispatcher.results.set(
-        INTENT_OPEN_PROJECT,
-        () => new Promise<Project>((resolve) => (resolveClone = resolve))
+      expect(sectionById(panel.config, "open-folder")).toBeDefined();
+      expect(sectionById(panel.config, "git-clone")).toBeUndefined();
+      expect(field(panel.config, "project-placeholder")["placeholder"]).toBe(
+        "Open or add a project"
       );
+    });
 
-      clone.emitChange("url", { url: "org/repo" });
-      await flush();
-      clone.emitAction("do-clone", { url: "org/repo" });
-      await flush();
+    it("runs the clone button through project:add like any other", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B] });
+      const panel = await s.start();
+      s.dispatcher.results.set(INTENT_ADD_PROJECT, () => PROJECT_B);
 
-      // Cloning: URL locked, footer switches to Continue in background.
-      expect(field(clone.config, "url")["disabled"]).toBe(true);
-      expect(sectionById(clone.config, "background")).toBeDefined();
-      expect(sectionById(clone.config, "cancel")).toBeUndefined();
-      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)[0]!.payload).toEqual({
-        git: "org/repo",
-        initial: true,
-      });
-
-      resolveClone(PROJECT_B);
+      panel.emitAction("git-clone", {});
       await flush();
       await flush();
 
-      expect(clone.closed).toBe(true);
+      expect(s.dispatcher.byType(INTENT_ADD_PROJECT)[0]!.payload).toEqual({ action: "git-clone" });
       expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
-    });
-
-    it("shows the GitHub create-on-error flow for a GitHub-shaped URL", async () => {
-      const s = setup();
-      const panel = await s.start();
-
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () =>
-        Promise.reject(new Error("repository not found"))
-      );
-
-      clone.emitChange("url", { url: "org/repo" });
-      await flush();
-      clone.emitAction("do-clone", { url: "org/repo" });
-      await flush();
-      await flush();
-
-      expect(sectionById(clone.config, "github-create")).toBeDefined();
-      expect(sectionById(clone.config, "retry")).toBeDefined();
-
-      clone.emitAction("github-create", { url: "org/repo" });
-      await flush();
-      expect(s.openUrl).toHaveBeenCalledWith("https://github.com/new?owner=org&name=repo");
-    });
-
-    it("does not claim a failed GitHub clone is missing", async () => {
-      // A private repository the user's credentials cannot read fails with a
-      // 403 — GitHub answers it like a missing one, so the dialog must not
-      // say "not found" and must point at the credentials.
-      const s = setup();
-      const panel = await s.start();
-
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () =>
-        Promise.reject(
-          new Error(
-            "Failed to clone repository from https://github.com/org/repo: " +
-              "Cloning into bare repository 'c:\\remotes\\repo-1\\repo'...\n" +
-              "fatal: unable to access 'https://github.com/org/repo/': " +
-              "The requested URL returned error: 403\n"
-          )
-        )
-      );
-
-      clone.emitChange("url", { url: "https://github.com/org/repo" });
-      await flush();
-      clone.emitAction("do-clone", { url: "https://github.com/org/repo" });
-      await flush();
-      await flush();
-
-      const texts = clone.config.sections.flatMap((sec) =>
-        sec.type === "text" ? [sec.content] : []
-      );
-      expect(texts.some((t) => t.includes("not found"))).toBe(false);
-      expect(texts.some((t) => t.includes("git credentials"))).toBe(true);
-      expect(sectionById(clone.config, "github-create")).toBeDefined();
-    });
-
-    it("shows a plain error (no GitHub flow) for non-GitHub URLs", async () => {
-      const s = setup();
-      const panel = await s.start();
-
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () =>
-        Promise.reject(new Error("connection refused"))
-      );
-
-      clone.emitChange("url", { url: "https://gitlab.example.com/org/repo.git" });
-      await flush();
-      clone.emitAction("do-clone", { url: "https://gitlab.example.com/org/repo.git" });
-      await flush();
-      await flush();
-
-      expect(sectionById(clone.config, "github-create")).toBeUndefined();
-      const errorSection = clone.config.sections.find(
-        (sec) => sec.type === "text" && sec.icon === "error"
-      );
-      expect(errorSection).toMatchObject({ content: "connection refused" });
-    });
-
-    it("shows inline clone progress from clone:progress events", async () => {
-      const s = setup();
-      const panel = await s.start();
-
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () => new Promise<Project>(() => {}));
-
-      clone.emitChange("url", { url: "org/repo" });
-      await flush();
-      clone.emitAction("do-clone", { url: "org/repo" });
-      await flush();
-
-      // Cloning with no progress yet: indeterminate running item.
-      const progressSection = (): Record<string, unknown> | undefined =>
-        clone.config.sections.find((sec) => sec.type === "progress") as unknown as
-          Record<string, unknown> | undefined;
-      expect(progressSection()).toBeDefined();
-      expect((progressSection()!["items"] as Array<Record<string, unknown>>)[0]).toMatchObject({
-        status: "running",
-      });
-
-      // The event carries 0-1; the progress item is scaled to 0-100.
-      await s.emit(EVENT_CLONE_PROGRESS, {
-        stage: "Receiving objects",
-        progress: 0.42,
-        name: "repo",
-        url: "org/repo",
-      });
-      expect((progressSection()!["items"] as Array<Record<string, unknown>>)[0]).toMatchObject({
-        progress: 42,
-        message: "Receiving objects",
-      });
-
-      // Progress for a different URL is ignored.
-      await s.emit(EVENT_CLONE_PROGRESS, {
-        stage: "other",
-        progress: 0.99,
-        name: "other",
-        url: "other/repo",
-      });
-      expect((progressSection()!["items"] as Array<Record<string, unknown>>)[0]).toMatchObject({
-        progress: 42,
-      });
-    });
-
-    it("'Continue in background' closes the dialog; the clone result lands silently", async () => {
-      const s = setup({ projects: [PROJECT_A, PROJECT_B] });
-      const panel = await s.start();
-      const seededProject = field(panel.config, "project")["value"];
-
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-
-      let resolveClone: (value: Project) => void = () => {};
-      s.dispatcher.results.set(
-        INTENT_OPEN_PROJECT,
-        () => new Promise<Project>((resolve) => (resolveClone = resolve))
-      );
-      clone.emitChange("url", { url: "org/repo" });
-      await flush();
-      clone.emitAction("do-clone", { url: "org/repo" });
-      await flush();
-
-      clone.emitAction("background", {});
-      await flush();
-      expect(clone.closed).toBe(true);
-
-      // The detached clone completing must NOT hijack the form selection.
-      resolveClone(PROJECT_B);
-      await flush();
-      await flush();
-      expect(field(panel.config, "project")["value"]).toBe(seededProject);
-    });
-
-    it("Cancel closes the dialog when not cloning", async () => {
-      const s = setup();
-      const panel = await s.start();
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-
-      clone.emitAction("cancel", {});
-      await flush();
-      expect(clone.closed).toBe(true);
-    });
-
-    it("Cancel carries role 'cancel' when not cloning, so Escape clicks it", async () => {
-      const s = setup();
-      const panel = await s.start();
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-
-      // The cancel-role marker is what makes the form route Escape to Cancel.
-      expect(cancelButton(clone.config)?.id).toBe("cancel");
-
-      clone.emitAction("cancel", {});
-      await flush();
-      expect(clone.closed).toBe(true);
-    });
-
-    it("Cancel carries role 'cancel' after a failed clone", async () => {
-      const s = setup();
-      const panel = await s.start();
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () => Promise.reject(new Error("nope")));
-
-      clone.emitChange("url", { url: "org/repo" });
-      await flush();
-      clone.emitAction("do-clone", { url: "org/repo" });
-      await flush();
-      await flush();
-
-      expect(cancelButton(clone.config)?.id).toBe("cancel");
-
-      clone.emitAction("cancel", {});
-      await flush();
-      expect(clone.closed).toBe(true);
-    });
-
-    it("mid-clone, 'Continue in background' is the cancel-role button (Escape detaches)", async () => {
-      const s = setup({ projects: [PROJECT_A, PROJECT_B] });
-      const panel = await s.start();
-      const seededProject = field(panel.config, "project")["value"];
-
-      panel.emitAction("clone", {});
-      await flush();
-      const clone = s.dialogs.modalHandles()[0]!;
-
-      let resolveClone: (value: Project) => void = () => {};
-      s.dispatcher.results.set(
-        INTENT_OPEN_PROJECT,
-        () => new Promise<Project>((resolve) => (resolveClone = resolve))
-      );
-      clone.emitChange("url", { url: "org/repo" });
-      await flush();
-      clone.emitAction("do-clone", { url: "org/repo" });
-      await flush();
-
-      // Mid-clone, Escape maps to the only footer button — "Continue in background".
-      expect(cancelButton(clone.config)?.id).toBe("background");
-
-      clone.emitAction("background", {});
-      await flush();
-      expect(clone.closed).toBe(true);
-
-      // The detached clone completing must NOT hijack the form selection.
-      resolveClone(PROJECT_B);
-      await flush();
-      await flush();
-      expect(field(panel.config, "project")["value"]).toBe(seededProject);
     });
   });
 
@@ -1286,12 +1069,7 @@ describe("CreationModule", () => {
     /** A panel with branches loaded and every field filled in. */
     async function filledPanel(s: Setup): Promise<MockDialogHandle> {
       const panel = await s.start();
-      await s.emit(EVENT_BASES_UPDATED, {
-        projectId: PROJECT_A.id,
-        projectRef: PROJECT_A.ref,
-        bases: BASES_A,
-        defaultBaseBranch: "main",
-      });
+      await s.emit(EVENT_OPTION_CHOICES_UPDATED, updated(PROJECT_A, BASES_A, "main"));
       panel.emitChange("name", { name: "remembered" });
       panel.emitChange("prompt", { prompt: "do the thing" });
       panel.emitChange("agent-name", { "agent-name": "reviewer" });
@@ -1436,12 +1214,7 @@ describe("CreationModule", () => {
         defaultBaseBranch: "main",
       });
       await s.start();
-      await s.emit(EVENT_BASES_UPDATED, {
-        projectId: PROJECT_A.id,
-        projectRef: PROJECT_A.ref,
-        bases: BASES_A,
-        defaultBaseBranch: "main",
-      });
+      await s.emit(EVENT_OPTION_CHOICES_UPDATED, updated(PROJECT_A, BASES_A, "main"));
 
       // openSession() seeded the project and the base branch without the user
       // touching anything, so the form is still clean.
@@ -1474,27 +1247,4 @@ describe("CreationModule", () => {
       expect(field(currentPanel(s).config, "permission-mode")["value"]).toBe("plan");
     });
   });
-});
-
-describe("validateCloneUrl", () => {
-  it.each([
-    "https://github.com/org/repo.git",
-    "http://example.com/repo",
-    "git@github.com:org/repo.git",
-    "git://example.com/repo.git",
-    "ssh://git@example.com/repo.git",
-    "org/repo",
-    "github.com/org/repo",
-    "",
-    "   ",
-  ])("accepts %j", (url) => {
-    expect(validateCloneUrl(url)).toBeNull();
-  });
-
-  it.each(["not a url", "just-words", testPath("/absolute/path").toNative()])(
-    "rejects %j",
-    (url) => {
-      expect(validateCloneUrl(url)).not.toBeNull();
-    }
-  );
 });

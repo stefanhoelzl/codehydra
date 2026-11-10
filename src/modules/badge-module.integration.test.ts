@@ -351,7 +351,7 @@ const idle = (n = 1): AggregatedAgentStatus => ({ status: "idle", counts: { idle
 function deleteIntent(name: string): DeleteWorkspaceIntent {
   return {
     type: INTENT_DELETE_WORKSPACE,
-    payload: { workspaceRef: ref(name), keepBranch: false, force: false, removeWorktree: true },
+    payload: { workspaceRef: ref(name), force: false, removeWorktree: true },
   };
 }
 

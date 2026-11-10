@@ -15,7 +15,11 @@
  *    set nowhere: not in config.json, env or CLI)
  *    Collect the selectable agents, show the picker, persist the choice.
  * 6. "check-deps" - Check binaries and extensions (collect, isolated contexts)
- * 7. "start" - Start servers, wire services, mount renderer.
+ * 7. "register-project-types" - Each project type module answers with its
+ *    workspace create/delete options (`project-type-options.ts`). Merged and
+ *    sealed here, before anything that serves an operation's input schema
+ *    starts; a clash between two types fails startup.
+ * 8. "start" - Start servers, wire services, mount renderer.
  *              Handlers that need ports (mcpPort, ideServerPort) declare
  *              `requires` and read from ctx.capabilities. Capability-based
  *              ordering replaces the former separate "activate" hook point.
@@ -51,6 +55,7 @@
  */
 
 import { z } from "zod/v4";
+import { projectTypeDescriptionSchema, type ProjectTypeOptions } from "./project-type-options";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import {
@@ -119,6 +124,7 @@ export const appStartPhaseSchema = z.enum([
   "agent-selection",
   "check-deps",
   "setup",
+  "register-project-types",
   "start",
 ]);
 
@@ -254,6 +260,10 @@ export const schemas = {
     "agent-selection": { input: agentSelectionInputSchema, result: agentTypeSchema },
     "save-agent": { input: saveAgentInputSchema },
     "check-deps": { input: checkDepsHookInputSchema, result: checkDepsResultSchema },
+    "register-project-types": {
+      input: bareHookInputSchema,
+      result: projectTypeDescriptionSchema,
+    },
     [APP_START_ERROR_HOOK]: { input: appStartErrorHookInputSchema },
   },
 } satisfies OperationSchemas;
@@ -321,7 +331,9 @@ export class AppStartOperation implements Operation<typeof schemas> {
      * Where the `agent` key's value came from. "default" = set nowhere (not in
      * config.json, env or CLI) → agent selection.
      */
-    private readonly agentSource: () => ConfigSource
+    private readonly agentSource: () => ConfigSource,
+    /** Sealed here with what the project types answer on "register-project-types". */
+    private readonly projectTypes: ProjectTypeOptions
   ) {}
 
   async execute(ctx: OperationContext<AppStartIntent, typeof schemas>): Promise<void> {
@@ -432,7 +444,18 @@ export class AppStartOperation implements Operation<typeof schemas> {
         }
       }
 
-      // Hook 7: "start" -- Start servers, wire callbacks, mount renderer
+      // Hook 7: "register-project-types" -- every project type's create/delete
+      // options. Before "start": that is where the API server and MCP begin
+      // serving the operations whose input these options extend.
+      phase = "register-project-types";
+      const { results: typeResults, errors: typeErrors } = await ctx.hooks.collect(
+        "register-project-types",
+        hookCtx
+      );
+      throwHookErrors(typeErrors, "app:start register-project-types hooks failed");
+      this.projectTypes.seal(typeResults);
+
+      // Hook 8: "start" -- Start servers, wire callbacks, mount renderer
       // Handlers that need ports (mcpPort, ideServerPort) declare `requires` and
       // read from ctx.capabilities. Capability-based ordering replaces the former
       // separate "activate" hook point.

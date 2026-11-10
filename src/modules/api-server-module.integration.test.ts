@@ -251,7 +251,7 @@ describe("ApiServerModule", () => {
           payload: {
             workspaceName: "feature-1",
             projectRef: PROJECT_REF,
-            base: "main",
+            options: { base: "main" },
           },
         })
       ).resolves.not.toThrow();
@@ -277,7 +277,7 @@ describe("ApiServerModule", () => {
           payload: {
             workspaceName: "feature-1",
             projectRef: PROJECT_REF,
-            base: "main",
+            options: { base: "main" },
           },
         })
       ).resolves.not.toThrow();
@@ -301,7 +301,7 @@ describe("ApiServerModule", () => {
           payload: {
             workspaceName: "feature-1",
             projectRef: PROJECT_REF,
-            base: "main",
+            options: { base: "main" },
           },
         })
       ).resolves.not.toThrow();
@@ -327,7 +327,7 @@ describe("ApiServerModule", () => {
         type: "workspace:delete",
         payload: {
           workspaceRef: FEATURE_REF,
-          keepBranch: false,
+
           force: false,
           removeWorktree: true,
         },
@@ -345,7 +345,7 @@ describe("ApiServerModule", () => {
         type: "workspace:delete",
         payload: {
           workspaceRef: FEATURE_REF,
-          keepBranch: false,
+
           force: false,
           removeWorktree: true,
         },
@@ -364,7 +364,7 @@ describe("ApiServerModule", () => {
         type: "workspace:delete",
         payload: {
           workspaceRef: FEATURE_REF,
-          keepBranch: false,
+
           force: true,
           removeWorktree: true,
         },

@@ -25,7 +25,7 @@ import {
 } from "./contract";
 import type { WorkspaceStatus } from "../shared/api/types";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
-import { INTENT_GET_PROJECT_BASES, type GetProjectBasesIntent } from "./get-project-bases";
+import { INTENT_REFRESH_PROJECT, type RefreshProjectIntent } from "./refresh-project";
 import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
 
 export const INTENT_GET_WORKSPACE_STATUS = "workspace:get-status" as const;
@@ -135,13 +135,14 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
       withProject: false,
     });
 
-    // 2. Optional refresh — fetch remotes so unmerged-commit counts reflect
-    // server-merged branches. Best-effort; errors are swallowed.
+    // 2. Optional refresh — bring the project up to date with its upstream (git:
+    // fetch) so unmerged-commit counts reflect server-merged branches.
+    // Best-effort; errors are swallowed.
     if (payload.refresh) {
       try {
-        await ctx.dispatch<GetProjectBasesIntent>({
-          type: INTENT_GET_PROJECT_BASES,
-          payload: { projectRef, refresh: true, wait: true },
+        await ctx.dispatch<RefreshProjectIntent>({
+          type: INTENT_REFRESH_PROJECT,
+          payload: { projectRef },
         });
       } catch {
         // Fall through to status read with possibly-stale refs.

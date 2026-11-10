@@ -90,12 +90,16 @@ export interface AutomationItem {
   readonly input: Record<string, unknown>;
 }
 
-/** A create item, as the automations engine reads it. */
+/**
+ * A create item, as the automations engine reads it. The project type's
+ * options (git: `base`, `tracking`) are the item's fields beyond these, in
+ * `options` — `createItemOf` splits them off.
+ */
 export interface CreateItem {
   readonly name: string;
   readonly project?: string;
-  readonly base?: string;
-  readonly tracking?: string;
+  /** The project type's create options, checked by workspace:open against the project's type. */
+  readonly options: Readonly<Record<string, unknown>>;
   readonly prompt?: string;
   readonly agent?: string;
   readonly model?: string;
@@ -105,6 +109,36 @@ export interface CreateItem {
   readonly event: boolean;
   readonly key?: string;
   readonly metadata?: ItemMetadata;
+}
+
+/** The fields of a create item that are not a project type's option. */
+const CREATE_ITEM_FIELDS: ReadonlySet<string> = new Set([
+  "name",
+  "project",
+  "prompt",
+  "agent",
+  "model",
+  "permissionMode",
+  "agentName",
+  "stealFocus",
+  "event",
+  "key",
+  "metadata",
+]);
+
+/**
+ * A validated `workspace.create` item's input as a `CreateItem`: what is not
+ * one of its own fields is the project type's options. The item schema is the
+ * registry's, strict, so nothing else can be there.
+ */
+export function createItemOf(input: Readonly<Record<string, unknown>>): CreateItem {
+  const own: Record<string, unknown> = {};
+  const options: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(input)) {
+    if (CREATE_ITEM_FIELDS.has(field)) own[field] = value;
+    else if (value !== undefined) options[field] = value;
+  }
+  return { ...(own as Omit<CreateItem, "options">), options };
 }
 
 export interface ItemSchemas {

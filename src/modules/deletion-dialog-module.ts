@@ -4,7 +4,8 @@
  * 1. Remove confirmation: the "confirm" hook on workspace:delete (interactive
  *    dispatches). Opens instantly, runs the dirty/unmerged status check in
  *    the background and updates the warnings in, parks the dispatch until the
- *    user answers (keepBranch or cancel).
+ *    user answers (the project type's delete options — git: Keep branch — or
+ *    cancel).
  * 2. Deletion progress: shown only when the workspace being deleted is the
  *    active (selected) workspace. Subscribes to
  *    EVENT_WORKSPACE_DELETION_PROGRESS, EVENT_WORKSPACE_DELETED, and
@@ -38,7 +39,8 @@ import {
   type GetWorkspaceStatusIntent,
 } from "../intents/get-workspace-status";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "../intents/get-metadata";
-import { INTENT_GET_PROJECT_BASES, type GetProjectBasesIntent } from "../intents/get-project-bases";
+import { INTENT_REFRESH_PROJECT, type RefreshProjectIntent } from "../intents/refresh-project";
+import type { OptionField, ProjectTypeOptions } from "../intents/project-type-options";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type { Logger } from "../boundaries/platform/logging";
 import { getErrorMessage } from "../shared/error-utils";
@@ -54,6 +56,8 @@ const REPO_HOOK_OPERATION_ID = "repo-hook";
 export interface DeletionDialogModuleDeps {
   readonly ui: Pick<UiPresenter, "dialog" | "deletionProgress" | "cancelRunningHooks">;
   readonly dispatcher: Dispatcher;
+  /** Every project type's delete options: the fields the confirmation shows. */
+  readonly projectTypes: ProjectTypeOptions;
   readonly logger: Logger;
 }
 
@@ -180,6 +184,51 @@ interface RemoveConfirmState {
   readonly unmergedCommits: number;
   /** Base branch name (workspace metadata), for the unmerged warning text. */
   readonly base: string | undefined;
+  /** The workspace's project type's delete options, in declared order. */
+  readonly fields: readonly (readonly [string, OptionField])[];
+  /** Their values as the dispatch carried them (checked, defaults applied). */
+  readonly values: Readonly<Record<string, unknown>>;
+}
+
+/** One delete option, as a confirmation field. */
+function optionSection(name: string, field: OptionField, value: unknown): DialogSection {
+  // Controlled, and every edit reported back (`changeEvent`): the dialog is
+  // re-rendered as the status check lands, which must not undo the user's pick.
+  const common = { id: name, label: field.label ?? name, changeEvent: true } as const;
+  if (field.kind === "checkbox") {
+    return { type: "checkbox", ...common, value: value === true };
+  }
+  if (field.kind === "select" && field.choices !== "dynamic" && field.choices !== undefined) {
+    return {
+      type: "dropdown",
+      ...common,
+      suggestions: [
+        { items: field.choices.map((c) => ({ value: c.value, label: c.label ?? c.value })) },
+      ],
+      value: typeof value === "string" ? value : "",
+    };
+  }
+  return {
+    type: "input",
+    ...common,
+    value: typeof value === "string" ? value : "",
+    ...(field.placeholder !== undefined && { placeholder: field.placeholder }),
+  };
+}
+
+/** The delete options as the user left them in the confirmation. */
+function pickedOptions(
+  fields: readonly (readonly [string, OptionField])[],
+  data: Readonly<Record<string, string>> | undefined
+): Record<string, string | boolean> {
+  const picked: Record<string, string | boolean> = {};
+  for (const [name, field] of fields) {
+    const value = data?.[name];
+    if (value === undefined) continue;
+    if (field.kind === "checkbox") picked[name] = value === "true";
+    else if (value.trim() !== "") picked[name] = value.trim();
+  }
+  return picked;
 }
 
 /** Build the remove confirmation DialogConfig from its display state. */
@@ -218,13 +267,15 @@ function buildRemoveConfirmConfig(state: RemoveConfirmState): DialogConfig {
     }
   }
 
-  sections.push({ type: "checkbox", id: "keep-branch", label: "Keep branch" });
+  for (const [name, field] of state.fields) {
+    sections.push(optionSection(name, field, state.values[name]));
+  }
   sections.push({
     type: "group",
     items: [
       { type: "button", id: "remove", label: "Remove", variant: "primary" },
       // role "cancel": Escape clicks Cancel. The form auto-focuses the
-      // first field (the keep-branch checkbox) on mount.
+      // first field (git: the Keep branch checkbox) on mount.
       { type: "button", id: "cancel", label: "Cancel", variant: "secondary", role: "cancel" },
     ],
   });
@@ -265,13 +316,13 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
   /** Wire retry/dismiss event handlers on a dialog handle. */
   function wireEvents(handle: DialogHandle, workspaceRef: WorkspaceRef): void {
     const logger = deps.logger.scoped({ workspace: workspaceRef });
-    function dismiss(keepBranch: boolean): void {
+    function dismiss(options: Readonly<Record<string, unknown>>): void {
       logger.debug("Deletion dismiss");
       handle.close();
       activeDialog = null;
       dispatchDelete(deps.dispatcher, {
         workspaceRef,
-        keepBranch,
+        options,
         force: true,
         removeWorktree: true,
         ignoreWarnings: true,
@@ -290,7 +341,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
         const pids = progress.blockingProcesses?.map((p) => p.pid);
         dispatchDelete(deps.dispatcher, {
           workspaceRef,
-          keepBranch: progress.keepBranch,
+          options: progress.options,
           force: false,
           removeWorktree: true,
           ignoreWarnings: true,
@@ -300,7 +351,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       } else if (evt.actionId === "dismiss") {
         // Dismiss gives up on the failed step, not on the user's choice: a
         // branch they asked to keep survives the forced teardown.
-        dismiss(progress.keepBranch);
+        dismiss(progress.options);
       }
     });
     // Escape is handled declaratively: the Dismiss button carries role
@@ -392,10 +443,21 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       isDirty: false,
       unmergedCommits: 0,
       base: undefined,
+      fields: Object.entries(
+        deps.projectTypes.fieldsOf(deps.projectTypes.typeOf(input.projectRef), "delete")
+      ).filter(([, field]) => field.dialog !== false),
+      values: input.intent.payload.options ?? {},
     };
 
     const handle = deps.ui.dialog(buildRemoveConfirmConfig(state));
     let dialogOpen = true;
+    // Keep the user's edits, so the re-render when the status lands shows them.
+    handle.onChange((change) => {
+      state = {
+        ...state,
+        values: { ...state.values, ...pickedOptions(state.fields, change.data) },
+      };
+    });
 
     // Background status check, in two steps. Never blocks the dialog; a
     // failure warns that the status is unknown rather than silently rendering
@@ -449,9 +511,9 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     void (async (): Promise<void> => {
       if (!(await readStatus()) || !dialogOpen) return;
       try {
-        await deps.dispatcher.dispatch<GetProjectBasesIntent>({
-          type: INTENT_GET_PROJECT_BASES,
-          payload: { projectRef: input.projectRef, refresh: true, wait: true },
+        await deps.dispatcher.dispatch<RefreshProjectIntent>({
+          type: INTENT_REFRESH_PROJECT,
+          payload: { projectRef: input.projectRef },
         });
       } catch {
         // Best-effort, like get-status's own refresh: the local status stands.
@@ -475,7 +537,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       // logged as an error — on a confirmation faster than git (one click, on
       // Windows). No new read starts: `dialogOpen` is false. A read never rejects.
       await statusRead;
-      return { result: { keepBranch: event.data?.["keep-branch"] === "true" } };
+      return { result: { options: pickedOptions(state.fields, event.data) } };
     }
     // Cancel button or Escape.
     return { result: { canceled: true } };

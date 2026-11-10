@@ -13,7 +13,10 @@ import type { InputShaping } from "../registry";
 export interface CliMapping extends InputShaping {
   /** Subcommand path, e.g. `["ws", "delete"]` for `ch ws delete`. */
   readonly path: readonly string[];
-  /** Positional arguments, in order, mapped onto input fields. */
+  /**
+   * Positional arguments, in order, mapped onto input fields. Describe appends
+   * the entry's `trailingPositionals` to them.
+   */
   readonly positionals?: readonly string[];
   /**
    * Callable but left out of `ch --help`: plumbing for a built-in, not a
@@ -48,7 +51,9 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "workspace.wakeup.clear": { path: ["ws", "wakeup", "clear"] },
   "workspace.wakeup.show": { path: ["ws", "wakeup", "show"] },
   "workspace.processes": { path: ["ws", "processes"] },
-  "workspace.create": { path: ["ws", "create"], positionals: ["name", "base"] },
+  // A project type's positional option (git's `base`) follows `name`: the
+  // entry's `trailingPositionals`, so this map names no type's field.
+  "workspace.create": { path: ["ws", "create"], positionals: ["name"] },
   "workspace.delete": { path: ["ws", "delete"] },
   "workspace.switch": { path: ["ws", "switch"], positionals: ["workspace"] },
   // No title clears it: argv cannot spell null, and `ch ws title ""` is not

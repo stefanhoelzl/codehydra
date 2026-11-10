@@ -106,45 +106,30 @@ export interface LogApi {
 }
 
 /**
- * Model identifier for prompts.
- */
-export interface PromptModel {
-  readonly providerID: string;
-  readonly modelID: string;
-}
-
-/**
- * Agent specification for workspace creation — a discriminated union by backend.
- * Carries the prompt plus the backend-specific launch config:
- * - "default": prompt only; the backend is resolved on the CodeHydra side.
- * - "claude": prompt, model, permissionMode (e.g. "plan") and a named agent.
- * - "opencode": prompt, model and a named agent (e.g. "build"). No permission mode.
- */
-export type AgentSpec =
-  | { readonly type: "default"; readonly prompt?: string }
-  | {
-      readonly type: "claude";
-      readonly prompt?: string;
-      readonly model?: PromptModel;
-      readonly permissionMode?: string;
-      readonly agentName?: string;
-    }
-  | {
-      readonly type: "opencode";
-      readonly prompt?: string;
-      readonly model?: PromptModel;
-      readonly agentName?: string;
-    };
-
-/**
- * Options for workspace creation.
+ * Options for workspace creation: what `ch ws create` takes besides the name.
+ *
+ * Which further options a project takes depends on its type, and they go here
+ * by name too — a git project's `base` (the branch to start from; omitted: the
+ * project's default branch) and `tracking` (a remote branch to check out). An
+ * option the project's type does not declare fails the call.
  */
 export interface WorkspaceCreateOptions {
-  /** Optional agent spec: prompt + backend-specific launch config. */
-  readonly agent?: AgentSpec;
-  /** If true, steal focus from current workspace. If false, don't steal focus but still
-   *  switch when no workspace is active. Default: switch (undefined treated as true). */
-  readonly stealFocus?: boolean;
+  /** Project to create it in: a name, ref, path or git URL. Omitted: the caller's own. */
+  readonly project?: string | undefined;
+  /** Initial prompt, sent once the workspace is ready. */
+  readonly prompt?: string | undefined;
+  /** Agent backend to launch: "claude" or "opencode". */
+  readonly agent?: string | undefined;
+  /** Model for the initial prompt: "provider/model" (claude also takes a bare id). */
+  readonly model?: string | undefined;
+  /** Claude permission mode to start in, e.g. "plan". Needs agent "claude". */
+  readonly permissionMode?: string | undefined;
+  /** Named agent (persona) to launch. Needs an agent backend. */
+  readonly agentName?: string | undefined;
+  /** Switch to the new workspace. Default: false */
+  readonly stealFocus?: boolean | undefined;
+  /** The project type's create options, by name (git: `base`, `tracking`). */
+  readonly [option: string]: string | boolean | undefined;
 }
 
 /**
@@ -407,36 +392,36 @@ export interface WorkspaceApi {
   executeCommand(command: string, args?: readonly unknown[]): Promise<unknown>;
 
   /**
-   * Create a new workspace in the same project as the current workspace.
+   * Create a new workspace, in the same project as the current workspace
+   * unless `options.project` names another. Takes what `ch ws create` takes.
    *
-   * The new workspace is created from the specified base branch. If an initial
-   * prompt is provided, it will be sent to the OpenCode agent after the workspace
-   * is ready (fire-and-forget).
-   *
-   * @param name - Name for the new workspace (becomes the branch name)
-   * @param base - Base branch to create the workspace from
-   * @param options - Optional creation options
+   * @param name - Name for the new workspace
+   * @param options - Creation options, the project type's included (git: `base`, `tracking`)
    * @returns The created workspace information
-   * @throws Error if not connected, name/base invalid, or creation fails
+   * @throws Error if not connected, the name is invalid, an option is not the
+   *   project type's, or creation fails
    *
    * @example
    * ```typescript
-   * // Create workspace with no initial prompt
-   * const ws = await api.workspace.create('feature-login', 'main');
+   * // From the project's default branch
+   * const ws = await api.workspace.create('feature-login');
    *
-   * // Create workspace with initial prompt (string)
-   * const ws = await api.workspace.create('feature-auth', 'main', {
-   *   initialPrompt: 'Implement OAuth2 authentication'
+   * // From a given base branch, with an initial prompt
+   * const ws = await api.workspace.create('feature-auth', {
+   *   base: 'main',
+   *   prompt: 'Implement OAuth2 authentication',
    * });
    *
-   * // Create workspace with initial prompt and specific agent
-   * const ws = await api.workspace.create('fix-bug-123', 'main', {
-   *   initialPrompt: { prompt: 'Fix the login bug', agent: 'coder' },
-   *   stealFocus: false  // Don't switch to the new workspace
+   * // With a specific agent, switching to it
+   * const ws = await api.workspace.create('fix-bug-123', {
+   *   agent: 'claude',
+   *   permissionMode: 'plan',
+   *   prompt: 'Fix the login bug',
+   *   stealFocus: true,
    * });
    * ```
    */
-  create(name: string, base: string, options?: WorkspaceCreateOptions): Promise<Workspace>;
+  create(name: string, options?: WorkspaceCreateOptions): Promise<Workspace>;
 }
 
 /**

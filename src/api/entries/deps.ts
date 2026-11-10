@@ -11,6 +11,7 @@ import type { AppBoundary } from "../../boundaries/shell/app";
 import type { DeletionProgress } from "../../shared/api/types";
 import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
 import type { OperationRegistry } from "../registry";
+import type { ProjectTypeOptions } from "../../intents/project-type-options";
 import type { Config } from "../../boundaries/platform/config";
 
 /**
@@ -365,4 +366,9 @@ export interface EntryDeps {
   readonly wakeups: Wakeups;
   /** The process monitor, owned by the process-monitor module. */
   readonly processes: ProcessMonitorAccess;
+  /**
+   * Every project type's workspace create/delete options, sealed by app:start.
+   * `workspace.create` / `workspace.delete` merge them into their input.
+   */
+  readonly projectTypes: ProjectTypeOptions;
 }

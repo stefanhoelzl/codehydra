@@ -36,7 +36,7 @@ import { LogLevel } from "../boundaries/platform/logging-types";
 import type { PortManager } from "../boundaries/platform/network";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import { Path } from "../utils/path/path";
-import type { Workspace, WorkspaceStatus } from "../shared/api/types";
+import type { WorkspaceStatus } from "../shared/api/types";
 import type {
   AppendOutputRequest,
   ServerToClientEvents,
@@ -47,10 +47,7 @@ import type {
   ApiConfig,
   AgentType,
   SetMetadataRequest,
-  DeleteWorkspaceRequest,
-  DeleteWorkspaceResponse,
   ExecuteCommandRequest,
-  WorkspaceCreateRequest,
   GetWorkspaceStatusRequest,
   ShowNotificationRequest,
   ShowNotificationResponse,
@@ -66,17 +63,13 @@ import type {
 import {
   COMMAND_TIMEOUT_MS,
   validateSetMetadataRequest,
-  validateDeleteWorkspaceRequest,
   validateExecuteCommandRequest,
   validateOpenSystemPathRequest,
-  validateWorkspaceCreateRequest,
   validateGetWorkspaceStatusRequest,
   validateLogRequest,
   validateAgentLifecycleRequest,
 } from "../shared/api-protocol";
 import type { OpenSystemPathRequest } from "../shared/api-protocol";
-import type { OpenWorkspaceIntent } from "../intents/open-workspace";
-import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type { DeleteHookResult, ShutdownHookResult } from "../intents/delete-workspace";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
 import type { GetAgentSessionIntent } from "../intents/get-agent-session";
@@ -88,11 +81,10 @@ import type { VscodeCommandIntent } from "../intents/vscode-command";
 import type { ExecuteHookResult } from "../intents/vscode-command";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import {
   CAPABILITY_AGENT_STOPPED,
   DELETE_WORKSPACE_OPERATION_ID,
-  INTENT_DELETE_WORKSPACE,
 } from "../intents/delete-workspace";
 import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
@@ -117,13 +109,7 @@ import { getErrorMessage } from "../shared/errors/service-errors";
 import { raceTimeout, TIMED_OUT } from "../utils/timeout";
 import { metadataTier, visibleMetadata } from "../utils/metadata-tier";
 import type { WorkspaceRef } from "../intents/contract";
-import {
-  asWorkspaceRef,
-  isRef,
-  parseWorkspaceRef,
-  projectNameOf,
-  projectRefOf,
-} from "../utils/ref";
+import { asWorkspaceRef, isRef, parseWorkspaceRef, projectNameOf } from "../utils/ref";
 import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
@@ -1339,38 +1325,6 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     );
 
     socket.on(
-      "api:workspace:delete",
-      createValidatedHandler<
-        DeleteWorkspaceRequest | undefined,
-        DeleteWorkspaceRequest,
-        DeleteWorkspaceResponse
-      >(
-        "api:workspace:delete",
-        workspaceRef,
-        validateDeleteWorkspaceRequest,
-        (req) =>
-          handleApiCall(workspaceRef, "delete", async () => {
-            const intent: DeleteWorkspaceIntent = {
-              type: INTENT_DELETE_WORKSPACE,
-              payload: {
-                workspaceRef,
-                keepBranch: req.keepBranch ?? true,
-                force: false,
-                removeWorktree: true,
-              },
-            };
-            const handle = dispatcher.dispatch(intent);
-            if (!(await handle.accepted)) {
-              return { started: false };
-            }
-            void handle;
-            return { started: true };
-          }),
-        (req) => ({ keepBranch: !!req?.keepBranch })
-      )
-    );
-
-    socket.on(
       "api:workspace:executeCommand",
       createValidatedHandler<ExecuteCommandRequest, ExecuteCommandRequest, unknown>(
         "api:workspace:executeCommand",
@@ -1410,39 +1364,6 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
             }
           }),
         (req) => ({ app: req.app, path: req.path })
-      )
-    );
-
-    socket.on(
-      "api:workspace:create",
-      createValidatedHandler<WorkspaceCreateRequest, WorkspaceCreateRequest, Workspace>(
-        "api:workspace:create",
-        workspaceRef,
-        validateWorkspaceCreateRequest,
-        (req) =>
-          handleApiCall(workspaceRef, "create", async () => {
-            const intent: OpenWorkspaceIntent = {
-              type: INTENT_OPEN_WORKSPACE,
-              payload: {
-                projectRef: projectRefOf(workspaceRef),
-                workspaceName: req.name,
-                base: req.base,
-                ...(req.agent !== undefined && {
-                  agent: req.agent,
-                }),
-                ...(req.stealFocus !== undefined && {
-                  stealFocus: req.stealFocus,
-                }),
-                source: "api-server",
-              },
-            };
-            const result = await dispatcher.dispatch(intent);
-            if (!result) {
-              throw new Error("Create workspace dispatch returned no result");
-            }
-            return result as Workspace;
-          }),
-        (req) => ({ name: req.name, base: req.base })
       )
     );
 

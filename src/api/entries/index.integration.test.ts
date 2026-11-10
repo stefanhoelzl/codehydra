@@ -7,6 +7,7 @@
  * every entry is documented well enough for an adapter to present it.
  */
 
+import { z } from "zod/v4";
 import { describe, it, expect } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
@@ -20,6 +21,8 @@ import type { AnyOperationEntry } from "../types";
 import { schemas as openWorkspaceSchemas } from "../../intents/open-workspace";
 import { workspaceSchema, type AgentSpec } from "../../intents/contract";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
+import { sealedProjectTypeOptions } from "../../intents/project-type-options";
+import { GIT_PROJECT_OPTIONS } from "../../modules/git/options";
 
 function registry(dispatcher: Dispatcher = createMockDispatcher()) {
   return createRegistry(
@@ -35,6 +38,8 @@ function registry(dispatcher: Dispatcher = createMockDispatcher()) {
       plugins: () => {
         throw new Error("this test reaches no plugins");
       },
+      // What the app has once the git module answered register-project-types.
+      projectTypes: sealedProjectTypeOptions(GIT_PROJECT_OPTIONS),
     },
     SILENT_LOGGER
   );
@@ -106,9 +111,14 @@ describe("registry contents", () => {
   });
 
   describe("divergence resolutions", () => {
-    it("defaults keepBranch to false", () => {
+    it("documents git's keepBranch default but leaves applying it to the project's type", () => {
       const del = registry().get("workspace.delete");
-      expect((del.input.parse({}) as { keepBranch: boolean }).keepBranch).toBe(false);
+      // Filled in here, it would reach every delete — a fake project's too.
+      expect((del.input.parse({}) as { keepBranch?: boolean }).keepBranch).toBeUndefined();
+      const schema = z.toJSONSchema(del.input as z.ZodType, { io: "input" }) as {
+        properties: Record<string, unknown>;
+      };
+      expect(schema.properties["keepBranch"]).toEqual({ default: false, type: "boolean" });
     });
 
     it("defaults delete to blocking", () => {

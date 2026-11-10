@@ -40,9 +40,7 @@ export type WorkspaceMatches = Expect<Extends<shared.Workspace, api.Workspace>>;
 export type WorkspaceKeysMatch = Expect<SameKeys<shared.Workspace, api.Workspace>>;
 
 // Client → server payloads.
-export type AgentSpecMatches = Expect<MutuallyExtends<api.AgentSpec, shared.AgentSpec>>;
-export type PromptModelMatches = Expect<MutuallyExtends<api.PromptModel, shared.PromptModel>>;
 export type LogContextMatches = Expect<MutuallyExtends<api.LogContext, LogContext>>;
 export type WorkspaceCreateOptionsMatch = Expect<
-  MutuallyExtends<api.WorkspaceCreateOptions, Pick<WorkspaceCreateRequest, "agent" | "stealFocus">>
+  MutuallyExtends<api.WorkspaceCreateOptions & { readonly name: string }, WorkspaceCreateRequest>
 >;

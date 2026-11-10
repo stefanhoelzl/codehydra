@@ -6,9 +6,9 @@
  */
 
 import { z } from "zod/v4";
-import type { WorkspaceStatus, Workspace, AgentSpec, AgentSession } from "./api/types";
+import type { WorkspaceStatus, Workspace, AgentSession } from "./api/types";
 import { METADATA_KEY_REGEX, isValidMetadataKey } from "./api/types";
-import { agentSpecSchema, type AgentType } from "../intents/contract";
+import type { AgentType } from "../intents/contract";
 
 // ============================================================================
 // Result Types
@@ -363,11 +363,21 @@ const openSystemPathRequestSchema = z.object({
 export const validateOpenSystemPathRequest = validateWith(openSystemPathRequestSchema);
 
 /**
- * Request payload for deleting a workspace.
+ * Request payload for deleting a workspace: `workspace.delete`'s input, as
+ * `ch ws delete` and MCP take it. Which further options a workspace takes
+ * depends on its project's type (git: `keepBranch`); one its type does not
+ * declare fails the call.
  */
 export interface DeleteWorkspaceRequest {
-  /** If true, keep the git branch after deleting the worktree. Default: false */
-  readonly keepBranch?: boolean | undefined;
+  /** Workspace to delete: a name, `<project>::<name>` or a ref. Omit: the caller's own. */
+  readonly workspace?: string | undefined;
+  readonly project?: string | undefined;
+  /** Delete even though the project's type objects (git: uncommitted or unmerged work). */
+  readonly ignoreWarnings?: boolean | undefined;
+  /** Wait for the deletion to finish. Default: true */
+  readonly wait?: boolean | undefined;
+  /** The project type's delete options, by name. */
+  readonly [option: string]: string | boolean | undefined;
 }
 
 /**
@@ -379,39 +389,31 @@ export interface DeleteWorkspaceResponse {
 }
 
 /**
- * Request payload for creating a workspace.
+ * Request payload for creating a workspace: `workspace.create`'s input, as
+ * `ch ws create` and MCP take it. Which further options a project takes
+ * depends on its type (git: `base`, `tracking`); one its type does not declare
+ * fails the call.
  */
 export interface WorkspaceCreateRequest {
-  /** Name for the new workspace (becomes branch name) */
+  /** Name for the new workspace */
   readonly name: string;
-  /** Base branch to create the workspace from */
-  readonly base: string;
-  /** Optional agent spec: prompt + backend-specific launch config. */
-  readonly agent?: AgentSpec;
-  /** If true, steal focus from current workspace. If false, don't steal focus but still
-   *  switch when no workspace is active. Default: switch (undefined treated as true). */
-  readonly stealFocus?: boolean;
+  /** Project to create it in: a name, ref, path or git URL. Omit: the caller's own. */
+  readonly project?: string | undefined;
+  /** Initial prompt to send once created. */
+  readonly prompt?: string | undefined;
+  /** Agent backend to launch: "claude" or "opencode". */
+  readonly agent?: string | undefined;
+  /** Model for the initial prompt: "provider/model" (claude also takes a bare id). */
+  readonly model?: string | undefined;
+  /** Claude permission mode to start in, e.g. "plan". Needs agent "claude". */
+  readonly permissionMode?: string | undefined;
+  /** Named agent (persona) to launch. Needs an agent backend. */
+  readonly agentName?: string | undefined;
+  /** Switch to the new workspace. Default: false */
+  readonly stealFocus?: boolean | undefined;
+  /** The project type's create options, by name. */
+  readonly [option: string]: string | boolean | undefined;
 }
-
-const workspaceCreateRequestSchema = z.object({
-  name: nonEmptyString("name"),
-  base: nonEmptyString("base"),
-  agent: z
-    .unknown()
-    .refine(
-      (value) => agentSpecSchema.safeParse(value).success,
-      "Field 'agent' must be a valid agent spec ({ type, prompt?, ... })"
-    )
-    .optional(),
-  stealFocus: z.boolean().optional(),
-});
-
-/**
- * Runtime validation for WorkspaceCreateRequest.
- * Validates structure and required fields. The optional agent spec is checked
- * against agentSpecSchema, keeping this path in sync with the intent contract.
- */
-export const validateWorkspaceCreateRequest = validateWith(workspaceCreateRequestSchema);
 
 const setMetadataRequestSchema = z.object({
   key: z
@@ -426,17 +428,6 @@ const setMetadataRequestSchema = z.object({
  * Validates structure and key format against METADATA_KEY_REGEX.
  */
 export const validateSetMetadataRequest = validateWith(setMetadataRequestSchema);
-
-const deleteWorkspaceRequestSchema = z
-  .object({ keepBranch: z.boolean().optional() })
-  .nullish()
-  .transform((value): DeleteWorkspaceRequest => value ?? {});
-
-/**
- * Runtime validation for DeleteWorkspaceRequest.
- * Accepts undefined/null (optional request) and normalizes it to {}.
- */
-export const validateDeleteWorkspaceRequest = parseWith(deleteWorkspaceRequestSchema);
 
 /**
  * Request to get workspace status.
@@ -693,7 +684,7 @@ export interface ClientToServerEvents {
    * Delete the connected workspace.
    * This will terminate the OpenCode session and remove the worktree.
    *
-   * @param request - Optional request with keepBranch option
+   * @param request - `workspace.delete`'s input (the project type's options included)
    * @param ack - Acknowledgment callback with deletion started confirmation
    */
   "api:workspace:delete": (

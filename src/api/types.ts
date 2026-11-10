@@ -97,6 +97,13 @@ export interface OperationEntry<TInput = never, TOutput = unknown> {
   /** zod is the single source of truth for the input shape. */
   readonly input: z.ZodType<TInput>;
   /**
+   * Input fields a surface that takes positional arguments accepts after its
+   * own, in order. Not the entry's to invent: it is how a project type's
+   * option declared `positional` (git's `base`) reaches `ch ws create <name>
+   * [base]` without the CLI map naming a type's field.
+   */
+  readonly trailingPositionals?: readonly string[];
+  /**
    * Whether the operation acts on a specific workspace. When true and the caller
    * neither stands in one nor names one, the call fails before dispatching (CLI
    * exit code 4).

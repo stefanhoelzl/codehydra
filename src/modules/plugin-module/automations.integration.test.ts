@@ -34,11 +34,7 @@ import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { AppShutdownOperation } from "../../intents/app-shutdown";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
-import {
-  INTENT_GET_PROJECT_BASES,
-  type GetProjectBasesIntent,
-  type GetProjectBasesResult,
-} from "../../intents/get-project-bases";
+import { INTENT_REFRESH_PROJECT, type RefreshProjectIntent } from "../../intents/refresh-project";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
 import {
@@ -162,24 +158,21 @@ class OpenWorkspaceOp implements Operation<typeof openWorkspaceSchemas> {
   }
 }
 
-const getBasesSchemas = {
-  type: INTENT_GET_PROJECT_BASES,
-  payload: z.custom<GetProjectBasesIntent["payload"]>(),
-  result: z.custom<GetProjectBasesResult>(),
+const refreshSchemas = {
+  type: INTENT_REFRESH_PROJECT,
+  payload: z.custom<RefreshProjectIntent["payload"]>(),
 } satisfies OperationSchemas;
-class GetBasesOp implements Operation<typeof getBasesSchemas> {
-  readonly id = "get-project-bases";
-  readonly schemas = getBasesSchemas;
-  readonly dispatched: IntentOf<typeof getBasesSchemas>[] = [];
+class RefreshProjectOp implements Operation<typeof refreshSchemas> {
+  readonly id = "refresh-project";
+  readonly schemas = refreshSchemas;
+  readonly dispatched: IntentOf<typeof refreshSchemas>[] = [];
+  /** When set, the refresh fails with it — what a failed fetch looks like. */
+  failWith: Error | undefined;
   async execute(
-    ctx: OperationContext<IntentOf<typeof getBasesSchemas>, typeof getBasesSchemas>
-  ): Promise<GetProjectBasesResult> {
+    ctx: OperationContext<IntentOf<typeof refreshSchemas>, typeof refreshSchemas>
+  ): Promise<void> {
     this.dispatched.push(ctx.intent);
-    return {
-      bases: [],
-      projectRef: ctx.intent.payload.projectRef,
-      projectId: "project-1" as ProjectId,
-    };
+    if (this.failWith !== undefined) throw this.failWith;
   }
 }
 
@@ -391,7 +384,7 @@ function createSetup(options?: {
   const dispatcher = createMockDispatcher();
   const openProjectOp = new OpenProjectOp();
   const openWorkspaceOp = new OpenWorkspaceOp();
-  const getBasesOp = new GetBasesOp();
+  const refreshOp = new RefreshProjectOp();
   const setMetaOp = new SetMetaOp();
   const listProjectsOp = new ListProjectsOp();
   const resolveWsOp = new ResolveWorkspaceOp(listProjectsOp);
@@ -411,7 +404,7 @@ function createSetup(options?: {
   dispatcher.registerOperation(new AppShutdownOperation());
   dispatcher.registerOperation(openProjectOp);
   dispatcher.registerOperation(openWorkspaceOp);
-  dispatcher.registerOperation(getBasesOp);
+  dispatcher.registerOperation(refreshOp);
   dispatcher.registerOperation(setMetaOp);
   dispatcher.registerOperation(listProjectsOp);
   dispatcher.registerOperation(resolveWsOp);
@@ -494,7 +487,7 @@ function createSetup(options?: {
     },
     openProjectOp,
     openWorkspaceOp,
-    getBasesOp,
+    refreshOp,
     setMetaOp,
     listProjectsOp,
     resolveWsOp,
@@ -539,6 +532,40 @@ describe("automations: workspace.create", () => {
       setMetaOp.dispatched.some((d) => d.payload.key === "source" && d.payload.value === "gh")
     ).toBe(true);
     expect(entriesOf(state)).toHaveProperty("gh/1");
+  });
+
+  it("hands workspace:open the item's project type options, after a refresh", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, openWorkspaceOp, refreshOp } = createSetup({
+      sources: {
+        gh: {
+          ...source().gh!,
+          base: "develop",
+          tracking: "origin/feature-{{ id }}",
+        },
+      },
+    });
+    cmd.items = [{ id: "1" }];
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(refreshOp.dispatched).toHaveLength(1);
+    expect(openWorkspaceOp.dispatched[0]!.payload.options).toEqual({
+      base: "develop",
+      tracking: "origin/feature-1",
+    });
+  });
+
+  it("still creates when the refresh before it fails", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, openWorkspaceOp, refreshOp } = createSetup({ sources: source() });
+    refreshOp.failWith = new Error("fetch failed");
+    cmd.items = [{ id: "1" }];
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
+    expect(openWorkspaceOp.dispatched[0]!.payload.options).toEqual({});
   });
 
   it("does nothing when no sources are configured", async () => {
@@ -650,7 +677,7 @@ describe("automations: workspace.create", () => {
 
   it("adopts an existing workspace instead of creating, writing only the entry", async () => {
     vi.useFakeTimers();
-    const { dispatcher, cmd, state, listProjectsOp, openWorkspaceOp, getBasesOp, setMetaOp } =
+    const { dispatcher, cmd, state, listProjectsOp, openWorkspaceOp, refreshOp, setMetaOp } =
       createSetup({ sources: source() });
     listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
     cmd.items = [{ id: "1" }];
@@ -664,7 +691,7 @@ describe("automations: workspace.create", () => {
       projectRef: gitProjectRef(projPath(PROJECT_PATH)),
     });
     expect(openWorkspaceOp.dispatched).toHaveLength(0);
-    expect(getBasesOp.dispatched).toHaveLength(0); // no git fetch on the adopt path
+    expect(refreshOp.dispatched).toHaveLength(0); // no git fetch on the adopt path
     expect(setMetaOp.dispatched).toHaveLength(0); // entry only: no metadata, wake or focus
   });
 

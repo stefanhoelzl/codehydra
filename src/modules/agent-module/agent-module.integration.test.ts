@@ -417,7 +417,7 @@ async function initializeViaFirstOpen(dispatcher: Dispatcher): Promise<void> {
 function deleteWorkspace(dispatcher: Dispatcher, { force }: { force: boolean }) {
   return dispatcher.dispatch<DeleteWorkspaceIntent>({
     type: "workspace:delete",
-    payload: { workspaceRef: TEST_WS_REF, keepBranch: false, force, removeWorktree: true },
+    payload: { workspaceRef: TEST_WS_REF, force, removeWorktree: true },
   });
 }
 
@@ -1134,7 +1134,7 @@ describe("createAgentModule", () => {
         type: "workspace:delete",
         payload: {
           workspaceRef: TEST_WS_REF,
-          keepBranch: false,
+
           force: false,
           removeWorktree: true,
         },

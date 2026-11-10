@@ -65,6 +65,7 @@ import {
 } from "../intents/app-shutdown";
 import { createWindowTitleModule } from "./window-title-module";
 import { ShellError } from "../shared/errors/shell-errors";
+import { testProjectTypes } from "../intents/project-type-options.test-utils";
 
 // =============================================================================
 // Fixtures
@@ -93,7 +94,7 @@ function setup(options?: {
   drainTimeoutMs?: number;
 }) {
   const dispatcher = new Dispatcher({ logger: SILENT_LOGGER, logScope: new AsyncLogScopeStore() });
-  dispatcher.registerOperation(new DeleteWorkspaceOperation());
+  dispatcher.registerOperation(new DeleteWorkspaceOperation(testProjectTypes()));
   dispatcher.registerOperation(new HibernateWorkspaceOperation());
   // Hibernation records the hibernated flag in workspace metadata.
   dispatcher.registerOperation(
@@ -194,7 +195,7 @@ function deleteIntent(
     type: INTENT_DELETE_WORKSPACE,
     payload: {
       workspaceRef: WORKSPACE_REF,
-      keepBranch: true,
+
       force: false,
       removeWorktree: true,
       ...overrides,

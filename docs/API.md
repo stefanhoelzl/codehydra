@@ -52,18 +52,18 @@ Both methods provide the same API contract - only the transport differs.
 
 All methods operate on the **connected workspace**.
 
-| Method               | Signature                                                                              | Description                                                           |
-| -------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `getStatus`          | `(options?: { refresh?: boolean }) => Promise<WorkspaceStatus>`                        | Get workspace status (dirty flag, unmerged commits, agent status)     |
-| `getAgentSession`    | `() => Promise<AgentSession \| null>`                                                  | Get agent session info (port + sessionId, null if server not running) |
-| `restartAgentServer` | `() => Promise<number>`                                                                | Restart agent server, preserving port, returns port                   |
-| `getMetadata`        | `() => Promise<Record<string, string>>`                                                | Get all metadata (always includes `base` key)                         |
-| `setMetadata`        | `(key: string, value: string \| null) => Promise<void>`                                | Set or delete a metadata key                                          |
-| `getTags`            | `() => Promise<readonly WorkspaceTag[]>`                                               | Get all tags (metadata entries with the `tags.` prefix)               |
-| `setTag`             | `(name: string, options?: TagOptions) => Promise<void>`                                | Set or update a tag (full replace — an omitted option is cleared)     |
-| `deleteTag`          | `(name: string) => Promise<void>`                                                      | Delete a tag                                                          |
-| `executeCommand`     | `(command: string, args?: readonly unknown[]) => Promise<unknown>`                     | Execute a VS Code command (10-second timeout)                         |
-| `create`             | `(name: string, base: string, options?: WorkspaceCreateOptions) => Promise<Workspace>` | Create a new workspace in the same project                            |
+| Method               | Signature                                                                | Description                                                           |
+| -------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `getStatus`          | `(options?: { refresh?: boolean }) => Promise<WorkspaceStatus>`          | Get workspace status (dirty flag, unmerged commits, agent status)     |
+| `getAgentSession`    | `() => Promise<AgentSession \| null>`                                    | Get agent session info (port + sessionId, null if server not running) |
+| `restartAgentServer` | `() => Promise<number>`                                                  | Restart agent server, preserving port, returns port                   |
+| `getMetadata`        | `() => Promise<Record<string, string>>`                                  | Get all metadata (always includes `base` key)                         |
+| `setMetadata`        | `(key: string, value: string \| null) => Promise<void>`                  | Set or delete a metadata key                                          |
+| `getTags`            | `() => Promise<readonly WorkspaceTag[]>`                                 | Get all tags (metadata entries with the `tags.` prefix)               |
+| `setTag`             | `(name: string, options?: TagOptions) => Promise<void>`                  | Set or update a tag (full replace — an omitted option is cleared)     |
+| `deleteTag`          | `(name: string) => Promise<void>`                                        | Delete a tag                                                          |
+| `executeCommand`     | `(command: string, args?: readonly unknown[]) => Promise<unknown>`       | Execute a VS Code command (10-second timeout)                         |
+| `create`             | `(name: string, options?: WorkspaceCreateOptions) => Promise<Workspace>` | Create a new workspace (what `ch ws create` takes)                    |
 
 #### `log` Namespace
 
@@ -159,27 +159,30 @@ await api.workspace.setMetadata("note", null);
 #### Create a New Workspace
 
 ```typescript
-// Create a new workspace in the same project
-const workspace = await api.workspace.create("feature-auth", "main");
+// Create a new workspace in the same project, from its default branch
+const workspace = await api.workspace.create("feature-auth");
 console.log("Created workspace:", workspace.name, "at", workspace.path);
 
-// Create workspace with an initial prompt for the AI agent
-const workspace = await api.workspace.create("fix-bug-123", "main", {
-  initialPrompt: "Fix the login validation bug described in issue #123",
+// From a given base branch (a git project's option), with an initial prompt
+const workspace = await api.workspace.create("fix-bug-123", {
+  base: "main",
+  prompt: "Fix the login validation bug described in issue #123",
 });
 
-// Create workspace with initial prompt and specific agent
-const workspace = await api.workspace.create("refactor-api", "main", {
-  initialPrompt: { prompt: "Refactor the API module for better testability", agent: "coder" },
-  stealFocus: false, // Don't switch to the new workspace
+// With a specific agent, switching to the new workspace
+const workspace = await api.workspace.create("refactor-api", {
+  agent: "claude",
+  permissionMode: "plan",
+  prompt: "Refactor the API module for better testability",
+  stealFocus: true,
 });
 ```
 
 **Notes:**
 
-- The new workspace is created in the same project as the current workspace
-- `initialPrompt` can be a string (uses default agent) or `{ prompt, agent }` object
-- If `stealFocus` is `false`, the UI stays on the current workspace (unless no workspace is active and the project is not collapsed); if `true` or omitted, it switches to the new one — but only when the user has not moved away (to another workspace or the creation panel) while it was being created, since a completing creation never pulls the view back. The switch lands just after the call returns
+- `create` takes what `ch ws create` takes: the options are `workspace.create`'s input, including the project type's own ([Workspace options](USER_GUIDE.md#workspace-options): git's `base` and `tracking`). An option the project's type does not take fails the call. The base is no longer a second positional argument: `create(name, "main")` is rejected with a message pointing at `create(name, { base: "main" })`
+- The new workspace is created in the same project as the current workspace unless `project` names another
+- If `stealFocus` is `false` (the default), the UI stays on the current workspace (unless no workspace is active and the project is not collapsed); if `true`, it switches to the new one — but only when the user has not moved away (to another workspace or the creation panel) while it was being created, since a completing creation never pulls the view back. The switch lands just after the call returns
 - The new workspace appears in the sidebar as a "creating" row as soon as the call starts, regardless of `stealFocus`
 - The initial prompt is queued on the agent's session during creation; the workspace does not wait for the turn it starts (fire-and-forget). If the agent cannot take it over, it is delivered on the next open
 
@@ -317,16 +320,16 @@ interface WorkspaceStatus {
   readonly agent: AgentStatus;
 }
 
-interface PromptModel {
-  readonly providerID: string;
-  readonly modelID: string;
-}
-
-type InitialPrompt = string | { prompt: string; agent?: string; model?: PromptModel };
-
 interface WorkspaceCreateOptions {
-  initialPrompt?: InitialPrompt;
-  stealFocus?: boolean;
+  project?: string; // Omitted: the current workspace's project
+  prompt?: string;
+  agent?: string; // "claude" | "opencode"
+  model?: string; // "provider/model"
+  permissionMode?: string;
+  agentName?: string;
+  stealFocus?: boolean; // Default: false
+  // The project type's create options, by name — git: base, tracking
+  [option: string]: string | boolean | undefined;
 }
 
 interface Workspace {
@@ -366,7 +369,7 @@ interface WorkspaceApi {
   setTag(name: string, options?: TagOptions): Promise<void>;
   deleteTag(name: string): Promise<void>;
   executeCommand(command: string, args?: readonly unknown[]): Promise<unknown>;
-  create(name: string, base: string, options?: WorkspaceCreateOptions): Promise<Workspace>;
+  create(name: string, options?: WorkspaceCreateOptions): Promise<Workspace>;
 }
 
 interface CodehydraApi {
@@ -542,9 +545,16 @@ before the registry, and are now on both surfaces. Purely additive — no existi
 channel changed shape. `ConfigRow` is `{ key, value, default, source, applies, validValues, description }`
 (see [Config](#config) below).
 
+**`api:workspace:create` and `api:workspace:delete` take their operation's input**,
+as `ch ws create` / `ch ws delete` and the MCP tools do: the project type's options
+([Workspace options](USER_GUIDE.md#workspace-options)) are fields of their own, and
+one the project's type does not take fails the call. `api:workspace:create`'s `base`
+is git's option and optional (the project's default branch); its agent is chosen
+with `agent`, `prompt`, `model`, `permissionMode` and `agentName`, not an agent spec.
+
 **Two behaviour changes to `api:workspace:delete`**, both deliberate:
 
-- `keepBranch` now defaults to **`false`**, matching what the MCP tool has always
+- git's `keepBranch` defaults to **`false`**, matching what the MCP tool has always
   done and what "delete" plainly means. It previously defaulted to `true` here.
 - It now **blocks** until deletion finishes and reports real failures, instead of
   returning `{ started: true }` immediately. Pass `wait: false` for the old
@@ -601,26 +611,32 @@ interface ExecuteCommandRequest {
   args?: unknown[]; // Optional arguments to pass to the command
 }
 
+// `workspace.delete`'s input, as `ch ws delete` takes it.
 interface DeleteWorkspaceRequest {
-  keepBranch?: boolean; // If true, keep the git branch after deletion. Default: false
+  workspace?: string; // A name, <project>::<name> or ref. Omitted: the connected workspace
+  project?: string;
+  ignoreWarnings?: boolean; // Delete even though the project's type objects. Default: false
+  wait?: boolean; // Wait for the deletion to finish. Default: true
+  // The project type's delete options, by name — git: keepBranch (default false)
+  [option: string]: string | boolean | undefined;
 }
 
 interface DeleteWorkspaceResponse {
   started: boolean; // True if deletion was started (deletion is async)
 }
 
-interface PromptModel {
-  providerID: string;
-  modelID: string;
-}
-
-type InitialPrompt = string | { prompt: string; agent?: string; model?: PromptModel };
-
+// `workspace.create`'s input, as `ch ws create` takes it.
 interface WorkspaceCreateRequest {
-  name: string; // Name for the new workspace (becomes branch name)
-  base: string; // Base branch to create the workspace from
-  initialPrompt?: InitialPrompt; // Optional initial prompt to send to AI agent
-  stealFocus?: boolean; // If true, switch to the new workspace. Default: false for API calls
+  name: string;
+  project?: string; // Omitted: the connected workspace's project
+  prompt?: string;
+  agent?: string; // "claude" | "opencode"
+  model?: string; // "provider/model"
+  permissionMode?: string;
+  agentName?: string;
+  stealFocus?: boolean; // Default: false
+  // The project type's create options, by name — git: base, tracking
+  [option: string]: string | boolean | undefined;
 }
 
 interface GetWorkspaceStatusRequest {
@@ -1313,7 +1329,7 @@ interface ProjectCloseOptions {
 }
 ```
 
-Cloning from a git URL and base-branch listing are owned by the main-process creation module (the `project:open` intent's `git` payload and the `project:get-bases` intent); they are no longer exposed over renderer IPC.
+The New workspace form is built in the main process: its add-project buttons come from the modules (`project:list-add-actions` / `project:add` — core's folder picker, git's clone dialog) and its option fields from the project type (`project:get-option-choices` for a select whose choices are dynamic, such as git's branches). None of it is exposed over renderer IPC.
 
 #### `workspaces` - Workspace Management
 
@@ -1365,7 +1381,6 @@ interface AppStateResult {
 | ----------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------- |
 | `project:opened`              | `{ project: Project }`                           | Project was opened                                                           |
 | `project:closed`              | `{ projectId: ProjectId }`                       | Project was closed                                                           |
-| `project:bases-updated`       | `{ projectId: ProjectId, bases: BaseInfo[] }`    | Base branches refreshed                                                      |
 | `workspace:created`           | `{ projectId: ProjectId, workspace: Workspace }` | Workspace created                                                            |
 | `workspace:removed`           | `WorkspaceLocator`                               | Workspace removed                                                            |
 | `workspace:switched`          | `WorkspaceLocator \| null`                       | Active workspace changed                                                     |
@@ -1486,24 +1501,6 @@ and mixed, or a change of the counts alone, keeps it. It is held in memory: afte
 a restart it is when CodeHydra first saw the status. Absent while the workspace
 has reported no status yet.
 
-#### `BaseInfo`
-
-```typescript
-interface BaseInfo {
-  readonly name: string;
-  readonly isRemote: boolean;
-  readonly base?: string;
-  readonly derives?: string;
-}
-```
-
-| Field      | Type      | Description                                                                                                                                                                        |
-| ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`     | `string`  | Full branch reference (e.g., "main" or "origin/main")                                                                                                                              |
-| `isRemote` | `boolean` | Whether this is a remote-tracking branch                                                                                                                                           |
-| `base`     | `string?` | Suggested base branch for creating a workspace. For local branches: the base recorded for the branch's workspace, or matching `origin/*` branch. For remote branches: the full ref |
-| `derives`  | `string?` | Derivable workspace name if a workspace can be created from this branch. Set for local branches without worktrees or remote branches without local counterparts                    |
-
 #### `UIMode`
 
 ```typescript
@@ -1555,7 +1552,7 @@ interface DeletionProgress {
   readonly workspaceRef: WorkspaceRef;
   readonly workspaceName: WorkspaceName;
   readonly projectId: ProjectId;
-  readonly keepBranch: boolean;
+  readonly options: Readonly<Record<string, unknown>>; // The project type's delete options in effect (git: keepBranch)
   readonly operations: readonly DeletionOperation[];
   readonly completed: boolean;
   readonly hasErrors: boolean;

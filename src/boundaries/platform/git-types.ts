@@ -76,10 +76,19 @@ export interface UnmanagedWorktree {
 }
 
 /**
- * Base (branch) information for workspace creation.
- * Re-exported from shared types for single source of truth.
+ * A branch a workspace can be created from (or named after). Git's own: core
+ * sees these only as the git module's dynamic choices and name suggestions.
  */
-export type { BaseInfo } from "../../shared/api/types";
+export interface BaseInfo {
+  /** Full branch reference (e.g., "main" or "origin/main"). */
+  readonly name: string;
+  /** Whether this is a remote-tracking branch. */
+  readonly isRemote: boolean;
+  /** Suggested base branch for creating a workspace from this branch. */
+  readonly base?: string;
+  /** Derivable workspace name if a workspace can be created from this branch. */
+  readonly derives?: string;
+}
 
 /**
  * Result of workspace removal operation.
