@@ -335,8 +335,13 @@ interface WorkspaceCreateOptions {
 interface Workspace {
   readonly projectId: string;
   readonly name: string;
-  readonly branch: string | null;
-  /** Always contains a `base` key with the base branch */
+  /** Display text from the project's type (git: the checked-out branch); absent when none */
+  readonly subtitle?: string;
+  /** Icon before the subtitle (git: "branch") */
+  readonly subtitleIcon?: "branch" | "cloud" | "info";
+  /** The type's own data, passed as-is (git: { branch?, base? }) */
+  readonly details?: Readonly<Record<string, unknown>>;
+  /** For a git workspace, a `base` key when its base branch is recorded */
   readonly metadata: Readonly<Record<string, string>>;
   readonly path: string;
   readonly url?: string;
@@ -660,9 +665,11 @@ interface LogRequest {
 
 interface Workspace {
   projectId: string; // Identifier of the project this workspace belongs to
-  name: string; // Workspace name (also the branch name)
-  branch: string | null; // Current branch, or null for detached HEAD
-  metadata: Readonly<Record<string, string>>; // Always contains a `base` key with the base branch
+  name: string; // Workspace name (for git, the branch it was created on)
+  subtitle?: string; // Display text from the project's type (git: the current branch; absent on a detached HEAD)
+  subtitleIcon?: "branch" | "cloud" | "info"; // Icon before the subtitle (git: "branch")
+  details?: Readonly<Record<string, unknown>>; // The type's own data, as-is (git: { branch?, base? })
+  metadata: Readonly<Record<string, string>>; // For git, a `base` key when the base branch is recorded
   path: string; // Absolute path to the workspace directory
   url?: string; // IDE server URL; absent while the workspace is hibernated
 }
@@ -1454,7 +1461,9 @@ interface Workspace {
   readonly ref: WorkspaceRef; // Identity: <project ref>::<name>
   readonly projectId: ProjectId;
   readonly name: WorkspaceName;
-  readonly branch: string | null; // null for detached HEAD
+  readonly subtitle?: string; // the type's display text (git: the branch; absent on a detached HEAD)
+  readonly subtitleIcon?: SubtitleIcon; // "branch" | "cloud" | "info"
+  readonly details?: Readonly<Record<string, unknown>>; // the type's own data (git: { branch?, base? })
   readonly metadata: Readonly<Record<string, string>>;
   readonly path: string;
 }

@@ -47,7 +47,7 @@ export interface ResolveWorkspaceIdentityOptions {
 
 /**
  * Resolve a workspace ref: dispatch workspace:resolve (→ path, project, name,
- * branch, metadata, active, closing) and, unless `withProject` is false,
+ * description, metadata, active, closing) and, unless `withProject` is false,
  * project:resolve (→ the project's id and name).
  *
  * Throws what the resolve throws for a ref no open workspace has.

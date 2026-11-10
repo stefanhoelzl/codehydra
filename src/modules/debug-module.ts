@@ -99,7 +99,6 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
               projectRef,
               projectPath,
               workspaceName,
-              branch: null,
               metadata: {},
             });
             return { result: { error: "Debug: simulated file lock" } };

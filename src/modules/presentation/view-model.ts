@@ -11,7 +11,13 @@
 import type { WorkspaceTag } from "../../shared/api/types";
 import { extractTags, readTitle } from "../../shared/api/types";
 import type { UiWorkspaceRow } from "../../shared/ui-state";
-import type { ProjectPath, ProjectRef, WorkspaceRef } from "../../intents/contract";
+import type {
+  ProjectPath,
+  ProjectRef,
+  SubtitleIcon,
+  WorkspaceDescription,
+  WorkspaceRef,
+} from "../../intents/contract";
 import { asWorkspaceRef } from "../../utils/ref";
 import { decodeWakeup, WAKEUP_METADATA_KEY } from "../wakeup-module";
 
@@ -36,6 +42,10 @@ export interface WorkspaceModel {
    * row falls back to `name`. Display-only — `name` stays the identity.
    */
   title: string | undefined;
+  /** Its type's subtitle (git: the branch); absent when the type gives none. */
+  readonly subtitle?: string;
+  /** The icon before the subtitle; absent for none. */
+  readonly subtitleIcon?: SubtitleIcon;
   hibernated: boolean;
   /**
    * When it was hibernated (metadata `hibernated-at`, ISO-8601); undefined when
@@ -78,6 +88,16 @@ export interface WorkspaceEntry {
 /** A workspace row plus the model objects it was built from. */
 export interface RowEntry extends WorkspaceEntry {
   readonly row: UiWorkspaceRow;
+}
+
+/** The model's subtitle fields from a workspace's description, each only when present. */
+export function fromDescription(
+  description: WorkspaceDescription
+): Pick<WorkspaceModel, "subtitle" | "subtitleIcon"> {
+  return {
+    ...(description.subtitle !== undefined && { subtitle: description.subtitle }),
+    ...(description.subtitleIcon !== undefined && { subtitleIcon: description.subtitleIcon }),
+  };
 }
 
 /** Interpret a workspace's domain metadata into the semantic model fields. */

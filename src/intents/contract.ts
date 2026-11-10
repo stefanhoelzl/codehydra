@@ -196,16 +196,48 @@ export interface SerializedError {
 // Domain value objects
 // =============================================================================
 
-/** A workspace within a project (represents a git worktree). */
+/**
+ * Icons a project type may put in front of a workspace's subtitle: names from
+ * the sidebar's icon set (`SidebarIcon.svelte`) that read as a subtitle glyph.
+ */
+export const subtitleIconSchema = z.enum(["branch", "cloud", "info"]);
+export type SubtitleIcon = z.infer<typeof subtitleIconSchema>;
+
+/**
+ * Per-type opaque detail about a workspace (git: `{ branch?, base? }`). Core
+ * never reads it; it passes it to plugins and the API as the type gave it.
+ */
+export const workspaceDetailsSchema = z.record(z.string(), z.unknown()).readonly();
+export type WorkspaceDetails = z.infer<typeof workspaceDetailsSchema>;
+
+/**
+ * How a workspace's project type describes it beyond its name: a display
+ * `subtitle` (git: the branch) with an optional icon, and opaque `details`.
+ * Each field is absent rather than substituted when the type has nothing to
+ * say — a git workspace on a detached HEAD has no subtitle.
+ */
+export const workspaceDescriptionShape = {
+  /** Display text under the workspace's title (git: the checked-out branch). */
+  subtitle: z.string().optional(),
+  /** Icon shown before the subtitle. */
+  subtitleIcon: subtitleIconSchema.optional(),
+  /** Per-type data, passed through as-is. */
+  details: workspaceDetailsSchema.optional(),
+};
+
+/** A workspace's description as its type gives it (see workspaceDescriptionShape). */
+export const workspaceDescriptionSchema = z.object(workspaceDescriptionShape).readonly();
+export type WorkspaceDescription = z.infer<typeof workspaceDescriptionSchema>;
+
+/** A workspace within a project. */
 export const workspaceSchema = z
   .object({
     /** The workspace's identity (`utils/ref.ts`). */
     ref: workspaceRefSchema,
     projectId: projectIdSchema,
     name: workspaceNameSchema,
-    /** Current branch name, or null for detached HEAD state. */
-    branch: z.string().nullable(),
-    /** Workspace metadata, every tier (`base` when one is recorded). */
+    ...workspaceDescriptionShape,
+    /** Workspace metadata, every tier. */
     metadata: z.record(z.string(), z.string()).readonly(),
     path: workspacePathSchema,
     /** IDE server URL for the iframe. Absent for hibernated workspaces until they wake. */
@@ -215,8 +247,8 @@ export const workspaceSchema = z
 export type Workspace = z.infer<typeof workspaceSchema>;
 
 /**
- * A workspace as found on disk by a `discover` / `list-workspaces` hook — the internal
- * git-worktree shape (`boundaries/platform/git-types`) reduced to plain data.
+ * A workspace as its type found it, reported by a `discover` / `list-workspaces` hook —
+ * the registry's shape (`RegisteredWorkspace`) reduced to plain data.
  *
  * Distinct from {@link workspaceSchema}, which is the IPC form and additionally carries
  * `projectId` and the optional IDE `url`. Both `project:open` and `project:list` used to
@@ -228,7 +260,7 @@ export const discoveredWorkspaceSchema = z
   .object({
     name: workspaceNameSchema,
     path: workspacePathSchema,
-    branch: z.string().nullable(),
+    ...workspaceDescriptionShape,
     metadata: z.record(z.string(), z.string()).readonly(),
   })
   .readonly();

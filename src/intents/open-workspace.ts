@@ -38,6 +38,7 @@ import {
   hookCtxSchema,
   projectPathSchema,
   projectRefSchema,
+  workspaceDescriptionShape,
   workspaceNameSchema,
   workspacePathSchema,
   workspaceSchema,
@@ -55,6 +56,7 @@ import { looksLikeGitUrl, matchOpenProject } from "../utils/project-reference";
 import { throwHookErrors, mergeHookResults, mergeRecords, onlyDefined } from "./lib/hook-helpers";
 import { getErrorMessage } from "../shared/error-utils";
 import type { ProjectTypeOptions } from "./project-type-options";
+import { descriptionOf } from "../utils/workspace-conversion";
 
 export const INTENT_OPEN_WORKSPACE = "workspace:open" as const;
 export const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
@@ -115,7 +117,7 @@ export const existingWorkspaceDataSchema = z
   .object({
     path: workspacePathSchema,
     name: z.string(),
-    branch: z.string().nullable(),
+    ...workspaceDescriptionShape,
     metadata: z.record(z.string(), z.string()).readonly(),
   })
   .readonly();
@@ -202,33 +204,25 @@ const createInputSchema = hookCtxSchema(openWorkspacePayloadSchema, createEnrich
 export const createResultSchema = z
   .object({
     workspacePath: workspacePathSchema.optional(),
-    /** The checked-out branch; null on a detached HEAD. Never a name standing in for one. */
-    branch: z.string().nullable().optional(),
     metadata: z.record(z.string(), z.string()).readonly().optional(),
-    /**
-     * The workspace's base: the one a new worktree was created from, or the one
-     * recorded in an existing workspace's metadata. Absent when none is recorded.
-     */
-    resolvedBase: z.string().optional(),
+    /** How the type describes the workspace — from the handler that created or reopened it. */
+    ...workspaceDescriptionShape,
   })
   .readonly();
 
 /**
  * What every hook point after "create" knows about the workspace being opened.
  *
- * `branch` and `base` are absent rather than substituted when unknown — a
- * detached HEAD has no branch, an adopted worktree has no recorded base — so a
- * consumer that branches on them never mistakes a stand-in for the real thing.
+ * The description fields are absent rather than substituted when the type has
+ * nothing to say (a git worktree on a detached HEAD has no subtitle), so a
+ * consumer never mistakes a stand-in for the real thing.
  */
 const workspaceIdentityShape = {
   ...workspaceTargetShape,
   ...openingShape,
   projectRef: projectRefSchema,
   projectPath: projectPathSchema,
-  /** The checked-out branch. Absent on a detached HEAD. */
-  branch: z.string().optional(),
-  /** The workspace's recorded base. Absent when none is recorded. */
-  base: z.string().optional(),
+  ...workspaceDescriptionShape,
 };
 
 /** Operation-added enrichment for the "provision" hook point (merged create results). */
@@ -316,10 +310,7 @@ export const finalizeResultSchema = z
 const workspaceCreatedSchema = z
   .object({
     ...workspaceIdentityPayloadSchema.shape,
-    /** The checked-out branch. Absent on a detached HEAD. */
-    branch: z.string().optional(),
-    /** The workspace's base. Absent when none is recorded. */
-    base: z.string().optional(),
+    ...workspaceDescriptionShape,
     metadata: z.record(z.string(), z.string()).readonly(),
     workspaceUrl: z.string(),
     agent: agentSpecSchema.optional(),
@@ -579,8 +570,9 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     throwHookErrors(createErrors, "workspace:open create hooks failed");
 
     const create = mergeHookResults(createResults, "create");
-    const { workspacePath, branch, metadata, resolvedBase } = create;
-    if (workspacePath === undefined || branch === undefined || metadata === undefined) {
+    const { workspacePath, metadata } = create;
+    const description = descriptionOf(create);
+    if (workspacePath === undefined || metadata === undefined) {
       throw new Error("Create hook did not provide all required fields");
     }
     // A creation learns its workspace's path here: complete the log target with it.
@@ -606,8 +598,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       workspacePath,
       projectRef,
       projectPath,
-      ...(branch !== null && { branch }),
-      ...(resolvedBase !== undefined && { base: resolvedBase }),
+      ...description,
     };
 
     // Hook: "provision" — a new worktree's one-time setup. Best-effort by
@@ -692,7 +683,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       ref: workspaceRef,
       projectId,
       name: resolvedWorkspaceName,
-      branch,
+      ...description,
       metadata: mergedMetadata,
       path: workspacePath,
       url: workspaceUrl,
@@ -704,8 +695,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       workspaceName: resolvedWorkspaceName,
       workspaceRef,
       projectRef,
-      ...(branch !== null && { branch }),
-      ...(resolvedBase !== undefined && { base: resolvedBase }),
+      ...description,
       metadata: mergedMetadata,
       workspaceUrl,
       ...(ctx.intent.payload.agent !== undefined && {

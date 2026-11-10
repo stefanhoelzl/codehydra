@@ -56,7 +56,7 @@ const PROJECT_A: Project = {
       ref: workspaceRefIn(projPath("/projects/a"), "existing"),
       projectId: "project-a-12345678" as ProjectId,
       name: "existing" as WorkspaceName,
-      branch: "existing",
+      subtitle: "existing",
       metadata: {},
       path: wsPath("/projects/a/.worktrees/existing"),
     },

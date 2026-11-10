@@ -21,6 +21,9 @@ function ws(
   const { ago, ...rest } = overrides;
   return makeUiWorkspaceRow(name, {
     key: `${project}/${name}`,
+    // Described the way git describes a workspace: its branch, with the branch icon.
+    subtitle: name,
+    subtitleIcon: "branch",
     ...(ago !== undefined && {
       hibernated: true,
       hibernatedAt: new Date(NOW - ago * MIN).toISOString(),

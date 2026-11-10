@@ -2,7 +2,7 @@
  * WakeWorkspaceOperation - Wakes a hibernated workspace and brings it online.
  *
  * Steps:
- * 1. Dispatch workspace:resolve — workspacePath → projectPath + workspaceName + branch
+ * 1. Dispatch workspace:resolve — workspacePath → projectPath + workspaceName + description
  * 2. Dispatch project:resolve — projectPath → projectId
  * 3. Dispatch workspace:set-metadata — clear `hibernated` metadata (emits
  *    workspace:metadata-changed, which clears the renderer overlay)
@@ -41,6 +41,7 @@ import { INTENT_GET_METADATA, type GetMetadataIntent } from "./get-metadata";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "./open-workspace";
 import { HIBERNATED_AT_METADATA_KEY, HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { resolveWorkspaceIdentity, workspaceFailurePayload } from "./lib/workspace-identity";
+import { descriptionOf } from "../utils/workspace-conversion";
 
 export const INTENT_WAKE_WORKSPACE = "workspace:wake" as const;
 export const WAKE_WORKSPACE_OPERATION_ID = "wake-workspace";
@@ -163,8 +164,8 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
     const { payload } = ctx.intent;
 
     try {
-      const { workspacePath, projectRef, projectPath, workspaceName, projectId, branch } =
-        await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
+      const identity = await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
+      const { workspacePath, projectRef, projectPath, workspaceName, projectId } = identity;
 
       // Clear the hibernated metadata flag (then its time) before re-init so
       // any consumers observing the metadata-changed event see the workspace
@@ -207,7 +208,7 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
           existingWorkspace: {
             path: workspacePath,
             name: workspaceName,
-            branch,
+            ...descriptionOf(identity),
             metadata,
           },
           ...(payload.stealFocus !== undefined && { stealFocus: payload.stealFocus }),

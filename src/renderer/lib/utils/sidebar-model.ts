@@ -141,12 +141,13 @@ export function normalizedQuery(view: SidebarView): string {
 /** The words of a normalized Find text. */
 const queryWords = (ql: string): readonly string[] => (ql === "" ? [] : ql.split(/\s+/));
 
-/** Whether every word of the Find text is in a row's project, title, branch or a tag. */
+/** Whether every word of the Find text is in a row's project, title, name, subtitle or a tag. */
 export function matches(project: UiProjectRow, row: UiWorkspaceRow, ql: string): boolean {
   const fields = [
     project.name,
     row.title,
     row.name,
+    row.subtitle,
     ...row.tags.flatMap((tag) => [tag.name, tag.label, tag.description]),
   ].flatMap((field) => (field === undefined ? [] : [field.toLowerCase()]));
   return queryWords(ql).every((word) => fields.some((field) => field.includes(word)));

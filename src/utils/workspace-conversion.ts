@@ -2,8 +2,8 @@
  * Type conversion utilities for workspace types.
  *
  * Three Workspace shapes exist, and this module is the boundary between them:
- * - Internal (`boundaries/platform/git-types`): `{ name, path: Path, branch, metadata }` —
- *   a `Path` instance, so it is backend-local and cannot cross a tunnel.
+ * - Registered ({@link RegisteredWorkspace}): `{ name, path: Path, metadata }` plus the
+ *   type's description — a `Path` instance, so it is backend-local and cannot cross a tunnel.
  * - Discovered (`intents/contract`): the same fields with a branded `WorkspacePath` string.
  *   This is what a `discover` / `list-workspaces` hook contributes.
  * - IPC (`intents/contract`): adds the workspace's `ref`, `projectId` and the optional IDE `url`.
@@ -11,34 +11,55 @@
  * `toDiscoveredWorkspace` is the single place a `Path` becomes contract data.
  */
 
-import type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
 import type {
   DiscoveredWorkspace,
   Workspace as IpcWorkspace,
   ProjectId,
   ProjectRef,
+  WorkspaceDescription,
 } from "../intents/contract";
 import { discoveredWorkspaceSchema } from "../intents/contract";
+import type { Path } from "./path/path";
 import { makeWorkspaceRef } from "./ref";
 
 /**
- * Convert an internal workspace to its plain-data contract form.
+ * A workspace as its project type reports it to the core registry: its name,
+ * its directory, its metadata (what its file holds) and how the type describes
+ * it (`subtitle`, `subtitleIcon`, `details` — see `workspaceDescriptionShape`).
+ */
+export interface RegisteredWorkspace extends WorkspaceDescription {
+  readonly name: string;
+  readonly path: Path;
+  readonly metadata: Readonly<Record<string, string>>;
+}
+
+/** The description fields of `from`, each only when present. */
+export function descriptionOf(from: WorkspaceDescription): WorkspaceDescription {
+  return {
+    ...(from.subtitle !== undefined && { subtitle: from.subtitle }),
+    ...(from.subtitleIcon !== undefined && { subtitleIcon: from.subtitleIcon }),
+    ...(from.details !== undefined && { details: from.details }),
+  };
+}
+
+/**
+ * Convert a registered workspace to its plain-data contract form.
  *
  * Parses rather than asserts: this is where a `Path` instance leaves the backend, so the
  * brands are minted by validation instead of by a cast.
  */
-export function toDiscoveredWorkspace(internal: InternalWorkspace): DiscoveredWorkspace {
+export function toDiscoveredWorkspace(internal: RegisteredWorkspace): DiscoveredWorkspace {
   return discoveredWorkspaceSchema.parse({
     name: internal.name,
     path: internal.path.toString(),
-    branch: internal.branch,
+    ...descriptionOf(internal),
     metadata: internal.metadata,
   });
 }
 
-/** Convert an array of internal workspaces to their plain-data contract form. */
+/** Convert an array of registered workspaces to their plain-data contract form. */
 export function toDiscoveredWorkspaces(
-  internals: readonly InternalWorkspace[]
+  internals: readonly RegisteredWorkspace[]
 ): DiscoveredWorkspace[] {
   return internals.map(toDiscoveredWorkspace);
 }
@@ -60,7 +81,7 @@ export function toIpcWorkspace(
     projectId,
     name: discovered.name,
     path: discovered.path,
-    branch: discovered.branch,
+    ...descriptionOf(discovered),
     metadata: discovered.metadata,
   };
 }

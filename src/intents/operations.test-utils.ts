@@ -68,7 +68,10 @@ export interface MockWorkspaceEntry {
   /** The project's ref; defaults to the checkout ref of `projectPath`. */
   readonly projectRef?: ProjectRef;
   readonly workspaceName: WorkspaceName;
-  readonly branch?: string | null;
+  /** The workspace's subtitle (its type's description); absent when omitted. */
+  readonly subtitle?: string;
+  /** The workspace's opaque details (its type's description); absent when omitted. */
+  readonly details?: Readonly<Record<string, unknown>>;
   /** Explicit active flag; when omitted, derived from the viewManager (if any). */
   readonly active?: boolean;
   /** Raw domain metadata; when omitted, resolve defaults it to empty. */
@@ -284,7 +287,8 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
               projectRef: projectRefOfEntry(entry),
               projectPath: entry.projectPath,
               workspaceName: entry.workspaceName,
-              branch: entry.branch ?? null,
+              ...(entry.subtitle !== undefined && { subtitle: entry.subtitle }),
+              ...(entry.details !== undefined && { details: entry.details }),
               metadata: entry.metadata ?? {},
             },
           };

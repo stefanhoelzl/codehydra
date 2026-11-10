@@ -21,7 +21,7 @@ import { projectPathSchema, workspacePathSchema } from "../intents/contract";
 import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
 import { Path } from "../utils/path/path";
 import { makeProjectRef } from "../utils/ref";
-import type { ProjectRef } from "../intents/contract";
+import type { ProjectRef, WorkspaceDescription } from "../intents/contract";
 import {
   REQUIRES_FREE_NAME,
   type RegisteredWorkspace,
@@ -55,6 +55,14 @@ export const FAKE_PROJECT_OPTIONS = {
   },
   deleteObjections: "an archive that is not empty",
 } as const satisfies ProjectTypeDescription;
+
+/**
+ * How the fake type describes a workspace: its own subtitle, icon and details,
+ * none of them git's, so a test can tell core passed them through untouched.
+ */
+export function fakeDescription(name: string): WorkspaceDescription {
+  return { subtitle: `folder ${name}`, subtitleIcon: "info", details: { folder: name } };
+}
 
 export interface FakeProjectType {
   readonly module: IntentModule;
@@ -96,7 +104,7 @@ export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectT
 
     addFolder(projectPath, name, metadata = {}) {
       const path = new Path(projectPath, name);
-      foldersOf(projectPath).set(name, { name, path, branch: null, metadata });
+      foldersOf(projectPath).set(name, { name, path, metadata, ...fakeDescription(name) });
       return path;
     },
 
@@ -137,8 +145,8 @@ export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectT
               const ws: RegisteredWorkspace = {
                 name: ctx.workspaceName,
                 path: new Path(ctx.projectPath, ctx.workspaceName),
-                branch: null,
                 metadata: {},
+                ...fakeDescription(ctx.workspaceName),
               };
               if (ctx.fresh) {
                 foldersOf(ctx.projectPath).set(ws.name, ws);
@@ -151,8 +159,8 @@ export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectT
               return {
                 result: {
                   workspacePath: workspacePathSchema.parse(ws.path.toString()),
-                  branch: null,
                   metadata: ws.metadata,
+                  ...fakeDescription(ws.name),
                 },
               };
             },

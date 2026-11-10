@@ -254,6 +254,8 @@ interface ResolveResult {
   readonly workspacePath?: WorkspacePath | undefined;
   readonly projectPath?: ProjectPath | undefined;
   readonly workspaceName?: string | undefined;
+  readonly subtitle?: string | undefined;
+  readonly details?: Readonly<Record<string, unknown>> | undefined;
   readonly closing?: WorkspaceClosing | null | undefined;
 }
 
@@ -709,6 +711,35 @@ describe("Git module: worktrees", () => {
       expect(result.workspaces[1]!.name).toBe("feature-2");
     });
 
+    it("describes each workspace by its branch and recorded base, and the registry resolves it so", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = projPath("/projects/my-app");
+      const detached: Workspace = {
+        ...makeWorkspace("detached", projectPath),
+        branch: null,
+        metadata: {},
+      };
+      provider.discover.mockResolvedValue([makeWorkspace("feature-1", projectPath), detached]);
+
+      const result = await dispatchOpenProject(dispatcher, projPath(projectPath));
+
+      expect(result.workspaces[0]).toMatchObject({
+        subtitle: "feature-1",
+        subtitleIcon: "branch",
+        details: { branch: "feature-1", base: "origin/main" },
+      });
+      // A detached HEAD with no recorded base: no subtitle, nothing invented in details.
+      expect(result.workspaces[1]).not.toHaveProperty("subtitle");
+      expect(result.workspaces[1]!.details).toEqual({});
+
+      const resolved = await dispatchResolveWorkspace(
+        dispatcher,
+        wsPath(`${projectPath}/.worktrees/feature-1`)
+      );
+      expect(resolved.subtitle).toBe("feature-1");
+      expect(resolved.details).toEqual({ branch: "feature-1", base: "origin/main" });
+    });
+
     it("calls fire-and-forget cleanupOrphanedWorkspaces", async () => {
       const { dispatcher, provider } = setup;
 
@@ -837,7 +868,8 @@ describe("Git module: worktrees", () => {
           undefined
         );
         expect(result.workspacePath).toBe(testPath("/workspaces/new-feature").toString());
-        expect(result.branch).toBe("new-feature");
+        expect(result.subtitle).toBe("new-feature");
+        expect(result.subtitleIcon).toBe("branch");
 
         // The registry holds its metadata, the name recorded, and wrote its file
         // where the provider says the worktree's metadata lives.
@@ -899,7 +931,7 @@ describe("Git module: worktrees", () => {
             existingWorkspace: {
               path: wsPath("/workspaces/existing-ws"),
               name: "existing-ws",
-              branch: "existing-ws",
+              details: { branch: "existing-ws" },
               metadata: { base: "origin/main" },
             },
           },
@@ -909,7 +941,7 @@ describe("Git module: worktrees", () => {
 
         expect(provider.createWorkspace).not.toHaveBeenCalled();
         expect(result.workspacePath).toBe(testPath("/workspaces/existing-ws").toString());
-        expect(result.branch).toBe("existing-ws");
+        expect(result.subtitle).toBe("existing-ws");
 
         // Verify state was updated
         const resolveResult = await dispatchResolveWorkspace(
@@ -955,7 +987,7 @@ describe("Git module: worktrees", () => {
           "origin/main",
           undefined
         );
-        expect(result.resolvedBase).toBe("origin/main");
+        expect(result.details).toEqual({ branch: "auto-base", base: "origin/main" });
       });
 
       it("throws when base is omitted and no default branch exists", async () => {
@@ -1039,7 +1071,7 @@ describe("Git module: worktrees", () => {
           "develop",
           undefined
         );
-        expect(result.resolvedBase).toBe("develop");
+        expect(result.details?.["base"]).toBe("develop");
       });
 
       it("returns resolvedBase for existing workspace path", async () => {
@@ -1058,14 +1090,14 @@ describe("Git module: worktrees", () => {
             existingWorkspace: {
               path: wsPath("/workspaces/existing-ws"),
               name: "existing-ws",
-              branch: "existing-ws",
+              details: { branch: "existing-ws" },
               metadata: { base: "origin/main" },
             },
           },
         };
 
         const result = await dispatchCreateWorkspace(dispatcher, createIntent);
-        expect(result.resolvedBase).toBe("origin/main");
+        expect(result.details).toEqual({ branch: "existing-ws", base: "origin/main" });
       });
 
       // A reopen reports what the workspace records, whatever the caller put in
@@ -1088,17 +1120,17 @@ describe("Git module: worktrees", () => {
             existingWorkspace: {
               path: wsPath("/workspaces/existing-ws"),
               name: "existing-ws",
-              branch: "existing-ws",
+              details: { branch: "existing-ws", base: "stale" },
               metadata,
             },
           },
         });
-        expect(result.resolvedBase).toBe(expected);
+        expect(result.details?.["base"]).toBe(expected);
       });
     });
 
     describe("branch", () => {
-      it("reports a detached HEAD as null, not as the workspace name", async () => {
+      it("gives a detached HEAD no subtitle and no branch, not the workspace name", async () => {
         const { dispatcher, provider } = setup;
         const projectPath = projPath("/projects/my-app");
 
@@ -1113,12 +1145,12 @@ describe("Git module: worktrees", () => {
             existingWorkspace: {
               path: wsPath("/workspaces/detached-ws"),
               name: "detached-ws",
-              branch: null,
               metadata: {},
             },
           },
         });
-        expect(result.branch).toBeNull();
+        expect(result).not.toHaveProperty("subtitle");
+        expect(result.details).toEqual({});
       });
     });
   });

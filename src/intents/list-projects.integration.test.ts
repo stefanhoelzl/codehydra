@@ -45,7 +45,7 @@ function makeWorkspace(
   return {
     name: name as WorkspaceName,
     path: wsPath(new Path(`${projectPath}/.codehydra/workspaces/${name}`).toString()),
-    branch,
+    subtitle: branch,
     metadata: { base: "main" },
   };
 }

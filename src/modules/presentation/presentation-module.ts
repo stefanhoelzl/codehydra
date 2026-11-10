@@ -152,6 +152,7 @@ import { createShortcutNavigation } from "./navigation";
 import {
   PresentationModel,
   compareRows,
+  fromDescription,
   fromMetadata,
   readHibernatedAt,
   readTags,
@@ -788,6 +789,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       key: workspace.ref,
       name: workspace.name,
       ...(workspace.title !== undefined && { title: workspace.title }),
+      ...(workspace.subtitle !== undefined && { subtitle: workspace.subtitle }),
+      ...(workspace.subtitleIcon !== undefined && { subtitleIcon: workspace.subtitleIcon }),
       status: rowStatus(workspace),
       hibernated: workspace.hibernated,
       ...(workspace.hibernated &&
@@ -1517,6 +1520,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           project.workspaces.map((workspace) => ({
             ref: workspace.ref,
             name: workspace.name,
+            ...fromDescription(workspace),
             ...fromMetadata(workspace.metadata),
             url: workspace.url,
             // project:open opens every awake workspace after announcing
@@ -1559,6 +1563,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           model.putWorkspace(project, {
             ref: p.workspaceRef,
             name: p.workspaceName,
+            ...fromDescription(p),
             ...fromMetadata(p.metadata),
             url: p.workspaceUrl,
             phase: "ready",

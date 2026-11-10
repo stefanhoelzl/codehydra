@@ -71,6 +71,7 @@ import {
 import { Path } from "../utils/path/path";
 import {
   createFakeProjectType,
+  fakeDescription,
   fakeProjectRef,
   type FakeProjectType,
 } from "./fake-project-type.test-utils";
@@ -288,7 +289,7 @@ describe("WorkspaceRegistryModule", () => {
           projectRef: fakeProjectRef(PROJECT),
           projectPath: PROJECT,
           workspaceName: "alpha",
-          branch: null,
+          ...fakeDescription("alpha"),
           metadata: { title: "Alpha" },
         });
       }
@@ -370,6 +371,22 @@ describe("WorkspaceRegistryModule", () => {
       expect(fake.created).toEqual([]);
     });
 
+    it("holds a created workspace with its type's own description, untouched", async () => {
+      // The fake type describes its folders in terms that mean nothing to git:
+      // core carries them, it does not read them.
+      const { dispatcher } = setup;
+      await openProject(dispatcher, PROJECT);
+
+      await create(dispatcher, PROJECT, "fresh");
+
+      const result = await resolve(dispatcher, { workspaceRef: refOf(PROJECT, "fresh") });
+      expect(result).toMatchObject({
+        subtitle: "folder fresh",
+        subtitleIcon: "info",
+        details: { folder: "fresh" },
+      });
+    });
+
     it("lets another project use the same name", async () => {
       const { dispatcher, fake } = setup;
       fake.addFolder(PROJECT, "feat");
@@ -392,7 +409,6 @@ describe("WorkspaceRegistryModule", () => {
         existingWorkspace: {
           path: path.toString(),
           name: "alpha",
-          branch: null,
           metadata: { title: "Stale" },
         },
       });
@@ -455,8 +471,8 @@ describe("WorkspaceRegistryModule", () => {
         {
           projectPath: PROJECT,
           workspaces: [
-            { name: "alpha", path: `${PROJECT}/alpha`, branch: null, metadata: {} },
-            { name: "beta", path: `${PROJECT}/beta`, branch: null, metadata: {} },
+            { name: "alpha", path: `${PROJECT}/alpha`, ...fakeDescription("alpha"), metadata: {} },
+            { name: "beta", path: `${PROJECT}/beta`, ...fakeDescription("beta"), metadata: {} },
           ],
         },
         { projectPath: OTHER, workspaces: [] },

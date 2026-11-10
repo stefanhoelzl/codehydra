@@ -1,8 +1,8 @@
 <!--
   WorkspaceRow.svelte
 
-  One workspace in a project card: status glyph, title (or name), branch and
-  tags on the second line, with the process summary on the workspace's CPU and
+  One workspace in a project card: status glyph, title (or name), the
+  project type's subtitle (git: the branch) and tags on the second line, with the process summary on the workspace's CPU and
   memory at that line's end, a short meta text at the first line's end (the
   hibernation age, how long the agent has been working, or the Alt+X shortcut),
   its questions as cards, and hover actions. Clicks are
@@ -172,8 +172,11 @@
       <span class="sub">
         <span class="sub-main">
           {#if row.title !== undefined}
-            <SidebarIcon name="branch" class="sm" /><span class="mono"
-              ><Highlighted text={row.name} {query} /></span
+            {#if row.subtitleIcon !== undefined}<SidebarIcon
+                name={row.subtitleIcon}
+                class="sm"
+              />{/if}<span class="mono"
+              ><Highlighted text={row.subtitle ?? row.name} {query} /></span
             >
           {/if}
           {#each row.tags as tag (tag.name)}

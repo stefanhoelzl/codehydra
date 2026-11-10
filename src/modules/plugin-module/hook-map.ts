@@ -29,6 +29,7 @@ import type { HookHandlerFor, OperationHooks } from "../../intents/lib/module";
 import { schemas as openWorkspaceSchemas } from "../../intents/open-workspace";
 import { schemas as deleteWorkspaceSchemas } from "../../intents/delete-workspace";
 import { isValidMetadataKey, tagKey } from "../../shared/api/types";
+import { workspaceDetailsSchema } from "../../intents/contract";
 
 // =============================================================================
 // Input
@@ -40,15 +41,18 @@ import { isValidMetadataKey, tagKey } from "../../shared/api/types";
  * Deliberately small: a hook holds `workspacePath` (its directory) and
  * `workspace` (its ref, for `ch`), so anything else about the
  * workspace is one `git` call away, and a field shipped here is a field we owe
- * stability. `branch` and `base` are the exceptions — CodeHydra knows them
- * authoritatively and a script would otherwise dig `base` out of git config.
+ * stability. `subtitle` and `details` are the exceptions — the workspace's
+ * project type knows them authoritatively (git: the branch, and
+ * `{ branch?, base? }`), and a script would otherwise dig `base` out of git
+ * config. `details` is the type's, passed as it gave it.
  *
- * Both are optional, and *absent* rather than null when unknown: a workspace on
- * a detached HEAD has no branch, and a worktree the user adopted by hand never
- * had a base. Substituting a plausible default would send a hook that branches
- * on it down the wrong path while looking like it worked. The same rule holds
- * for every entry and every path that fires it — creation, app start, project
- * open, wake, deletion — so a hook never sees a field change shape by origin.
+ * Both are optional, and *absent* rather than null when unknown, and so is
+ * every field git puts in `details`: a workspace on a detached HEAD has no
+ * branch, and a worktree the user adopted by hand never had a base.
+ * Substituting a plausible default would send a hook that branches on it down
+ * the wrong path while looking like it worked. The same rule holds for every
+ * entry and every path that fires it — creation, app start, project open,
+ * wake, deletion — so a hook never sees a field change shape by origin.
  */
 export const coreInputSchema = z.object({
   workspaceName: z.string(),
@@ -58,8 +62,8 @@ export const coreInputSchema = z.object({
   workspace: z.string(),
   /** The project's ref: what `ch --project` takes. */
   project: z.string(),
-  branch: z.string().optional(),
-  base: z.string().optional(),
+  subtitle: z.string().optional(),
+  details: workspaceDetailsSchema.optional(),
 });
 
 export type CoreInput = z.infer<typeof coreInputSchema>;
