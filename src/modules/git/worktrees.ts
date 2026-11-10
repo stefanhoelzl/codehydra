@@ -21,7 +21,8 @@ import type {
   CreateHookResult,
   OpenWorkspacePayload,
 } from "../../intents/open-workspace";
-import type { ListBasesHookResult } from "../../intents/get-project-bases";
+import type { ListChoicesHookResult } from "../../intents/get-option-choices";
+import { branchChoices } from "./choices";
 import type {
   DeleteHookResult,
   DeletePipelineHookInput,
@@ -46,6 +47,7 @@ import type { ProjectPath, WorkspacePath } from "../../intents/contract";
 import { toDiscoveredWorkspaces } from "../../utils/workspace-conversion";
 import type { WorkspaceRegistry } from "../workspace-registry-module";
 import type { WorktreePicker } from "./worktree-picker";
+import { gitCreateOptions, gitDeleteOptions } from "./options";
 
 export interface GitWorktreesDeps {
   readonly gitWorktreeProvider: GitWorktreeProvider;
@@ -69,9 +71,13 @@ export interface GitWorktrees {
   forget(projectPath: string): void;
   /** workspace:open create: a new worktree, or a discovered one reopened. */
   create(ctx: CreateHookInput, payload: OpenWorkspacePayload): Promise<CreateHookResult>;
-  /** project:get-bases list. */
-  listBases(projectPath: string): Promise<ListBasesHookResult>;
-  /** project:get-bases refresh. */
+  /**
+   * project:get-option-choices list: the branches as `base`'s choices and as
+   * name suggestions. Without `fresh`, the last answer for the project when
+   * there is one, so the form paints without a git round-trip.
+   */
+  listChoices(projectPath: string, fresh: boolean): Promise<ListChoicesHookResult>;
+  /** project:refresh refresh: fetch. */
   refreshBases(projectPath: string): Promise<void>;
   /** workspace:delete preflight: what a worktree removal would lose. */
   preflight(
@@ -105,9 +111,13 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
   };
 
   // Per-project default base branch, computed at project:open (discover) and
-  // refreshed by the get-project-bases list hook. Surfaced via list-workspaces
-  // so the creation form can seed the base field without a git round-trip.
+  // refreshed by every choices list. Surfaced via list-workspaces for the
+  // project's repository automations (plugin-module).
   const projectDefaults = new Map<ProjectPath, string>();
+
+  // The last choices answer per project, so a form opened again paints at once;
+  // the refresh that follows corrects it (`fresh`).
+  const lastChoices = new Map<ProjectPath, ListChoicesHookResult>();
 
   /**
    * Normalize a path and keep its brand. `new Path(p).toString()` is how this part
@@ -236,6 +246,7 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
       const projectPathObj = new Path(projectPath);
       gitWorktreeProvider.unregisterProject(projectPathObj);
       projectDefaults.delete(projectKey(projectPathObj.toString()));
+      lastChoices.delete(projectKey(projectPathObj.toString()));
     },
 
     async create(ctx, payload) {
@@ -270,7 +281,8 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
       const projectPathObj = new Path(projectPath);
 
       // Resolve base: explicit or default
-      const base = payload.base ?? (await gitWorktreeProvider.defaultBase(projectPathObj));
+      const options = gitCreateOptions(payload.options);
+      const base = options.base ?? (await gitWorktreeProvider.defaultBase(projectPathObj));
       if (!base) {
         throw new WorkspaceError(
           "No base branch specified and no default branch could be detected"
@@ -283,7 +295,7 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
           projectPathObj,
           payload.workspaceName!,
           base,
-          payload.tracking
+          options.tracking
         );
       } catch (error: unknown) {
         const message = getErrorMessage(error);
@@ -301,18 +313,21 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
       };
     },
 
-    async listBases(projectPath) {
+    async listChoices(projectPath, fresh) {
       const projectPathObj = new Path(projectPath);
+      const key = projectKey(projectPathObj.toString());
+      const cached = fresh ? undefined : lastChoices.get(key);
+      if (cached !== undefined) return cached;
 
       // Enumerate once and reuse for the default (avoids a second full
       // branch enumeration inside defaultBase).
       const bases = await gitWorktreeProvider.listBases(projectPathObj, recordedBase);
       const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj, bases);
-      if (defaultBaseBranch !== undefined) {
-        projectDefaults.set(projectKey(projectPathObj.toString()), defaultBaseBranch);
-      }
+      if (defaultBaseBranch !== undefined) projectDefaults.set(key, defaultBaseBranch);
 
-      return { bases, ...(defaultBaseBranch !== undefined && { defaultBaseBranch }) };
+      const choices = branchChoices(bases, defaultBaseBranch);
+      lastChoices.set(key, choices);
+      return choices;
     },
 
     async refreshBases(projectPath) {
@@ -338,7 +353,7 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
       // Unmerged commits only go missing when the branch goes with the
       // worktree — a kept branch keeps them reachable. Skipping the check
       // also skips the fetch, which is the expensive part of this gate.
-      if (!payload.keepBranch) {
+      if (!gitDeleteOptions(payload.options).keepBranch) {
         // Fetch first so the count is measured against current refs;
         // without it a delete right after a server-side merge (e.g.
         // /ship) compares against a stale origin/main and rejects the
@@ -376,7 +391,7 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
         await gitWorktreeProvider.removeWorkspace(
           new Path(projectPath),
           new Path(wsPath),
-          !payload.keepBranch
+          !gitDeleteOptions(payload.options).keepBranch
         );
       } catch (error) {
         if (payload.force) {

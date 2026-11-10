@@ -100,6 +100,7 @@ import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath, ProjectRef, WorkspaceRef } from "./contract";
 import { makeWorkspaceRef } from "../utils/ref";
 import { gitProjectRef } from "../modules/git/ref";
+import { testProjectTypes } from "./project-type-options.test-utils";
 
 // =============================================================================
 // Test Helpers
@@ -134,7 +135,7 @@ function buildDeleteIntent(
     type: INTENT_DELETE_WORKSPACE,
     payload: {
       workspaceRef: WORKSPACE_REF,
-      keepBranch: true,
+      options: { keepBranch: true },
       force: false,
       removeWorktree: true,
       ...overrides,
@@ -342,7 +343,7 @@ function createTestHarness(options?: {
   // Register operations
   dispatcher.registerOperation(new ResolveWorkspaceOperation());
   dispatcher.registerOperation(new ResolveProjectOperation());
-  dispatcher.registerOperation(new DeleteWorkspaceOperation());
+  dispatcher.registerOperation(new DeleteWorkspaceOperation(testProjectTypes()));
   dispatcher.registerOperation(new SwitchWorkspaceOperation());
   dispatcher.registerOperation(new GetActiveWorkspaceOperation());
 
@@ -616,7 +617,7 @@ function createTestHarness(options?: {
               await gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace(
                 new Path(projectPath),
                 new Path(workspacePath),
-                !payload.keepBranch
+                !(payload.options?.["keepBranch"] === true)
               );
               testState.worktreeRemoved = true;
               return { result: {} };
@@ -1234,7 +1235,7 @@ describe("DeleteWorkspaceOperation.progressFormat", () => {
       expect(progress.workspaceRef).toBe(WORKSPACE_REF);
       expect(progress.workspaceName).toBe(WORKSPACE_NAME);
       expect(progress.projectId).toBe(PROJECT_ID);
-      expect(progress.keepBranch).toBe(true);
+      expect(progress.options).toEqual({ keepBranch: true });
       expect(Array.isArray(progress.operations)).toBe(true);
       expect(typeof progress.completed).toBe("boolean");
       expect(typeof progress.hasErrors).toBe("boolean");
@@ -1725,7 +1726,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
       type: INTENT_DELETE_WORKSPACE,
       payload: {
         workspaceRef: WORKSPACE_REF,
-        keepBranch: true,
+        options: { keepBranch: true },
         force: false,
         removeWorktree: true,
       },
@@ -1756,7 +1757,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
       type: INTENT_DELETE_WORKSPACE,
       payload: {
         workspaceRef: workspaceRefIn(projPath("/unknown"), "workspace"),
-        keepBranch: true,
+        options: { keepBranch: true },
         force: false,
         removeWorktree: true,
       },
@@ -1773,7 +1774,7 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
   it("emits completed error progress when pipeline encounters unexpected error after identity resolution", async () => {
     // Directly test the safety net by constructing the operation with a mock context
     // where hooks.collect throws on "release" (simulating an infrastructure-level failure).
-    const operation = new DeleteWorkspaceOperation();
+    const operation = new DeleteWorkspaceOperation(testProjectTypes());
     const intent = buildDeleteIntent();
 
     const emittedEvents: DomainEvent[] = [];
@@ -1786,7 +1787,11 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
       },
       dispatch: async (dispatchedIntent: Intent) => {
         if (dispatchedIntent.type === INTENT_RESOLVE_WORKSPACE) {
-          return { projectPath: PROJECT_PATH, workspaceName: WORKSPACE_NAME };
+          return {
+            projectPath: PROJECT_PATH,
+            projectRef: gitProjectRef(PROJECT_PATH),
+            workspaceName: WORKSPACE_NAME,
+          };
         }
         if (dispatchedIntent.type === INTENT_RESOLVE_PROJECT) {
           return {
@@ -2073,8 +2078,8 @@ describe("DeleteWorkspaceOperation.interactiveConfirm", () => {
     const removeWorkspace = vi.fn().mockResolvedValue(undefined);
     harness.gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace = removeWorkspace;
     // Payload says keepBranch: true; the user unchecks it in the dialog.
-    const confirm = registerConfirm(harness, () => ({ keepBranch: false }));
-    const intent = buildDeleteIntent({ interactive: true, keepBranch: true });
+    const confirm = registerConfirm(harness, () => ({ options: { keepBranch: false } }));
+    const intent = buildDeleteIntent({ interactive: true, options: { keepBranch: true } });
 
     const result = await harness.dispatcher.dispatch(intent);
 
@@ -2117,7 +2122,7 @@ describe("DeleteWorkspaceOperation.interactiveConfirm", () => {
     await harness.dispatcher.dispatch(buildDeleteIntent({ interactive: true }));
     expect(harness.testState.worktreeRemoved).toBe(false);
 
-    answer = { keepBranch: true };
+    answer = { options: { keepBranch: true } };
     const result = await harness.dispatcher.dispatch(buildDeleteIntent({ interactive: true }));
 
     expect(result).toEqual({ started: true });

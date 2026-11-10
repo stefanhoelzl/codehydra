@@ -78,6 +78,7 @@ import type {
 } from "./contract";
 import { makeWorkspaceRef } from "../utils/ref";
 import { GIT_PROJECT_TYPE, gitProjectIdentifier, gitProjectRef } from "../modules/git/ref";
+import { testProjectTypes } from "./project-type-options.test-utils";
 
 // =============================================================================
 // Test Helpers
@@ -309,7 +310,7 @@ function createTestHarness(options?: {
 
   // Register operations
   dispatcher.registerOperation(new OpenProjectOperation());
-  dispatcher.registerOperation(new OpenWorkspaceOperation());
+  dispatcher.registerOperation(new OpenWorkspaceOperation(testProjectTypes()));
 
   // Shared workspace:resolve (reverse lookup over registered projects, then —
   // like the worktree module, which knows a workspace from discovery on — over
@@ -836,7 +837,7 @@ describe("OpenProjectOperation", () => {
     };
 
     dispatcher.registerOperation(new OpenProjectOperation());
-    dispatcher.registerOperation(new OpenWorkspaceOperation());
+    dispatcher.registerOperation(new OpenWorkspaceOperation(testProjectTypes()));
     dispatcher.registerOperation(new SwitchWorkspaceOperation());
 
     // Resolve module that always returns alreadyOpen: true
@@ -1292,7 +1293,7 @@ describe("OpenProjectOperation", () => {
     const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(new OpenProjectOperation());
-    dispatcher.registerOperation(new OpenWorkspaceOperation());
+    dispatcher.registerOperation(new OpenWorkspaceOperation(testProjectTypes()));
     dispatcher.registerOperation(new SwitchWorkspaceOperation());
 
     // Resolve module that always returns alreadyOpen: true

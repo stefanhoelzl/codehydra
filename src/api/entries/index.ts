@@ -8,6 +8,7 @@
 import { OperationRegistry } from "../registry";
 import type { Logger } from "../../boundaries/platform/logging";
 import type { EntryDeps } from "./deps";
+import { sealedProjectTypeOptions } from "../../intents/project-type-options";
 import { workspaceEntries } from "./workspace";
 import { metadataEntries } from "./metadata";
 import { agentEntries } from "./agent";
@@ -24,8 +25,13 @@ import { processEntries } from "./processes";
 
 export type { EntryDeps } from "./deps";
 
-/** What a caller supplies; the registry back-reference is wired here. */
-export type RegistryDeps = Omit<EntryDeps, "registry">;
+/**
+ * What a caller supplies; the registry back-reference is wired here. Without
+ * `projectTypes` the workspace entries take no project type options at all —
+ * what a test that is about something else wants.
+ */
+export type RegistryDeps = Omit<EntryDeps, "registry" | "projectTypes"> &
+  Partial<Pick<EntryDeps, "projectTypes">>;
 
 export function createRegistry(deps: RegistryDeps, logger: Logger): OperationRegistry {
   // The describe entry needs the finished registry it is itself a member of, so
@@ -33,6 +39,7 @@ export function createRegistry(deps: RegistryDeps, logger: Logger): OperationReg
   const box: { current?: OperationRegistry } = {};
   const full: EntryDeps = {
     ...deps,
+    projectTypes: deps.projectTypes ?? sealedProjectTypeOptions(),
     registry: () => {
       if (!box.current) throw new Error("Registry accessed before construction finished");
       return box.current;

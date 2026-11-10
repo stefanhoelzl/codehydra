@@ -94,10 +94,7 @@ import {
 } from "../../intents/resolve-workspace";
 import { projectRefSchema, type ProjectRef, type WorkspaceRef } from "../../intents/contract";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
-import {
-  INTENT_GET_PROJECT_BASES,
-  type GetProjectBasesIntent,
-} from "../../intents/get-project-bases";
+import { INTENT_REFRESH_PROJECT, type RefreshProjectIntent } from "../../intents/refresh-project";
 import { resolveProjectReference, type ProjectLocation } from "../../api/workspace-lookup";
 import { projectNameOf } from "../../utils/ref";
 import { expandGitUrl, extractRepoName } from "../../utils/url-utils";
@@ -1159,7 +1156,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     const outputs = await runOpenEntry(
       spec.name,
       targetOf(input, core.workspaceName),
-      core,
+      // The create options it was made with, as workspace:open checked them.
+      { ...core, options: input.intent.payload.options ?? {} },
       spec.output
     );
 
@@ -1276,7 +1274,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       workspace: input.workspaceRef,
       project: input.projectRef,
       ...identity,
-      keepBranch: intent.payload.keepBranch,
+      // The delete options in effect, as workspace:delete checked them (git: keepBranch).
+      options: intent.payload.options ?? {},
     };
 
     for (const script of scripts) {
@@ -1727,10 +1726,18 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     await Promise.all(
       ((await openProjects()) ?? []).map(async (project) => {
         try {
-          await deps.dispatcher.dispatch<GetProjectBasesIntent>({
-            type: INTENT_GET_PROJECT_BASES,
-            payload: { projectRef: project.ref, refresh: true, ...(wait && { wait: true }) },
+          const refresh = deps.dispatcher.dispatch<RefreshProjectIntent>({
+            type: INTENT_REFRESH_PROJECT,
+            payload: { projectRef: project.ref },
           });
+          if (wait) await refresh;
+          else
+            void Promise.resolve(refresh).catch((error: unknown) => {
+              deps.logger.warn("Could not fetch a project for its automations", {
+                project: project.path,
+                error: getErrorMessage(error),
+              });
+            });
         } catch (error) {
           deps.logger.warn("Could not fetch a project for its automations", {
             project: project.path,

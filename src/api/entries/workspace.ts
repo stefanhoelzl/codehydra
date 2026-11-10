@@ -146,6 +146,7 @@ function formatDeletionFailure(progress: DeletionProgress): string {
 
 export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
+  const projectTypes = deps.projectTypes;
   const targetOf = createTargetResolver(dispatcher);
 
   /**
@@ -259,59 +260,74 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     },
   });
 
+  // The project types' options sit between these core fields, where git's
+  // `base` and `tracking` always were, so the schema reads as it always has.
+  const createHead = {
+    // Divergence 4: optional, inferred from the caller when absent, so the MCP
+    // caller can target a project and the API server caller can stay implicit.
+    project: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Project: an open project's name or ref, a local path, or a git URL. " +
+          "Opened (or cloned) if it is not open yet. Omit to use the caller's own project."
+      ),
+    name: z.string().min(1).describe("Name for the new workspace (becomes the branch name)"),
+  };
+  const createTail = {
+    prompt: z.string().min(1).optional().describe("Initial prompt to send once created."),
+    // Divergence 5: the rich shape is the definition; MCP now sees it too.
+    agent: z.string().min(1).optional().describe("Agent backend to launch: claude or opencode."),
+    model: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Model for the initial prompt: 'provider/model' (opencode requires the provider; " +
+          "claude accepts a bare model id)."
+      ),
+    permissionMode: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Claude permission mode to start in, e.g. 'plan'. Requires agent=claude."),
+    agentName: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Named agent (persona) to launch. Requires an agent backend."),
+    stealFocus: z.boolean().optional().default(false).describe("Switch to the new workspace."),
+  };
+  /** The input as the handler is typed against: the core fields. */
+  const createCore = z.object({ ...createHead, ...createTail });
+  projectTypes.reserve("create", Object.keys(createCore.shape));
+  let createInput: typeof createCore | undefined;
+
   const create = defineEntry({
     name: "workspace.create",
     kind: "command",
     description: "Create a new workspace in a project.",
     instructions:
-      "Creates a git worktree and brings the workspace online. Omit project to create the " +
-      "workspace in the caller's own project; pass one to target another (use project list to " +
-      "discover their refs).",
-    input: z.object({
-      // Divergence 4: optional, inferred from the caller when absent, so the MCP
-      // caller can target a project and the API server caller can stay implicit.
-      project: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Project: an open project's name or ref, a local path, or a git URL. " +
-            "Opened (or cloned) if it is not open yet. Omit to use the caller's own project."
-        ),
-      name: z.string().min(1).describe("Name for the new workspace (becomes the branch name)"),
-      base: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Base branch. Omit to use the project's default branch."),
-      tracking: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Remote branch to check out, e.g. 'origin/feature-login'."),
-      prompt: z.string().min(1).optional().describe("Initial prompt to send once created."),
-      // Divergence 5: the rich shape is the definition; MCP now sees it too.
-      agent: z.string().min(1).optional().describe("Agent backend to launch: claude or opencode."),
-      model: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Model for the initial prompt: 'provider/model' (opencode requires the provider; " +
-            "claude accepts a bare model id)."
-        ),
-      permissionMode: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Claude permission mode to start in, e.g. 'plan'. Requires agent=claude."),
-      agentName: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Named agent (persona) to launch. Requires an agent backend."),
-      stealFocus: z.boolean().optional().default(false).describe("Switch to the new workspace."),
-    }),
+      "Creates the workspace in its project (for git: a worktree) and brings it online. Omit " +
+      "project to create the workspace in the caller's own project; pass one to target another " +
+      "(use project list to discover their refs). Which options a project takes depends on its " +
+      "type; an option its type does not declare is a usage error.",
+    // Read on first use, not at construction: the project types answer at app
+    // start, after the registry is built. The extended schema has the core
+    // fields' types plus the types' options, read back with `projectTypes.pick`.
+    get input(): typeof createCore {
+      createInput ??= z.object({
+        ...createHead,
+        ...projectTypes.inputShape("create"),
+        ...createTail,
+      }) as unknown as typeof createCore;
+      return createInput;
+    },
+    get trailingPositionals(): readonly string[] {
+      const positional = projectTypes.positional("create");
+      return positional === undefined ? [] : [positional];
+    },
     requiresWorkspace: false,
     handler: async (ctx, input) => {
       // A reference is passed straight through: resolving it — including
@@ -337,10 +353,9 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
             ? { project }
             : ctx.workspaceRef !== null && { projectRef: projectRefOf(ctx.workspaceRef) }),
           workspaceName: input.name,
-          // Omitted means "the project's default branch", which the worktree
-          // module detects — the same default the creation panel offers.
-          ...(input.base !== undefined && { base: input.base }),
-          ...(input.tracking !== undefined && { tracking: input.tracking }),
+          // Opaque to core: checked against the project's type, and handed to
+          // that type's handlers, by workspace:open.
+          options: projectTypes.pick("create", input),
           ...(agentSpec !== undefined && { agent: agentSpec }),
           stealFocus: input.stealFocus,
           source: "mcp",
@@ -352,25 +367,48 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     },
   });
 
+  const deleteTail = {
+    // Divergence 3: the API server surface gains this.
+    ignoreWarnings: z.boolean().optional().default(false),
+    // Divergence 2: blocking is the single behavior; opt out per call.
+    wait: z.boolean().optional().default(true),
+  };
+  const deleteCore = z.object({ ...targetFields, ...deleteTail });
+  projectTypes.reserve("delete", Object.keys(deleteCore.shape));
+  let deleteInput: typeof deleteCore | undefined;
+
+  /** What each project type's delete preflight objects to, for the instructions. */
+  const objections = (): string => {
+    const named = projectTypes
+      .descriptions()
+      .filter((description) => description.deleteObjections !== undefined)
+      .map((description) => `for ${description.type}: ${description.deleteObjections}`);
+    return named.length === 0 ? "" : ` (${named.join("; ")})`;
+  };
+
   const remove = defineEntry({
     name: "workspace.delete",
     kind: "command",
-    description: "Delete a workspace: terminate its agent and remove the git worktree.",
-    instructions:
-      "This removes the entire workspace, not a label — to change or clear a workspace's " +
-      "display title use the title command, NOT this one. Fails if the target has uncommitted " +
-      "changes, or unmerged commits on a branch that is not kept (pass ignoreWarnings to " +
-      "override), or if processes block worktree removal.",
-    input: z.object({
-      ...targetFields,
-      // Divergence 1: one default everywhere. `api:workspace:delete` has no
-      // caller today, so nothing real relied on the API server's inverted `true`.
-      keepBranch: z.boolean().optional().default(false),
-      // Divergence 3: the API server surface gains this.
-      ignoreWarnings: z.boolean().optional().default(false),
-      // Divergence 2: blocking is the single behavior; opt out per call.
-      wait: z.boolean().optional().default(true),
-    }),
+    description: "Delete a workspace: terminate its agent and remove it from its project.",
+    // Read on first use, like the input: the project types describe what they
+    // object to at app start.
+    get instructions(): string {
+      return (
+        "This removes the entire workspace, not a label — to change or clear a workspace's " +
+        "display title use the title command, NOT this one. Fails if the project's type " +
+        `objects to the delete${objections()} — pass ignoreWarnings to override — or if ` +
+        "processes block its removal. Which options a workspace takes depends on its " +
+        "project's type; an option its type does not declare is a usage error."
+      );
+    },
+    get input(): typeof deleteCore {
+      deleteInput ??= z.object({
+        ...targetFields,
+        ...projectTypes.inputShape("delete"),
+        ...deleteTail,
+      }) as unknown as typeof deleteCore;
+      return deleteInput;
+    },
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const workspaceRef = await targetOf(ctx, input);
@@ -381,7 +419,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
           type: INTENT_DELETE_WORKSPACE,
           payload: {
             workspaceRef,
-            keepBranch: input.keepBranch,
+            options: projectTypes.pick("delete", input),
             force: false,
             removeWorktree: true,
             ignoreWarnings: input.ignoreWarnings,

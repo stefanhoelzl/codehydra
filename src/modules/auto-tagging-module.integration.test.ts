@@ -48,6 +48,7 @@ import { createAutoTaggingModule } from "./auto-tagging-module";
 import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, WorkspaceRef } from "../intents/contract";
 import { gitProjectRef } from "./git/ref";
+import { testProjectTypes } from "../intents/project-type-options.test-utils";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
@@ -97,7 +98,7 @@ function createTestSetup(options?: { enabled?: boolean; activeWorkspace?: string
     viewManager: views.viewManager,
   });
 
-  dispatcher.registerOperation(new OpenWorkspaceOperation());
+  dispatcher.registerOperation(new OpenWorkspaceOperation(testProjectTypes()));
   dispatcher.registerOperation(new SetMetadataOperation());
 
   // get-active-workspace, driven by the view manager so it stays live across

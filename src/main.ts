@@ -88,7 +88,10 @@ import { AgentLifecycleOperation } from "./intents/agent-lifecycle";
 import { GetActiveWorkspaceOperation } from "./intents/get-active-workspace";
 import { ListProjectsOperation } from "./intents/list-projects";
 import { OpenWorkspaceOperation } from "./intents/open-workspace";
-import { GetProjectBasesOperation } from "./intents/get-project-bases";
+import { GetOptionChoicesOperation } from "./intents/get-option-choices";
+import { RefreshProjectOperation } from "./intents/refresh-project";
+import { AddProjectOperation, ListAddActionsOperation } from "./intents/add-project";
+import { ProjectTypeOptions } from "./intents/project-type-options";
 import { AgentLaunchOptionsOperation } from "./intents/agent-launch-options";
 import {
   DeleteWorkspaceOperation,
@@ -681,10 +684,15 @@ const wakeupModule = createWakeupModule({
   pollErrors: (owner) => pollModule.errors(owner),
 });
 
+// Every project type's workspace create/delete options. Empty until app:start's
+// "register-project-types" seals it — before "start" serves the registry.
+const projectTypes = new ProjectTypeOptions();
+
 const operationRegistry = createRegistry(
   {
     dispatcher,
     appLayer,
+    projectTypes,
     awaitDeletion: (workspaceRef) => deletionWaiter.await(workspaceRef),
     locks: lockModule.locks,
     config: configService,
@@ -888,6 +896,7 @@ const gitProjectModule = createGitProjectModule({
   gitClient,
   ui: presentationModule,
   dispatcher,
+  appBoundary: appLayer,
   logger: lifecycleLogger,
   workspaceLogger: apiLogger,
 });
@@ -918,12 +927,13 @@ const frameWatchdogModule = createFrameWatchdogModule({
 const deletionDialogModule = createDeletionDialogModule({
   ui: presentationModule,
   dispatcher,
+  projectTypes,
   logger: apiLogger,
 });
 const creationModule = createCreationModule({
   ui: presentationModule,
   dispatcher,
-  appBoundary: appLayer,
+  projectTypes,
   agentConfig,
   getAvailableAgents,
   logger: apiLogger,
@@ -1047,7 +1057,7 @@ const errorReportModule = createErrorReportModule({
 dispatcher.registerOperation(new AppShutdownOperation());
 dispatcher.registerOperation(new AppResumeOperation());
 dispatcher.registerOperation(
-  new AppStartOperation(agentConfig, () => configService.getSource("agent"))
+  new AppStartOperation(agentConfig, () => configService.getSource("agent"), projectTypes)
 );
 dispatcher.registerOperation(new AppReadyOperation(agentConfig));
 dispatcher.registerOperation(new PollTickOperation());
@@ -1064,11 +1074,14 @@ dispatcher.registerOperation(new SendAgentMessageOperation());
 dispatcher.registerOperation(new AgentLifecycleOperation());
 dispatcher.registerOperation(new GetActiveWorkspaceOperation());
 dispatcher.registerOperation(new ListProjectsOperation());
-dispatcher.registerOperation(new OpenWorkspaceOperation());
-dispatcher.registerOperation(new GetProjectBasesOperation());
+dispatcher.registerOperation(new OpenWorkspaceOperation(projectTypes));
+dispatcher.registerOperation(new GetOptionChoicesOperation());
+dispatcher.registerOperation(new RefreshProjectOperation());
+dispatcher.registerOperation(new ListAddActionsOperation());
+dispatcher.registerOperation(new AddProjectOperation());
 dispatcher.registerOperation(new AgentLaunchOptionsOperation());
 
-dispatcher.registerOperation(new DeleteWorkspaceOperation());
+dispatcher.registerOperation(new DeleteWorkspaceOperation(projectTypes));
 dispatcher.registerOperation(new HibernateWorkspaceOperation());
 dispatcher.registerOperation(new WakeWorkspaceOperation());
 
@@ -1104,6 +1117,8 @@ const hibernationScreenshotModule = createHibernationScreenshotModule({
 
 dispatcher.registerModule(idempotencyModule);
 dispatcher.registerModule(workspaceLifecycleModule);
+// Before every project type module: the order modules register in is the order
+// of the New workspace form's add-project buttons, and the folder picker leads.
 dispatcher.registerModule(viewModule);
 dispatcher.registerModule(apiServerModule.module);
 dispatcher.registerModule(extensionModule);
@@ -1135,6 +1150,7 @@ dispatcher.registerModule(deleteWindowsLockModule);
 dispatcher.registerModule(posixProcessCleanupModule);
 dispatcher.registerModule(projectStoreModule);
 dispatcher.registerModule(workspaceRegistryModule);
+// Its add-project button (clone) follows the folder picker's (viewModule, above).
 dispatcher.registerModule(gitProjectModule);
 dispatcher.registerModule(windowTitleModule);
 dispatcher.registerModule(stateModule);

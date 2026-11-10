@@ -24,7 +24,10 @@
  * - project:close       → close:     unregister the project; remove its app-data directories,
  *                                    and with removeLocalRepo its checkout or clone
  * - workspace:open      → create:    create a worktree, or reopen a discovered one
- * - project:get-bases   → list, refresh
+ * - app:start           → register-project-types: git's create/delete options (options.ts)
+ * - project:get-option-choices → list: the branches, as `base` choices and name suggestions
+ * - project:refresh     → refresh:   fetch
+ * - project:list-add-actions / project:add → the "Clone from Git" button and its dialog
  * - workspace:delete    → preflight: uncommitted changes, unmerged commits
  * - workspace:delete    → delete:    remove the worktree
  * - workspace:get-status → get:      dirty, unmerged commits
@@ -39,8 +42,9 @@ import type { Logger } from "../../boundaries/platform/logging";
 import type { GitWorktreeProvider } from "../../boundaries/platform/git-worktree-provider";
 import type { IGitClient } from "../../boundaries/platform/git-client";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
-import { defineHooks } from "../../intents/declarations";
+import { defineEvents, defineHooks } from "../../intents/declarations";
 import {
+  EVENT_CLONE_PROGRESS,
   OPEN_PROJECT_OPERATION_ID,
   type CloneProgressFrame,
   type ResolveHookResult,
@@ -48,7 +52,13 @@ import {
 import { APP_READY_OPERATION_ID } from "../../intents/app-ready";
 import { CLOSE_PROJECT_OPERATION_ID } from "../../intents/close-project";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
-import { GET_PROJECT_BASES_OPERATION_ID } from "../../intents/get-project-bases";
+import { GET_OPTION_CHOICES_OPERATION_ID } from "../../intents/get-option-choices";
+import { REFRESH_PROJECT_OPERATION_ID } from "../../intents/refresh-project";
+import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import { ADD_PROJECT_OPERATION_ID, LIST_ADD_ACTIONS_OPERATION_ID } from "../../intents/add-project";
+import type { AppBoundary } from "../../boundaries/shell/app";
+import { GIT_PROJECT_OPTIONS } from "./options";
+import { CLONE_ACTION_ID, createCloneDialog } from "./clone-dialog";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../../intents/get-workspace-status";
 import { LIST_PROJECTS_OPERATION_ID } from "../../intents/list-projects";
@@ -78,6 +88,8 @@ export interface GitProjectModuleDeps {
   readonly gitClient: Pick<IGitClient, "isRepositoryRoot" | "init" | "clone">;
   readonly ui: Pick<UiPresenter, "dialog">;
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
+  /** Opens GitHub's "new repository" page from the clone dialog. */
+  readonly appBoundary: Pick<AppBoundary, "openUrl">;
   /** Logs project open, clone and close. */
   readonly logger: Logger;
   /** Logs worktree discovery, adoption, removal and status. */
@@ -123,10 +135,23 @@ export function createGitProjectModule(deps: GitProjectModuleDeps): GitProjectMo
     dispatcher,
     registry: deps.registry,
   });
+  const cloneDialog = createCloneDialog({
+    ui: deps.ui,
+    dispatcher,
+    appBoundary: deps.appBoundary,
+    logger,
+  });
 
   return {
     name: "git",
     projectRefs: () => projects.projectRefs(),
+    events: defineEvents({
+      [EVENT_CLONE_PROGRESS]: {
+        handler: async (event): Promise<void> => {
+          cloneDialog.progress(event.payload);
+        },
+      },
+    }),
     hooks: defineHooks({
       [OPEN_PROJECT_OPERATION_ID]: {
         // A directory that is no repository yet gets the git-init offer first; only
@@ -204,17 +229,47 @@ export function createGitProjectModule(deps: GitProjectModuleDeps): GitProjectMo
         },
       },
 
-      [GET_PROJECT_BASES_OPERATION_ID]: {
+      // What a git project lets a caller choose: describes the type, not a
+      // project, so it answers for every startup without selecting itself.
+      [APP_START_OPERATION_ID]: {
+        "register-project-types": {
+          handler: async () => ({ result: GIT_PROJECT_OPTIONS }),
+        },
+      },
+
+      [GET_OPTION_CHOICES_OPERATION_ID]: {
         list: {
           handler: async (ctx) => {
             if (!isGitProject(ctx.projectRef)) return {};
-            return { result: await worktrees.listBases(ctx.projectPath) };
+            return { result: await worktrees.listChoices(ctx.projectPath, ctx.fresh) };
           },
         },
+      },
+
+      [REFRESH_PROJECT_OPERATION_ID]: {
         refresh: {
           handler: async (ctx): Promise<void> => {
             if (!isGitProject(ctx.projectRef)) return;
             await worktrees.refreshBases(ctx.projectPath);
+          },
+        },
+      },
+
+      // The New workspace form's "Clone from Git" button.
+      [LIST_ADD_ACTIONS_OPERATION_ID]: {
+        list: {
+          handler: async () => ({
+            result: {
+              actions: [{ id: CLONE_ACTION_ID, icon: "source-control", title: "Clone from Git" }],
+            },
+          }),
+        },
+      },
+      [ADD_PROJECT_OPERATION_ID]: {
+        run: {
+          handler: async (ctx) => {
+            if (ctx.intent.payload.action !== CLONE_ACTION_ID) return {};
+            return { result: { project: await cloneDialog.run() } };
           },
         },
       },

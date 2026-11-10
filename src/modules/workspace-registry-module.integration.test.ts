@@ -60,7 +60,8 @@ import { DEFAULT_METADATA_DIR, type WorkspaceRegistryModule } from "./workspace-
 import { createTestWorkspaceRegistry, TEST_PROJECT_DIR } from "./workspace-registry.test-utils";
 import type { MockFileSystemBoundary } from "../boundaries/platform/filesystem.state-mock";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../intents/get-workspace-status";
-import { GET_PROJECT_BASES_OPERATION_ID } from "../intents/get-project-bases";
+import { GET_OPTION_CHOICES_OPERATION_ID } from "../intents/get-option-choices";
+import { REFRESH_PROJECT_OPERATION_ID } from "../intents/refresh-project";
 import type { GitProjectModule } from "./git/module";
 import {
   createMockGitWorktreeProvider,
@@ -714,7 +715,7 @@ describe("the fake type next to the git type", () => {
     const hooks = git!.module.hooks!;
     const workspaceRef = refOf(PROJECT, "alpha");
     const projectRef = fakeProjectRef(PROJECT);
-    const intent = { type: "test", payload: { removeWorktree: true, keepBranch: false } };
+    const intent = { type: "test", payload: { removeWorktree: true } };
 
     const outputs = await Promise.all([
       hooks[GET_WORKSPACE_STATUS_OPERATION_ID]!["get"]!.handler({
@@ -723,12 +724,12 @@ describe("the fake type next to the git type", () => {
         workspacePath: path.toString(),
         closing: null,
       } as HookContext),
-      hooks[GET_PROJECT_BASES_OPERATION_ID]!["list"]!.handler({
+      hooks[GET_OPTION_CHOICES_OPERATION_ID]!["list"]!.handler({
         intent,
         projectRef,
         projectPath: PROJECT,
       } as HookContext),
-      hooks[GET_PROJECT_BASES_OPERATION_ID]!["refresh"]!.handler({
+      hooks[REFRESH_PROJECT_OPERATION_ID]!["refresh"]!.handler({
         intent,
         projectRef,
         projectPath: PROJECT,

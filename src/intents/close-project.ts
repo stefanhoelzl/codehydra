@@ -345,9 +345,9 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     removeAll = removeAll || removeLocalRepo;
 
     // 4. Dispatch workspace:delete per workspace. Default: runtime teardown
-    // (removeWorktree=false). removeAll: full deletion including branches —
-    // the user confirmed a dialog that says uncommitted changes are removed
-    // too, so warnings are ignored.
+    // (removeWorktree=false). removeAll: full deletion with the project type's
+    // default options (git: the branch goes too) — the user confirmed a dialog
+    // that says uncommitted changes are removed too, so warnings are ignored.
     for (const workspace of workspaces) {
       try {
         const deleteIntent: DeleteWorkspaceIntent = {
@@ -355,7 +355,6 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
           payload: removeAll
             ? {
                 workspaceRef: workspace.workspaceRef,
-                keepBranch: false,
                 force: false,
                 removeWorktree: true,
                 skipSwitch: true,
@@ -363,7 +362,6 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
               }
             : {
                 workspaceRef: workspace.workspaceRef,
-                keepBranch: true,
                 force: true,
                 removeWorktree: false,
                 skipSwitch: true,

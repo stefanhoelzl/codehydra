@@ -217,7 +217,6 @@ export type {
   WorkspaceStatus,
   AgentStatus,
   AgentStatusCounts,
-  BaseInfo,
   AgentType as ConfigAgentType,
   SetupRowId,
   SetupRowStatus,

@@ -41,7 +41,8 @@ A per-key rule with `wait` holds a duplicate until the key is released instead o
 4. `migrations`: bring on-disk data in line before anything reads it (e.g. a requested workspaces-root move). May block on the starting screen or quit.
 5. `register-agents` / `agent-selection` / `save-agent`: only while `agent` is set nowhere (not in `config.json`, env or CLI), the agent picker. Must precede `check-deps`, which is agent-specific.
 6. `check-deps`: binary and extension checks. When they report setup is needed, `app:setup` is dispatched; on failure `await-retry` blocks until the user retries, then the checks rerun.
-7. `start`: servers, wiring.
+7. `register-project-types`: each project type module answers with its workspace create/delete options (`project-type-options.ts`); merged and sealed, a clash fails startup. Before `start`, which serves the registry they extend.
+8. `start`: servers, wiring.
 
 A fatal failure runs the `error` hook point before rethrowing.
 

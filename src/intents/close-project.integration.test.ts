@@ -64,6 +64,7 @@ import { Path } from "../utils/path/path";
 import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import { makeWorkspaceRef } from "../utils/ref";
 import { gitProjectRef } from "../modules/git/ref";
+import { testProjectTypes } from "./project-type-options.test-utils";
 
 // =============================================================================
 // Test Helpers
@@ -204,7 +205,7 @@ function createTestHarness(options?: {
 
   // Register operations
   dispatcher.registerOperation(new CloseProjectOperation());
-  dispatcher.registerOperation(new DeleteWorkspaceOperation());
+  dispatcher.registerOperation(new DeleteWorkspaceOperation(testProjectTypes()));
 
   // Shared workspace:resolve (reverse lookup over the project) and project:resolve
   registerTestInfrastructure(dispatcher, {
@@ -671,7 +672,8 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
     for (const payload of fullDeletes) {
       expect(payload).toMatchObject({
         removeWorktree: true,
-        keepBranch: false,
+        // The project type's defaults: git's branch goes too.
+        options: { keepBranch: false },
         ignoreWarnings: true,
         skipSwitch: true,
       });
@@ -733,7 +735,8 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
 
     expect(fullDeletes.map((p) => p.workspaceRef)).toEqual([WORKSPACE_A_REF, WORKSPACE_B_REF]);
     for (const payload of fullDeletes) {
-      expect(payload).toMatchObject({ removeWorktree: true, keepBranch: false });
+      expect(payload).toMatchObject({ removeWorktree: true });
+      expect(payload).toMatchObject({ options: { keepBranch: false } });
     }
   });
 

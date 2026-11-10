@@ -1319,7 +1319,7 @@ describe("IdeServerModule", () => {
         payload: {
           workspaceName: "feature-1",
           projectRef: gitProjectRef(projPath("/test/project")),
-          base: "main",
+          options: { base: "main" },
         },
       })) as unknown as string | undefined;
 
@@ -1415,7 +1415,7 @@ describe("IdeServerModule", () => {
         payload: {
           workspaceName: "feature-1",
           projectRef: gitProjectRef(projPath("/test/project")),
-          base: "main",
+          options: { base: "main" },
         },
       })) as unknown as string | undefined;
 
@@ -1438,7 +1438,7 @@ describe("IdeServerModule", () => {
         type: "workspace:delete",
         payload: {
           workspaceRef: FEATURE_REF,
-          keepBranch: false,
+
           force: false,
           removeWorktree: true,
         },
@@ -1473,7 +1473,7 @@ describe("IdeServerModule", () => {
         type: "workspace:delete",
         payload: {
           workspaceRef: FEATURE_REF,
-          keepBranch: false,
+
           force: true,
           removeWorktree: true,
         },
@@ -1505,7 +1505,7 @@ describe("IdeServerModule", () => {
           type: "workspace:delete",
           payload: {
             workspaceRef: FEATURE_REF,
-            keepBranch: false,
+
             force: false,
             removeWorktree: true,
           },

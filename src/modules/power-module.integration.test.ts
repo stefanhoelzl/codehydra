@@ -77,7 +77,7 @@ const none = (): AggregatedAgentStatus => ({ status: "none", counts: { idle: 0, 
 function deleteIntent(name: string): DeleteWorkspaceIntent {
   return {
     type: INTENT_DELETE_WORKSPACE,
-    payload: { workspaceRef: ref(name), keepBranch: false, force: false, removeWorktree: true },
+    payload: { workspaceRef: ref(name), force: false, removeWorktree: true },
   };
 }
 

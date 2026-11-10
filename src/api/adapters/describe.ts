@@ -67,6 +67,10 @@ export function describe(
     if (entry === undefined) continue;
 
     const schema = z.toJSONSchema(entry.input as z.ZodType, { io: "input" });
+    const positionals =
+      "positionals" in mapping && mapping.positionals !== undefined
+        ? [...mapping.positionals, ...(entry.trailingPositionals ?? [])]
+        : undefined;
     descriptors.push({
       name: entry.name,
       kind: entry.kind,
@@ -75,8 +79,7 @@ export function describe(
       inputSchema: optionalDefaults(schema, mapping.defaults),
       ...("tool" in mapping && { tool: mapping.tool }),
       ...("path" in mapping && { path: mapping.path }),
-      ...("positionals" in mapping &&
-        mapping.positionals !== undefined && { positionals: mapping.positionals }),
+      ...(positionals !== undefined && { positionals }),
       ...("hidden" in mapping && mapping.hidden === true && { hidden: true }),
       ...(mapping.text === true && { text: true }),
       ...("stdin" in mapping && mapping.stdin !== undefined && { stdin: mapping.stdin }),

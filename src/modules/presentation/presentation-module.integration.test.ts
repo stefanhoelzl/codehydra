@@ -948,7 +948,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       workspaceRef: workspace.ref,
       workspaceName: workspace.name,
       projectId: PROJECT_ID,
-      keepBranch: false,
+      options: { keepBranch: false },
       operations: [],
     };
 
@@ -992,7 +992,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       workspaceRef: workspace.ref,
       workspaceName: workspace.name,
       projectId: PROJECT_ID,
-      keepBranch: false,
+      options: { keepBranch: false },
       operations: [],
     };
 
@@ -1016,7 +1016,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
           workspaceRef: workspace.ref,
-          keepBranch: false,
+          options: { keepBranch: false },
           force: false,
           removeWorktree: true,
         },
@@ -1062,7 +1062,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       workspaceRef: ref,
       workspaceName: workspace.name,
       projectId: PROJECT_ID,
-      keepBranch: true,
+      options: { keepBranch: true },
       operations: [{ id: "cleanup", label: "Removing", status: "error", error: "EBUSY" }],
       completed: true,
       hasErrors: true,
@@ -1078,12 +1078,12 @@ describe("PresentationModule - ui:state snapshots", () => {
     });
     await flush();
 
-    // Accessor exposes the FULL domain progress (pids, keepBranch) for the modal.
+    // Accessor exposes the FULL domain progress (pids, options) for the modal.
     const full = module.deletionProgress(ref);
-    expect(full?.keepBranch).toBe(true);
+    expect(full?.options).toEqual({ keepBranch: true });
     expect(full?.blockingProcesses?.[0]?.pid).toBe(4242);
 
-    // The row carries only the render-ready view (no pids / keepBranch / paths).
+    // The row carries only the render-ready view (no pids / options / paths).
     const row = lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
     expect(row.deletionProgress).toEqual({
       operations: [{ id: "cleanup", label: "Removing", status: "error", error: "EBUSY" }],
@@ -1097,7 +1097,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       workspaceRef: ref,
       workspaceName: workspace.name,
       projectId: PROJECT_ID,
-      keepBranch: true,
+      options: { keepBranch: true },
       operations: [],
       completed: true,
       hasErrors: false,
@@ -2332,7 +2332,6 @@ describe("PresentationModule - ui:event routing", () => {
         type: "workspace:delete",
         payload: {
           workspaceRef: workspace.ref,
-          keepBranch: false,
           force: false,
           removeWorktree: true,
           interactive: true,
@@ -3721,7 +3720,6 @@ describe("PresentationModule - shortcut navigation", () => {
         type: "workspace:delete",
         payload: {
           workspaceRef: workspace.ref,
-          keepBranch: false,
           force: false,
           removeWorktree: true,
           interactive: true,
@@ -4737,7 +4735,6 @@ describe("PresentationModule - loading rows", () => {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
           workspaceRef: workspace.ref,
-          keepBranch: false,
           force: false,
           removeWorktree: true,
           interactive: true,

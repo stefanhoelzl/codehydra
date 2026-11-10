@@ -31,9 +31,14 @@ import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../../intent
 import type { OpenWorkspaceIntent } from "../../intents/open-workspace";
 import type { CreateHookResult } from "../../intents/open-workspace";
 import {
-  GET_PROJECT_BASES_OPERATION_ID,
-  INTENT_GET_PROJECT_BASES,
-} from "../../intents/get-project-bases";
+  GET_OPTION_CHOICES_OPERATION_ID,
+  INTENT_GET_OPTION_CHOICES,
+  type ListChoicesHookResult,
+} from "../../intents/get-option-choices";
+import {
+  INTENT_REFRESH_PROJECT,
+  REFRESH_PROJECT_OPERATION_ID,
+} from "../../intents/refresh-project";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
@@ -255,47 +260,49 @@ interface ResolveResult {
 /** The real resolve-workspace operation: the module under test is its "resolve" handler. */
 const minimalResolveWorkspaceOperation = new ResolveWorkspaceOperation();
 
-/** Result from get-project-bases list + refresh dispatch. */
-interface GetProjectBasesTestResult {
-  readonly bases?: readonly { name: string; isRemote: boolean }[] | undefined;
-  readonly defaultBaseBranch?: string | undefined;
-  readonly refreshed?: boolean | undefined;
-}
-
 /**
- * Minimal get-project-bases operation: calls "list" hook, then optionally "refresh".
- * The intent payload controls which hooks to run via a `hookPoint` field.
+ * Minimal project:get-option-choices: the "list" hook point alone, the
+ * project's path in the payload. `fresh` passes through.
  */
-const getProjectBasesSchemas = {
-  type: INTENT_GET_PROJECT_BASES,
+const getOptionChoicesSchemas = {
+  type: INTENT_GET_OPTION_CHOICES,
   payload: z.unknown(),
-  result: z.custom<GetProjectBasesTestResult>(),
+  result: z.custom<ListChoicesHookResult>(),
 } satisfies OperationSchemas;
 
-const minimalGetProjectBasesOperation: Operation<typeof getProjectBasesSchemas> = {
-  id: GET_PROJECT_BASES_OPERATION_ID,
-  schemas: getProjectBasesSchemas,
-  async execute(ctx): Promise<GetProjectBasesTestResult> {
-    const payload = ctx.intent.payload as {
-      projectPath: ProjectPath;
-      hookPoint?: "list" | "refresh";
-    };
-    const hookCtx = {
+const minimalGetOptionChoicesOperation: Operation<typeof getOptionChoicesSchemas> = {
+  id: GET_OPTION_CHOICES_OPERATION_ID,
+  schemas: getOptionChoicesSchemas,
+  async execute(ctx): Promise<ListChoicesHookResult> {
+    const payload = ctx.intent.payload as { projectPath: ProjectPath; fresh?: boolean };
+    const { results, errors } = await ctx.hooks.collect("list", {
       intent: ctx.intent,
       projectPath: payload.projectPath,
       projectRef: gitProjectRef(payload.projectPath),
-    };
-
-    if (payload.hookPoint === "refresh") {
-      const { errors } = await ctx.hooks.collect("refresh", hookCtx);
-      if (errors.length > 0) throw errors[0]!;
-      return { refreshed: true };
-    }
-
-    // Default: list
-    const { results, errors } = await ctx.hooks.collect("list", hookCtx);
+      fresh: payload.fresh === true,
+    } as HookContext);
     if (errors.length > 0) throw errors[0]!;
     return results[0] ?? {};
+  },
+};
+
+/** Minimal project:refresh: the "refresh" hook point, the project's path in the payload. */
+const refreshProjectSchemas = {
+  type: INTENT_REFRESH_PROJECT,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
+
+const minimalRefreshProjectOperation: Operation<typeof refreshProjectSchemas> = {
+  id: REFRESH_PROJECT_OPERATION_ID,
+  schemas: refreshProjectSchemas,
+  async execute(ctx): Promise<void> {
+    const payload = ctx.intent.payload as { projectPath: ProjectPath };
+    const { errors } = await ctx.hooks.collect("refresh", {
+      intent: ctx.intent,
+      projectPath: payload.projectPath,
+      projectRef: gitProjectRef(payload.projectPath),
+    } as HookContext);
+    if (errors.length > 0) throw errors[0]!;
   },
 };
 
@@ -437,7 +444,8 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(openWorkspaceOperation);
   dispatcher.registerOperation(minimalDeleteWorkspaceOperation);
   dispatcher.registerOperation(minimalResolveWorkspaceOperation);
-  dispatcher.registerOperation(minimalGetProjectBasesOperation);
+  dispatcher.registerOperation(minimalGetOptionChoicesOperation);
+  dispatcher.registerOperation(minimalRefreshProjectOperation);
   dispatcher.registerOperation(minimalGetStatusOperation);
   dispatcher.registerOperation(minimalEmitEventOperation);
   dispatcher.registerOperation(switchWorkspaceOperation);
@@ -579,14 +587,15 @@ async function dispatchResolveWorkspace(
   }
 }
 
-async function dispatchListBases(
+async function dispatchListChoices(
   dispatcher: Dispatcher,
-  projectPath: ProjectPath
-): Promise<GetProjectBasesTestResult> {
+  projectPath: ProjectPath,
+  fresh = false
+): Promise<ListChoicesHookResult> {
   return (await dispatcher.dispatch({
-    type: "project:get-bases",
-    payload: { projectPath },
-  } as Intent)) as GetProjectBasesTestResult;
+    type: INTENT_GET_OPTION_CHOICES,
+    payload: { projectPath, fresh },
+  } as Intent)) as ListChoicesHookResult;
 }
 
 async function dispatchRefreshBases(
@@ -594,8 +603,8 @@ async function dispatchRefreshBases(
   projectPath: ProjectPath
 ): Promise<void> {
   await dispatcher.dispatch({
-    type: "project:get-bases",
-    payload: { projectPath, hookPoint: "refresh" },
+    type: INTENT_REFRESH_PROJECT,
+    payload: { projectPath },
   } as Intent);
 }
 
@@ -631,7 +640,7 @@ function deleteIntentFor(ws: Workspace, options?: { force?: boolean }): DeleteWo
     type: "workspace:delete",
     payload: {
       workspaceRef: wsRefAt(ws.path.toString()),
-      keepBranch: false,
+      options: { keepBranch: false },
       force: options?.force ?? false,
       removeWorktree: true,
     },
@@ -654,7 +663,7 @@ async function dispatchPreflight(
     type: "workspace:delete",
     payload: {
       workspaceRef: wsRefAt(workspacePath),
-      keepBranch: false,
+      options: { keepBranch: false },
       force: false,
       removeWorktree: true,
       ...payloadOverrides,
@@ -814,7 +823,7 @@ describe("Git module: worktrees", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "new-feature",
-            base: "origin/main",
+            options: { base: "origin/main" },
             projectRef: gitProjectRef(projectPath),
           },
         };
@@ -860,7 +869,7 @@ describe("Git module: worktrees", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "Feat",
-            base: "origin/main",
+            options: { base: "origin/main" },
             projectRef: gitProjectRef(projectPath),
           },
         };
@@ -885,7 +894,7 @@ describe("Git module: worktrees", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "existing-ws",
-            base: "origin/main",
+            options: { base: "origin/main" },
             projectRef: gitProjectRef(projectPath),
             existingWorkspace: {
               path: wsPath("/workspaces/existing-ws"),
@@ -986,7 +995,7 @@ describe("Git module: worktrees", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "focus-test-1",
-            base: "main",
+            options: { base: "main" },
             projectRef: gitProjectRef(projectPath),
           },
         };
@@ -1015,7 +1024,7 @@ describe("Git module: worktrees", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "explicit-base",
-            base: "develop",
+            options: { base: "develop" },
             projectRef: gitProjectRef(projectPath),
           },
         };
@@ -1044,7 +1053,7 @@ describe("Git module: worktrees", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "existing-ws",
-            base: "origin/main",
+            options: { base: "origin/main" },
             projectRef: gitProjectRef(projectPath),
             existingWorkspace: {
               path: wsPath("/workspaces/existing-ws"),
@@ -1150,7 +1159,7 @@ describe("Git module: worktrees", () => {
           type: "workspace:delete",
           payload: {
             workspaceRef: wsRefAt(ws.path.toString()),
-            keepBranch: true,
+            options: { keepBranch: true },
             force: false,
             removeWorktree: false,
           },
@@ -1201,11 +1210,11 @@ describe("Git module: worktrees", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // get-project-bases -> list
+  // get-option-choices -> list
   // ---------------------------------------------------------------------------
 
-  describe("get-project-bases -> list", () => {
-    it("returns bases and defaultBaseBranch from provider", async () => {
+  describe("get-option-choices -> list", () => {
+    it("answers the branches as base choices, local first, the default preselected", async () => {
       const { dispatcher, provider } = setup;
       const projectPath = projPath("/projects/my-app");
 
@@ -1216,21 +1225,80 @@ describe("Git module: worktrees", () => {
       provider.listBases.mockResolvedValue(bases);
       provider.defaultBase.mockResolvedValue("origin/main");
 
-      const result = await dispatchListBases(dispatcher, projPath(projectPath));
+      const result = await dispatchListChoices(dispatcher, projPath(projectPath));
 
       expect(provider.listBases).toHaveBeenCalledWith(new Path(projectPath), expect.any(Function));
       // defaultBase reuses the already-enumerated bases (no second listBases).
       expect(provider.defaultBase).toHaveBeenCalledWith(new Path(projectPath), bases);
-      expect(result.bases).toHaveLength(2);
-      expect(result.defaultBaseBranch).toBe("origin/main");
+      expect(result.fields).toEqual({
+        base: {
+          choices: [
+            { value: "main", group: "Local Branches" },
+            { value: "origin/main", group: "Remote Branches" },
+          ],
+          default: "origin/main",
+        },
+      });
+    });
+
+    it("suggests a derivable branch as a name that sets its base", async () => {
+      const { dispatcher, provider } = setup;
+      provider.listBases.mockResolvedValue([
+        { name: "main", isRemote: false },
+        { name: "origin/feature-x", isRemote: true, derives: "feature-x", base: "main" },
+      ]);
+      provider.defaultBase.mockResolvedValue("main");
+
+      const result = await dispatchListChoices(dispatcher, projPath("/projects/my-app"));
+
+      expect(result.nameSuggestions).toEqual([
+        {
+          value: "origin/feature-x",
+          label: "feature-x",
+          group: "Remote Branches",
+          sets: { base: "main" },
+        },
+      ]);
+    });
+
+    it("says why there is nothing to choose for a repository without branches", async () => {
+      const { dispatcher, provider } = setup;
+      provider.listBases.mockResolvedValue([]);
+      provider.defaultBase.mockResolvedValue(undefined);
+
+      const result = await dispatchListChoices(dispatcher, projPath("/projects/my-app"));
+
+      expect(result.fields?.["base"]).toEqual({
+        choices: [],
+        empty: "No base branches available",
+      });
+    });
+
+    it("answers again from its last answer, and enumerates afresh when asked to", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = projPath("/projects/my-app");
+      provider.listBases.mockResolvedValue([{ name: "main", isRemote: false }]);
+      provider.defaultBase.mockResolvedValue("main");
+
+      await dispatchListChoices(dispatcher, projectPath);
+      await dispatchListChoices(dispatcher, projectPath);
+      expect(provider.listBases).toHaveBeenCalledTimes(1);
+
+      provider.listBases.mockResolvedValue([
+        { name: "main", isRemote: false },
+        { name: "develop", isRemote: false },
+      ]);
+      const fresh = await dispatchListChoices(dispatcher, projectPath, true);
+      expect(provider.listBases).toHaveBeenCalledTimes(2);
+      expect(fresh.fields?.["base"]?.choices).toHaveLength(2);
     });
   });
 
   // ---------------------------------------------------------------------------
-  // get-project-bases -> refresh
+  // refresh-project -> refresh
   // ---------------------------------------------------------------------------
 
-  describe("get-project-bases -> refresh", () => {
+  describe("refresh-project -> refresh", () => {
     it("calls updateBases on provider", async () => {
       const { dispatcher, provider } = setup;
       const projectPath = projPath("/projects/my-app");
@@ -1394,7 +1462,7 @@ describe("Git module: worktrees", () => {
       preflightSetup.provider.countUnmergedCommits.mockResolvedValue(3);
 
       const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath, {
-        keepBranch: true,
+        options: { keepBranch: true },
       });
 
       // The branch ref survives the worktree removal, so the commits stay
@@ -1410,7 +1478,7 @@ describe("Git module: worktrees", () => {
       preflightSetup.provider.isDirty.mockResolvedValue(true);
 
       const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath, {
-        keepBranch: true,
+        options: { keepBranch: true },
       });
 
       // Uncommitted changes live in the worktree, which goes either way.

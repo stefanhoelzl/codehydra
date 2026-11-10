@@ -64,6 +64,7 @@ import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { ConfigSource } from "../boundaries/platform/config";
 import { testPath } from "../shared/test-fixtures";
+import { ProjectTypeOptions } from "./project-type-options";
 
 /** Permissive schemas for the stub setup operation (app:setup dispatched during checks). */
 const setupStubSchemas = {
@@ -244,7 +245,9 @@ function createTestSetup(
 ): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(new AppStartOperation(createMockAgentAccessor(), () => "user"));
+  dispatcher.registerOperation(
+    new AppStartOperation(createMockAgentAccessor(), () => "user", new ProjectTypeOptions())
+  );
 
   const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
   for (const m of allModules) dispatcher.registerModule(m);
@@ -562,7 +565,11 @@ describe("AppStart Operation", () => {
         configured === null ? "default" : (options?.agentSource ?? "user");
       const agent: ConfigAgentType = configured && configured !== null ? configured : "opencode";
       dispatcher.registerOperation(
-        new AppStartOperation(createMockAgentAccessor(agent), () => source)
+        new AppStartOperation(
+          createMockAgentAccessor(agent),
+          () => source,
+          new ProjectTypeOptions()
+        )
       );
       if (options?.setupStub) {
         dispatcher.registerOperation(options.setupStub);

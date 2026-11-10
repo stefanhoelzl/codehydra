@@ -92,7 +92,6 @@ export type {
   WorkspaceStatus,
   AgentStatus,
   AgentStatusCounts,
-  BaseInfo,
   ProjectId,
   WorkspaceName,
 } from "@shared/api/types";

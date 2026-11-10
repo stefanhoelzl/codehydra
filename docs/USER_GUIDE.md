@@ -447,6 +447,26 @@ the agent's. Closing the window or quitting while a deletion runs lets it finish
 first, for up to 30 seconds, so a workspace you deleted does not come back on
 the next start.
 
+### Workspace options
+
+What a workspace can be created or deleted with beyond its name depends on its
+project's type. Every project today is a git project, which takes:
+
+| Option       | When   | Meaning                                                                                                                                         |
+| ------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `base`       | create | Branch to fork from (default: the project's default branch) — the form's **Base branch**                                                        |
+| `tracking`   | create | Existing remote branch to check out with upstream set, e.g. `origin/feature-x`. Not in the form: pick the remote branch as the **Name** instead |
+| `keepBranch` | delete | Keep the git branch (default: `false`) — the dialog's **Keep branch**                                                                           |
+
+Every way of creating or deleting a workspace takes them by name, next to its
+own fields: `ch ws create <name> [base] --tracking …` and `ch ws delete
+--keep-branch`, the MCP tools `workspace_create` / `workspace_delete`, an
+automation's `workspace.create` items and the extension API. An option the
+project's type does not take is refused as a usage error (`ch` exits `2`) —
+for a project opened from a URL, once it has been cloned. Plugin hooks receive
+them as `options` ([`after-worktree-created`](#after-worktree-created),
+[`before-worktree-deleted`](#before-worktree-deleted)).
+
 ### Notifications and updates
 
 - **Sound** — played when a workspace's idle count goes up (including an agent
@@ -1101,7 +1121,11 @@ from hibernation, or adopted as an existing worktree when a project is added.
 It blocks the workspace opening — the sidebar row shows as loading until it
 exits, including while the trust question is open.
 
-Extra input: none. On a new worktree `branch` and `base` are always present.
+Extra input: `"options"` — the [create options](#workspace-options) the
+workspace was created with, as given, e.g. `{ "base": "main", "tracking":
+"origin/feature-x" }` for a git project (`{}` when none were given). On a new
+worktree `branch` and `base` are always present; the core `base` is the base
+it was actually created from, the project's default branch when none was given.
 
 Output — every field optional:
 
@@ -1207,8 +1231,10 @@ has its own row on the deletion progress panel. It also runs when closing a
 project with "remove all" confirmed. It does not run when closing a project
 leaves the worktrees on disk, and not for a forced deletion.
 
-Extra input: `"keepBranch": true | false` (the user's choice in the delete
-dialog). `branch` and `base` are absent when CodeHydra does not know them.
+Extra input: `"options"` — the [delete options](#workspace-options) the
+deletion runs with, defaults filled in: for a git project `{ "keepBranch": true
+| false }` (the user's choice in the delete dialog, or the caller's). `branch`
+and `base` are absent when CodeHydra does not know them.
 
 To refuse, exit **0** and print:
 
@@ -1468,7 +1494,8 @@ MCP has the same as `plugin_automation_add`, `plugin_automation_remove` and `plu
 
 #### Creating workspaces
 
-A `workspace.create` item takes `ch ws create`'s fields:
+A `workspace.create` item takes `ch ws create`'s fields — `base` and `tracking` are a git
+project's [options](#workspace-options), and another type's would go here too:
 
 | Field                                           | Meaning                                                                                                                                                            |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

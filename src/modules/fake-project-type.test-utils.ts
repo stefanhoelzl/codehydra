@@ -12,6 +12,8 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookOutput } from "../intents/lib/operation";
 import { defineHooks } from "../intents/declarations";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
+import type { ProjectTypeDescription } from "../intents/project-type-options";
 import { OPEN_PROJECT_OPERATION_ID, type DiscoverHookResult } from "../intents/open-project";
 import { OPEN_WORKSPACE_OPERATION_ID, type CreateHookResult } from "../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID, type DeleteHookResult } from "../intents/delete-workspace";
@@ -33,6 +35,27 @@ export const FAKE_PROJECT_TYPE = "fake";
 export const fakeProjectRef = (path: string): ProjectRef =>
   makeProjectRef(FAKE_PROJECT_TYPE, new Path(path).toString());
 
+/**
+ * The fake type's options: its own, none of git's — what a second type's
+ * description looks like, and what proves the options are merged by name.
+ */
+export const FAKE_PROJECT_OPTIONS = {
+  type: FAKE_PROJECT_TYPE,
+  create: {
+    template: {
+      kind: "select",
+      label: "Template",
+      choices: [{ value: "empty" }, { value: "readme", label: "With a README" }],
+      default: "empty",
+      description: "What the new folder starts with.",
+    },
+  },
+  delete: {
+    archive: { kind: "checkbox", label: "Archive", default: false },
+  },
+  deleteObjections: "an archive that is not empty",
+} as const satisfies ProjectTypeDescription;
+
 export interface FakeProjectType {
   readonly module: IntentModule;
   /** Put a workspace folder into a project before it is discovered. */
@@ -41,6 +64,10 @@ export interface FakeProjectType {
   folders(projectPath: string): readonly string[];
   /** Names of the workspaces "create" made, in order. */
   readonly created: readonly string[];
+  /** The options each fresh "create" was handed, in order. */
+  readonly createOptions: readonly Readonly<Record<string, unknown>>[];
+  /** The options each removing "delete" was handed, in order. */
+  readonly deleteOptions: readonly Readonly<Record<string, unknown>>[];
   /** When set, removing a folder fails with this message. */
   failRemoval: string | undefined;
 }
@@ -48,6 +75,8 @@ export interface FakeProjectType {
 export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectType {
   const projects = new Map<string, Map<string, RegisteredWorkspace>>();
   const created: string[] = [];
+  const createOptions: Readonly<Record<string, unknown>>[] = [];
+  const deleteOptions: Readonly<Record<string, unknown>>[] = [];
 
   const key = (projectPath: string): string => new Path(projectPath).toString();
   const foldersOf = (projectPath: string): Map<string, RegisteredWorkspace> => {
@@ -61,6 +90,8 @@ export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectT
 
   const fake: FakeProjectType = {
     created,
+    createOptions,
+    deleteOptions,
     failRemoval: undefined,
 
     addFolder(projectPath, name, metadata = {}) {
@@ -74,6 +105,12 @@ export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectT
     module: {
       name: "fake-project-type",
       hooks: defineHooks({
+        [APP_START_OPERATION_ID]: {
+          "register-project-types": {
+            handler: async () => ({ result: FAKE_PROJECT_OPTIONS }),
+          },
+        },
+
         [OPEN_PROJECT_OPERATION_ID]: {
           discover: {
             handler: async (ctx): Promise<HookOutput<DiscoverHookResult>> => {
@@ -106,6 +143,7 @@ export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectT
               if (ctx.fresh) {
                 foldersOf(ctx.projectPath).set(ws.name, ws);
                 created.push(ws.name);
+                createOptions.push(ctx.intent.payload.options ?? {});
                 await registry.trackCreated(project, ws);
               } else {
                 await registry.track(project, ws);
@@ -133,6 +171,7 @@ export function createFakeProjectType(registry: WorkspaceRegistry): FakeProjectT
                 if (ctx.intent.payload.force) registry.untrack(path, "deleted");
                 return { result: { error: fake.failRemoval } };
               }
+              deleteOptions.push(ctx.intent.payload.options ?? {});
               foldersOf(ctx.projectPath).delete(path.basename);
               registry.untrack(path, "deleted");
               return { result: {} };

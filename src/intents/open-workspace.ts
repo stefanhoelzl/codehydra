@@ -54,6 +54,7 @@ import type { OpenProjectIntent } from "./open-project";
 import { looksLikeGitUrl, matchOpenProject } from "../utils/project-reference";
 import { throwHookErrors, mergeHookResults, mergeRecords, onlyDefined } from "./lib/hook-helpers";
 import { getErrorMessage } from "../shared/error-utils";
+import type { ProjectTypeOptions } from "./project-type-options";
 
 export const INTENT_OPEN_WORKSPACE = "workspace:open" as const;
 export const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
@@ -123,10 +124,13 @@ export type ExistingWorkspaceData = z.infer<typeof existingWorkspaceDataSchema>;
 export const openWorkspacePayloadSchema = z
   .object({
     workspaceName: z.string(),
-    base: z.string().optional(),
-    /** Remote branch to check out (e.g., 'origin/feature-login'). When set, the local branch
-     *  is created at this ref with upstream configured, instead of forking from base. */
-    tracking: z.string().optional(),
+    /**
+     * The project type's create options (git: `base`, `tracking`), opaque to
+     * core. The operation checks them against the type's description and
+     * applies its defaults before the first hook point, so every hook sees the
+     * checked values here. Only a fresh creation reads them.
+     */
+    options: z.record(z.string(), z.unknown()).readonly().optional(),
     /** If true, switch to the new workspace. If false, don't steal focus but still switch when
      *  no workspace is active. Default behavior (undefined): switch. */
     stealFocus: z.boolean().optional(),
@@ -316,7 +320,6 @@ const workspaceCreatedSchema = z
     branch: z.string().optional(),
     /** The workspace's base. Absent when none is recorded. */
     base: z.string().optional(),
-    tracking: z.string().optional(),
     metadata: z.record(z.string(), z.string()).readonly(),
     workspaceUrl: z.string(),
     agent: agentSpecSchema.optional(),
@@ -332,8 +335,6 @@ const workspaceLoadingSchema = z
   .object({
     workspaceName: z.string(),
     projectRef: projectRefSchema,
-    /** The requested base branch (absent when auto-detected later). */
-    base: z.string().optional(),
     /** Mirrors the intent's stealFocus. The placeholder row is shown either
      *  way; `false` means it must not become the active workspace. */
     stealFocus: z.boolean().optional(),
@@ -427,6 +428,11 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
   readonly schemas = schemas;
 
+  constructor(
+    /** Every project type's options: what a creation's `options` is checked against. */
+    private readonly projectTypes: ProjectTypeOptions
+  ) {}
+
   async execute(
     ctx: OperationContext<OpenWorkspaceIntent, typeof schemas>
   ): Promise<OpenWorkspaceResult> {
@@ -436,6 +442,22 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     const project = await this.resolveProject(ctx);
     const { projectRef, projectPath } = project;
     const { existingWorkspace } = ctx.intent.payload;
+
+    // A creation's options are checked against the project's type only now
+    // that the type is known — a project opened from a URL has none until it
+    // is cloned. A foreign option fails the call as the caller's mistake, before
+    // the loading row; every hook point then reads the checked values, defaults
+    // applied, from the payload. A reopen creates nothing and takes none.
+    const intent: OpenWorkspaceIntent =
+      existingWorkspace === undefined
+        ? {
+            ...ctx.intent,
+            payload: {
+              ...ctx.intent.payload,
+              options: this.projectTypes.resolve(projectRef, "create", ctx.intent.payload.options),
+            },
+          }
+        : ctx.intent;
     // Decided once, here, and handed to every hook point: whether this open
     // creates the workspace, and the name it is opened under (an existing
     // workspace's own, or the requested one). The name comes from the payload,
@@ -464,7 +486,6 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
         payload: {
           workspaceName: ctx.intent.payload.workspaceName,
           projectRef,
-          ...(ctx.intent.payload.base !== undefined && { base: ctx.intent.payload.base }),
           ...(ctx.intent.payload.stealFocus !== undefined && {
             stealFocus: ctx.intent.payload.stealFocus,
           }),
@@ -473,7 +494,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     }
 
     try {
-      return await this.executeWorkspaceOpen(ctx, project, opening);
+      return await this.executeWorkspaceOpen(ctx, intent, project, opening);
     } catch (error) {
       ctx.emit({
         type: EVENT_WORKSPACE_CREATE_FAILED,
@@ -538,8 +559,10 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     return resolve(opened.ref);
   }
 
+  /** `intent` is the dispatched one with its options checked: what every hook point is handed. */
   private async executeWorkspaceOpen(
     ctx: OperationContext<OpenWorkspaceIntent, typeof schemas>,
+    intent: OpenWorkspaceIntent,
     projResolved: ResolveProjectResult,
     opening: Opening
   ): Promise<OpenWorkspaceResult> {
@@ -547,7 +570,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     const resolvedProjectId = projResolved.projectId;
 
     // Hook: "create" — worktree creation (fatal on error)
-    const createCtx: CreateHookInput = { intent: ctx.intent, ...opening, projectPath, projectRef };
+    const createCtx: CreateHookInput = { intent, ...opening, projectPath, projectRef };
     const { results: createResults, errors: createErrors } = await ctx.hooks.collect(
       "create",
       createCtx
@@ -577,7 +600,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     // The ref names the workspace by the name it is opened under.
     const workspaceRef = makeWorkspaceRef(projectRef, opening.workspaceName);
     const identity = {
-      intent: ctx.intent,
+      intent,
       ...opening,
       workspaceRef,
       workspacePath,
@@ -635,7 +658,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
 
     // Hook 3c: "finalize" — workspace URL (fatal on error)
     const finalizeCtx: FinalizeHookInput = {
-      intent: ctx.intent,
+      intent,
       ...opening,
       workspaceRef,
       workspacePath,
@@ -683,7 +706,6 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       projectRef,
       ...(branch !== null && { branch }),
       ...(resolvedBase !== undefined && { base: resolvedBase }),
-      ...(ctx.intent.payload.tracking !== undefined && { tracking: ctx.intent.payload.tracking }),
       metadata: mergedMetadata,
       workspaceUrl,
       ...(ctx.intent.payload.agent !== undefined && {

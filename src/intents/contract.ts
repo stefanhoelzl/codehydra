@@ -330,21 +330,6 @@ export const workspaceStatusSchema = z
   .readonly();
 export type WorkspaceStatus = z.infer<typeof workspaceStatusSchema>;
 
-/** Information about a base branch. */
-export const baseInfoSchema = z
-  .object({
-    /** Full branch reference (e.g., "main" or "origin/main"). */
-    name: z.string(),
-    /** Whether this is a remote-tracking branch. */
-    isRemote: z.boolean(),
-    /** Suggested base branch for creating a workspace from this branch. */
-    base: z.string().optional(),
-    /** Derivable workspace name if a workspace can be created from this branch. */
-    derives: z.string().optional(),
-  })
-  .readonly();
-export type BaseInfo = z.infer<typeof baseInfoSchema>;
-
 /**
  * The agent backends CodeHydra can run. Single source of truth: `ConfigAgentType`
  * (the persisted `agent` config value) and `LifecycleAgentType` (the runtime/IPC name)
@@ -432,7 +417,8 @@ export type DeletionOperation = z.infer<typeof deletionOperationSchema>;
 export const deletionProgressSchema = z
   .object({
     ...workspaceIdentityPayloadSchema.shape,
-    keepBranch: z.boolean(),
+    /** The delete options in effect (the project type's, checked and defaulted). */
+    options: z.record(z.string(), z.unknown()).readonly(),
     operations: z.array(deletionOperationSchema).readonly(),
     completed: z.boolean(),
     hasErrors: z.boolean(),

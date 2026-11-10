@@ -20,7 +20,8 @@ import {
 } from "../intents/delete-workspace";
 import type { ConfirmHookResult } from "../intents/delete-workspace";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
-import { INTENT_GET_PROJECT_BASES } from "../intents/get-project-bases";
+import { INTENT_REFRESH_PROJECT } from "../intents/refresh-project";
+import { testProjectTypes } from "../intents/project-type-options.test-utils";
 import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { createDeletionDialogModule } from "./deletion-dialog-module";
@@ -98,7 +99,7 @@ function makeProgress(overrides?: Partial<DeletionProgress>): DeletionProgress {
     projectRef: PROJECT_REF,
     workspaceName: WS_NAME_A,
     projectId: PROJECT_ID,
-    keepBranch: false,
+    options: { keepBranch: false },
     operations: [
       { id: "kill-terminals", label: "Terminating processes", status: "in-progress" },
       { id: "stop-server", label: "Stopping agent server", status: "pending" },
@@ -139,6 +140,7 @@ function createTestSetup(): TestSetup {
       cancelRunningHooks: (path: string) => canceledHooks.push(path),
     },
     dispatcher: dispatcher as unknown as Dispatcher,
+    projectTypes: testProjectTypes(),
     logger: SILENT_LOGGER,
   });
 
@@ -367,7 +369,7 @@ describe("DeletionDialogModule", () => {
     const progress = makeProgress({
       completed: true,
       hasErrors: true,
-      keepBranch: true,
+      options: { keepBranch: true },
       blockingProcesses: [
         {
           pid: 1234,
@@ -399,7 +401,7 @@ describe("DeletionDialogModule", () => {
     expect(retryIntent).toBeDefined();
     const payload = retryIntent!.payload as Record<string, unknown>;
     expect(payload.workspaceRef).toBe(WS_PATH_A);
-    expect(payload.keepBranch).toBe(true);
+    expect((payload.options as Record<string, unknown>)["keepBranch"]).toBe(true);
     expect(payload.ignoreWarnings).toBe(true);
     expect(payload.blockingPids).toEqual([1234]);
     expect(payload.force).toBe(false);
@@ -454,7 +456,7 @@ describe("DeletionDialogModule", () => {
         makeProgress({
           completed: true,
           hasErrors: true,
-          keepBranch,
+          options: { keepBranch },
           operations: [
             {
               id: "cleanup-workspace",
@@ -473,7 +475,7 @@ describe("DeletionDialogModule", () => {
       const intent = dispatcher.dispatched.find((d) => d.type === INTENT_DELETE_WORKSPACE);
       const payload = intent!.payload as Record<string, unknown>;
       expect(payload.force).toBe(true);
-      expect(payload.keepBranch).toBe(keepBranch);
+      expect((payload.options as Record<string, unknown>)["keepBranch"]).toBe(keepBranch);
     }
   );
 
@@ -644,7 +646,7 @@ describe("DeletionDialogModule - remove confirm", () => {
         dispatched.push(intent);
         if (intent.type === INTENT_GET_WORKSPACE_STATUS) return statusPromise;
         if (intent.type === INTENT_GET_METADATA) return metadataPromise;
-        if (intent.type === INTENT_GET_PROJECT_BASES) return basesPromise;
+        if (intent.type === INTENT_REFRESH_PROJECT) return basesPromise;
         return Promise.resolve();
       }),
     };
@@ -657,6 +659,7 @@ describe("DeletionDialogModule - remove confirm", () => {
         cancelRunningHooks: () => {},
       },
       dispatcher: dispatcher as unknown as Dispatcher,
+      projectTypes: testProjectTypes(),
       logger: SILENT_LOGGER,
     });
 
@@ -666,7 +669,7 @@ describe("DeletionDialogModule - remove confirm", () => {
           type: INTENT_DELETE_WORKSPACE,
           payload: {
             workspaceRef: WS_PATH_A,
-            keepBranch: false,
+            options: { keepBranch: false },
             force: false,
             removeWorktree: true,
             interactive: true,
@@ -722,10 +725,32 @@ describe("DeletionDialogModule - remove confirm", () => {
     });
     expect(handle.config.sections).toContainEqual({
       type: "checkbox",
-      id: "keep-branch",
+      id: "keepBranch",
       label: "Keep branch",
+      changeEvent: true,
+      // The dispatch's checked options: git's default.
+      value: false,
     });
 
+    handle.emitAction("cancel");
+    await pending;
+  });
+
+  it("keeps the user's pick when the status check re-renders the dialog", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+    const handle = setup.dialogManager.lastHandle!;
+
+    handle.emitChange("keepBranch", { keepBranch: "true" });
+    setup.resolveStatus({ isDirty: false, unmergedCommits: 1 });
+    setup.resolveMetadata({ base: "main" });
+    await vi.waitFor(() => {
+      expect(textsOf(handle.config).some((text) => text.includes("not merged"))).toBe(true);
+    });
+
+    expect(handle.config.sections).toContainEqual(
+      expect.objectContaining({ type: "checkbox", id: "keepBranch", value: true })
+    );
     handle.emitAction("cancel");
     await pending;
   });
@@ -786,11 +811,11 @@ describe("DeletionDialogModule - remove confirm", () => {
     const pending = setup.confirm();
     const handle = setup.dialogManager.lastHandle!;
 
-    handle.emitAction("remove", { "keep-branch": "true" });
+    handle.emitAction("remove", { keepBranch: "true" });
     setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
     setup.resolveMetadata({});
 
-    await expect(pending).resolves.toEqual({ keepBranch: true });
+    await expect(pending).resolves.toEqual({ options: { keepBranch: true } });
     expect(handle.closed).toBe(true);
   });
 
@@ -799,7 +824,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     const pending = setup.confirm();
     const handle = setup.dialogManager.lastHandle!;
 
-    handle.emitAction("cancel", { "keep-branch": "false" });
+    handle.emitAction("cancel", { keepBranch: "false" });
 
     await expect(pending).resolves.toEqual({ canceled: true });
     expect(handle.closed).toBe(true);
@@ -832,15 +857,15 @@ describe("DeletionDialogModule - remove confirm", () => {
     // The local read fetches nothing; the fetch is the project's, not the workspace's.
     expect(statusReads(setup)).toEqual([{ workspaceRef: WS_PATH_A }]);
     expect(setup.dispatched).toContainEqual({
-      type: INTENT_GET_PROJECT_BASES,
-      payload: { projectRef: PROJECT_REF, refresh: true, wait: true },
+      type: INTENT_REFRESH_PROJECT,
+      payload: { projectRef: PROJECT_REF },
     });
 
     setup.resolveBases();
     await settle();
     expect(statusReads(setup)).toHaveLength(2);
 
-    handle.emitAction("remove", { "keep-branch": "false" });
+    handle.emitAction("remove", { keepBranch: "false" });
     await pending;
   });
 
@@ -854,7 +879,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     setup.resolveMetadata({});
     await settle();
 
-    handle.emitAction("remove", { "keep-branch": "false" });
+    handle.emitAction("remove", { keepBranch: "false" });
     await pending;
     setup.resolveBases();
     await settle();
@@ -865,14 +890,14 @@ describe("DeletionDialogModule - remove confirm", () => {
   it("does not fetch when the dialog was answered before the local status landed", async () => {
     const setup = createConfirmSetup();
     const pending = setup.confirm();
-    setup.dialogManager.lastHandle!.emitAction("remove", { "keep-branch": "false" });
+    setup.dialogManager.lastHandle!.emitAction("remove", { keepBranch: "false" });
 
     setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
     setup.resolveMetadata({});
     await pending;
     await settle();
 
-    expect(setup.dispatched.map((intent) => intent.type)).not.toContain(INTENT_GET_PROJECT_BASES);
+    expect(setup.dispatched.map((intent) => intent.type)).not.toContain(INTENT_REFRESH_PROJECT);
   });
 
   it("a status result landing after the answer does not update the closed dialog", async () => {
@@ -880,7 +905,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     const pending = setup.confirm();
     const handle = setup.dialogManager.lastHandle!;
 
-    handle.emitAction("remove", { "keep-branch": "false" });
+    handle.emitAction("remove", { keepBranch: "false" });
     await settle();
     const configCount = handle.configs.length;
 
@@ -906,24 +931,24 @@ describe("DeletionDialogModule - remove confirm", () => {
       });
       const handle = setup.dialogManager.lastHandle!;
 
-      handle.emitAction("remove", { "keep-branch": "false" });
+      handle.emitAction("remove", { keepBranch: "false" });
       await settle();
       expect(handle.closed).toBe(true);
       expect(settled).toBe(false);
 
       setup.resolveStatus({ isDirty: false, unmergedCommits: 0 });
       setup.resolveMetadata({});
-      await expect(pending).resolves.toEqual({ keepBranch: false });
+      await expect(pending).resolves.toEqual({ options: { keepBranch: false } });
     });
 
     it("goes ahead once a failing read has failed", async () => {
       const setup = createConfirmSetup();
       const pending = setup.confirm();
 
-      setup.dialogManager.lastHandle!.emitAction("remove", { "keep-branch": "true" });
+      setup.dialogManager.lastHandle!.emitAction("remove", { keepBranch: "true" });
       setup.rejectStatus(new Error("git broke"));
 
-      await expect(pending).resolves.toEqual({ keepBranch: true });
+      await expect(pending).resolves.toEqual({ options: { keepBranch: true } });
     });
 
     it("waits for the re-read after the fetch, too", async () => {
@@ -948,13 +973,13 @@ describe("DeletionDialogModule - remove confirm", () => {
 
       let settled = false;
       void pending.then(() => (settled = true));
-      handle.emitAction("remove", { "keep-branch": "false" });
+      handle.emitAction("remove", { keepBranch: "false" });
       await settle();
       expect(handle.closed).toBe(true);
       expect(settled).toBe(false);
 
       resolveReread({ isDirty: false, unmergedCommits: 0 });
-      await expect(pending).resolves.toEqual({ keepBranch: false });
+      await expect(pending).resolves.toEqual({ options: { keepBranch: false } });
     });
 
     it("Cancel does not wait for it", async () => {

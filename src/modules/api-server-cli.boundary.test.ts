@@ -25,6 +25,7 @@ import { createLockModule } from "./lock-module";
 import type { ProjectLocation } from "../api/workspace-lookup";
 import { targetFields } from "../api/entries/target";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
+import { sealedProjectTypeOptions } from "../intents/project-type-options";
 
 const WS = workspacePathSchema.parse("/repo/wt/feature") as WorkspacePath;
 const REPO = gitProjectRef("/repo");
@@ -667,6 +668,7 @@ describe("locks tied to a CLI connection", () => {
         plugins: () => {
           throw new Error("this test reaches no plugins");
         },
+        projectTypes: sealedProjectTypeOptions(),
       })
     );
     return { registry, locks };

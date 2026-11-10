@@ -8,6 +8,7 @@ Single source of truth for every operation the outside world can reach: MCP (`ch
 - `kind` is semantic, not transport: a `command` is an instruction (may return nothing); an `event` reports an occurrence the sender witnessed. `agent.lifecycle` is the only event and is sidekick-only (`api:workspace:agentLifecycle`, `null` in every other map) because only the sidekick witnesses the terminal opening/closing.
 - `requiresWorkspace: true` + no caller workspace + no target → fails before dispatch (`no-workspace`, CLI exit 4).
 - Fail with `ApiError(category, message)` (`errors.ts`); the category travels as `ApiResult.category` and picks the CLI exit code.
+- `workspace.create` / `workspace.delete` merge the project types' options (`deps.projectTypes`, sealed by app:start) into their input, so their `input` and `instructions` are getters read on first use; a type's positional option reaches the CLI as the entry's `trailingPositionals`. The handler passes the options on as an opaque `options` record (`projectTypes.pick`); `workspace:open` / `workspace:delete` check them. See docs/INTENTS.md (Project type options).
 
 ## Adapters (`adapters/`)
 

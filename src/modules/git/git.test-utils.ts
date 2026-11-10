@@ -81,6 +81,7 @@ export function createTestGitModule(overrides: Partial<TestGitModuleDeps> = {}):
     gitClient: createMockGitClient(),
     ui: createMockDialogManager().ui,
     dispatcher: createMockNotificationManager().dispatcher,
+    appBoundary: { openUrl: async () => undefined },
     logger: SILENT_LOGGER,
     workspaceLogger: SILENT_LOGGER,
   };

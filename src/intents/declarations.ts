@@ -58,9 +58,19 @@ import type {
 } from "./get-agent-session";
 import type { GET_METADATA_OPERATION_ID, schemas as getMetadataSchemas } from "./get-metadata";
 import type {
-  GET_PROJECT_BASES_OPERATION_ID,
-  schemas as getProjectBasesSchemas,
-} from "./get-project-bases";
+  GET_OPTION_CHOICES_OPERATION_ID,
+  schemas as getOptionChoicesSchemas,
+} from "./get-option-choices";
+import type {
+  ADD_PROJECT_OPERATION_ID,
+  LIST_ADD_ACTIONS_OPERATION_ID,
+  addProjectSchemas,
+  listAddActionsSchemas,
+} from "./add-project";
+import type {
+  REFRESH_PROJECT_OPERATION_ID,
+  schemas as refreshProjectSchemas,
+} from "./refresh-project";
 import type {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   schemas as getWorkspaceStatusSchemas,
@@ -153,7 +163,10 @@ type Operations =
   | Entry<typeof GET_ACTIVE_WORKSPACE_OPERATION_ID, typeof getActiveWorkspaceSchemas>
   | Entry<typeof GET_AGENT_SESSION_OPERATION_ID, typeof getAgentSessionSchemas>
   | Entry<typeof GET_METADATA_OPERATION_ID, typeof getMetadataSchemas>
-  | Entry<typeof GET_PROJECT_BASES_OPERATION_ID, typeof getProjectBasesSchemas>
+  | Entry<typeof GET_OPTION_CHOICES_OPERATION_ID, typeof getOptionChoicesSchemas>
+  | Entry<typeof ADD_PROJECT_OPERATION_ID, typeof addProjectSchemas>
+  | Entry<typeof LIST_ADD_ACTIONS_OPERATION_ID, typeof listAddActionsSchemas>
+  | Entry<typeof REFRESH_PROJECT_OPERATION_ID, typeof refreshProjectSchemas>
   | Entry<typeof GET_WORKSPACE_STATUS_OPERATION_ID, typeof getWorkspaceStatusSchemas>
   | Entry<typeof HIBERNATE_WORKSPACE_OPERATION_ID, typeof hibernateWorkspaceSchemas>
   | Entry<typeof LIST_PROJECTS_OPERATION_ID, typeof listProjectsSchemas>
