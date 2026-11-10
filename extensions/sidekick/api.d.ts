@@ -22,7 +22,7 @@
  *
  *   await api.whenReady();
  *   const status = await api.workspace.getStatus();
- *   console.log('Workspace dirty:', status.isDirty);
+ *   console.log('Workspace status:', status.status);
  *   console.log('Agent status:', status.agent.type);
  *
  *   // Log to CodeHydra's centralized logging
@@ -191,10 +191,12 @@ export type AgentStatus =
  * Combined status of a workspace.
  */
 export interface WorkspaceStatus {
-  /** True if the workspace has uncommitted changes */
-  readonly isDirty: boolean;
-  /** Number of commits on this workspace's branch not merged into its base branch */
-  readonly unmergedCommits: number;
+  /** A value the project type declares (git: "clean" | "dirty" | "unmerged" | "dirty-unmerged"); absent when it reports none */
+  readonly status?: string;
+  /** Display text, set only when deleting would lose work (git: "Uncommitted changes · 3 commits not merged into main") */
+  readonly statusDescription?: string;
+  /** The project type's own data, passed as-is (git: `{ isDirty, unmergedCommits }`) */
+  readonly details?: Readonly<Record<string, unknown>>;
   /** Status of AI agents in this workspace */
   readonly agent: AgentStatus;
 }
@@ -226,8 +228,8 @@ export interface WorkspaceApi {
    * @example
    * ```typescript
    * const status = await api.workspace.getStatus();
-   * if (status.isDirty) {
-   *   console.log('Workspace has uncommitted changes');
+   * if (status.statusDescription !== undefined) {
+   *   console.log(status.statusDescription); // what a delete would lose
    * }
    * if (status.agent.type !== 'none') {
    *   console.log(`${status.agent.counts.total} agent(s) active`);

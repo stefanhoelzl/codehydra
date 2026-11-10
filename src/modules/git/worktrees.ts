@@ -45,7 +45,13 @@ import { getErrorMessage, WorkspaceError } from "../../shared/errors/service-err
 import { projectPathSchema, workspacePathSchema } from "../../intents/contract";
 import type { ProjectPath, WorkspacePath } from "../../intents/contract";
 import { descriptionOf, toDiscoveredWorkspaces } from "../../utils/workspace-conversion";
-import { BASE_METADATA_KEY, branchOf, describeWorktree, registeredWorkspace } from "./describe";
+import {
+  BASE_METADATA_KEY,
+  branchOf,
+  describeWorkStatus,
+  describeWorktree,
+  registeredWorkspace,
+} from "./describe";
 import type { WorkspaceRegistry } from "../workspace-registry-module";
 import type { WorktreePicker } from "./worktree-picker";
 import { gitCreateOptions, gitDeleteOptions } from "./options";
@@ -423,15 +429,16 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
         logger
           .scoped({ path: wsPath })
           .debug("Skipping git status for closing workspace", { reason: closingReason });
-        return { isDirty: false, unmergedCommits: 0 };
+        return describeWorkStatus(false, 0, undefined);
       }
 
+      const base = recordedBase(new Path(wsPath));
       const isDirty = await gitWorktreeProvider.isDirty(new Path(wsPath));
       const unmergedCommits = await gitWorktreeProvider.countUnmergedCommits(
         new Path(wsPath),
-        recordedBase(new Path(wsPath))
+        base
       );
-      return { isDirty, unmergedCommits };
+      return describeWorkStatus(isDirty, unmergedCommits, base);
     },
 
     defaultBases() {

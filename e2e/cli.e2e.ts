@@ -116,7 +116,7 @@ test.describe("ch CLI", () => {
 
     // Reaching a real status at all is the point: the CLI was given a
     // subdirectory and the app matched it to the workspace containing it.
-    expect(status).toHaveProperty("isDirty");
+    expect(status).toHaveProperty("status");
     expect(status).toHaveProperty("agent");
   });
 

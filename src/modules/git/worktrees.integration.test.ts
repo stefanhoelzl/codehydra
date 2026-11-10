@@ -55,7 +55,7 @@ import {
   INTENT_GET_WORKSPACE_STATUS,
   getStatusHookResultSchema,
 } from "../../intents/get-workspace-status";
-import type { GetStatusHookInput } from "../../intents/get-workspace-status";
+import type { GetStatusHookInput, GetStatusHookResult } from "../../intents/get-workspace-status";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
   ResolveWorkspaceOperation,
@@ -309,10 +309,7 @@ const minimalRefreshProjectOperation: Operation<typeof refreshProjectSchemas> = 
 };
 
 /** Result from get-workspace-status: resolve-workspace + get. */
-interface GetStatusResult {
-  readonly isDirty?: boolean;
-  readonly unmergedCommits?: number;
-}
+type GetStatusResult = GetStatusHookResult;
 
 /**
  * Get-workspace-status operation: dispatches workspace:resolve then runs "get" hook point.
@@ -350,16 +347,8 @@ const minimalGetStatusOperation: Operation<typeof getStatusSchemas> = {
     };
     const { results, errors } = await ctx.hooks.collect("get", getInput);
     if (errors.length > 0) throw errors[0]!;
-
-    let isDirty = false;
-    let unmergedCommits = 0;
-    for (const result of results) {
-      if (result.isDirty) isDirty = true;
-      if (result.unmergedCommits !== undefined && result.unmergedCommits > unmergedCommits) {
-        unmergedCommits = result.unmergedCommits;
-      }
-    }
-    return { isDirty, unmergedCommits };
+    // The type answers its work status whole.
+    return results.find((result) => result.status !== undefined) ?? {};
   },
 };
 
@@ -1358,7 +1347,7 @@ describe("Git module: worktrees", () => {
       expect(provider.countUnmergedCommits).toHaveBeenCalledWith(ws.path, "develop");
     });
 
-    it("calls isDirty and returns result", async () => {
+    it("reports uncommitted changes as dirty", async () => {
       const { dispatcher, provider } = setup;
       const projectPath = projPath("/projects/my-app");
 
@@ -1371,10 +1360,10 @@ describe("Git module: worktrees", () => {
       const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
 
       expect(provider.isDirty).toHaveBeenCalledWith(ws.path);
-      expect(result.isDirty).toBe(true);
+      expect(result.status).toBe("dirty");
     });
 
-    it("returns isDirty=false when workspace is clean", async () => {
+    it("reports a clean workspace as clean, with nothing to warn about", async () => {
       const { dispatcher, provider } = setup;
       const projectPath = projPath("/projects/my-app");
 
@@ -1386,8 +1375,37 @@ describe("Git module: worktrees", () => {
 
       const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
 
-      expect(result.isDirty).toBe(false);
+      expect(result.status).toBe("clean");
+      expect(result).not.toHaveProperty("statusDescription");
+      expect(result.details).toEqual({ isDirty: false, unmergedCommits: 0 });
     });
+
+    it.each([
+      [true, 0, "dirty", "Uncommitted changes"],
+      [false, 1, "unmerged", "1 commit not merged into origin/main"],
+      [true, 3, "dirty-unmerged", "Uncommitted changes · 3 commits not merged into origin/main"],
+    ])(
+      "reports dirty=%s with %i unmerged commits as %s",
+      async (isDirty, unmergedCommits, status, statusDescription) => {
+        const { dispatcher, provider } = setup;
+        const projectPath = projPath("/projects/my-app");
+
+        const ws = makeWorkspace("feature-1", projPath(projectPath));
+        provider.discover.mockResolvedValue([ws]);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
+
+        provider.isDirty.mockResolvedValue(isDirty);
+        provider.countUnmergedCommits.mockResolvedValue(unmergedCommits);
+
+        const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
+
+        expect(result).toEqual({
+          status,
+          statusDescription,
+          details: { isDirty, unmergedCommits },
+        });
+      }
+    );
 
     it("spawns no git for a workspace a teardown owns", async () => {
       const { dispatcher, provider, closing } = setup;
@@ -1409,8 +1427,8 @@ describe("Git module: worktrees", () => {
       expect(provider.isDirty).not.toHaveBeenCalled();
       expect(provider.countUnmergedCommits).not.toHaveBeenCalled();
       // Same answer isDirty already gives for a torn-down worktree.
-      expect(result.isDirty).toBe(false);
-      expect(result.unmergedCommits).toBe(0);
+      expect(result.status).toBe("clean");
+      expect(result).not.toHaveProperty("statusDescription");
     });
 
     it("reads git again once the teardown released the workspace", async () => {
@@ -1431,7 +1449,7 @@ describe("Git module: worktrees", () => {
       const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
 
       expect(provider.isDirty).toHaveBeenCalledWith(ws.path);
-      expect(result.isDirty).toBe(true);
+      expect(result.status).toBe("dirty");
     });
   });
 

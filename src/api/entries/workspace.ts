@@ -160,7 +160,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     name: "workspace.status",
     kind: "command",
     description:
-      "Get workspace status, including the dirty flag, agent status, hibernation and wakeup script.",
+      "Get workspace status: the project type's status and, when deleting would lose work, its statusDescription (git: clean, dirty, unmerged, dirty-unmerged), agent status, hibernation and wakeup script.",
     instructions:
       "hibernatedAt is when the workspace was hibernated (ISO-8601 UTC); null while it is " +
       "awake, and for a workspace hibernated before CodeHydra recorded the time.",

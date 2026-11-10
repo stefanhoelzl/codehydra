@@ -353,10 +353,26 @@ export const agentStatusSchema = z.discriminatedUnion("type", [
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
 
 /** Combined status of a workspace. */
+/**
+ * What a workspace's project type says about the state of its work. Core
+ * attaches no meaning to it: the type declares its own `status` values (git:
+ * `clean`, `dirty`, `unmerged`, `dirty-unmerged`) and sets `statusDescription`
+ * only when there is something to warn about before a delete (git:
+ * "Uncommitted changes · 3 commits not merged into main"). Each is absent when
+ * the type reports nothing.
+ */
+export const workspaceWorkStatusShape = {
+  /** One of the values the workspace's type declares. */
+  status: z.string().optional(),
+  /** Display text, present only when deleting would lose something. */
+  statusDescription: z.string().optional(),
+  /** The type's own data, passed as-is (git: `{ isDirty, unmergedCommits }`). */
+  details: workspaceDetailsSchema.optional(),
+};
+
 export const workspaceStatusSchema = z
   .object({
-    isDirty: z.boolean(),
-    unmergedCommits: z.number(),
+    ...workspaceWorkStatusShape,
     agent: agentStatusSchema,
   })
   .readonly();

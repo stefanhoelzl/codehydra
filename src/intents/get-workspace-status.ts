@@ -22,6 +22,7 @@ import {
   workspaceRefSchema,
   workspaceStatusSchema,
   workspaceTargetShape,
+  workspaceWorkStatusShape,
 } from "./contract";
 import type { WorkspaceStatus } from "../shared/api/types";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
@@ -39,9 +40,9 @@ export const getWorkspaceStatusPayloadSchema = z
   .object({
     workspaceRef: workspaceRefSchema,
     /**
-     * If true, fetch remotes (via project:get-bases with refresh+wait) before
-     * reading status. Best-effort: fetch failures are swallowed and the status
-     * is read against possibly-stale local refs.
+     * If true, bring the project up to date with its upstream first
+     * (project:refresh; git: a fetch) before reading status. Best-effort:
+     * failures are swallowed and the status is read against what is cached.
      */
     refresh: z.boolean().optional(),
   })
@@ -65,12 +66,13 @@ const aggregatedAgentStatusSchema = z.discriminatedUnion("status", [
 
 /**
  * Per-handler result contract for the "get" hook point.
- * Each handler returns its contribution — the operation merges them.
+ * Each handler returns its contribution — the operation merges them. The work
+ * status (`status`, `statusDescription`, `details`) comes from the workspace's
+ * project type alone; the agent status from the agent module.
  */
 export const getStatusHookResultSchema = z
   .object({
-    isDirty: z.boolean().optional(),
-    unmergedCommits: z.number().optional(),
+    ...workspaceWorkStatusShape,
     agentStatus: aggregatedAgentStatusSchema.optional(),
   })
   .readonly();
@@ -173,16 +175,12 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
     const { results, errors } = await ctx.hooks.collect("get", getCtx);
     throwHookErrors(errors, "get-workspace-status get hooks failed");
 
-    // Merge results — isDirty uses OR, unmergedCommits uses max
-    let isDirty = false;
-    let unmergedCommits = 0;
-    for (const result of results) {
-      if (result.isDirty) isDirty = true;
-      if (result.unmergedCommits !== undefined && result.unmergedCommits > unmergedCommits) {
-        unmergedCommits = result.unmergedCommits;
-      }
-    }
-    const agentStatus = onlyDefined(results, "agentStatus", "workspace:get-status get");
+    // The work status is the project type's, whole: one handler answers it.
+    const label = "workspace:get-status get";
+    const status = onlyDefined(results, "status", label);
+    const statusDescription = onlyDefined(results, "statusDescription", label);
+    const details = onlyDefined(results, "details", label);
+    const agentStatus = onlyDefined(results, "agentStatus", label);
 
     const finalAgentStatus = agentStatus ?? {
       status: "none" as const,
@@ -192,8 +190,9 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
     const changedAt =
       finalAgentStatus.changedAt !== undefined ? { changedAt: finalAgentStatus.changedAt } : {};
     return {
-      isDirty,
-      unmergedCommits,
+      ...(status !== undefined && { status }),
+      ...(statusDescription !== undefined && { statusDescription }),
+      ...(details !== undefined && { details }),
       agent:
         finalAgentStatus.status === "none"
           ? { type: "none", ...changedAt }

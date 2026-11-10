@@ -83,7 +83,7 @@ function createTestSetup(opts: {
     workspaces: { [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName } },
   });
 
-  // get module: returns isDirty from mock provider (reads workspacePath from enriched context)
+  // get module: a made-up type with its own status values (no provider: it reports none)
   const getStatusModule: IntentModule = {
     name: "test",
     hooks: {
@@ -92,8 +92,13 @@ function createTestSetup(opts: {
           handler: async (ctx: HookContext): Promise<HookOutput<GetStatusHookResult>> => {
             const { workspacePath } = ctx as GetStatusHookInput;
             const provider = opts.workspaceProvider;
-            const isDirty = provider ? await provider.isDirty(new Path(workspacePath)) : false;
-            return { result: { isDirty } };
+            if (!provider) return { result: {} };
+            const touched = await provider.isDirty(new Path(workspacePath));
+            return {
+              result: touched
+                ? { status: "touched", statusDescription: "Touched by hand" }
+                : { status: "pristine" },
+            };
           },
         },
       },
@@ -157,7 +162,8 @@ describe("GetWorkspaceStatus Operation", () => {
 
       const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_REF))) as WorkspaceStatus;
 
-      expect(result.isDirty).toBe(true);
+      expect(result.status).toBe("touched");
+      expect(result.statusDescription).toBe("Touched by hand");
       expect(result.agent).toEqual({
         type: "busy",
         counts: { idle: 0, busy: 1, total: 1 },
@@ -176,7 +182,8 @@ describe("GetWorkspaceStatus Operation", () => {
         statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
-      expect(result.isDirty).toBe(false);
+      expect(result.status).toBe("pristine");
+      expect(result).not.toHaveProperty("statusDescription");
       expect(result.agent).toEqual({
         type: "idle",
         counts: { idle: 1, busy: 0, total: 1 },
@@ -214,7 +221,7 @@ describe("GetWorkspaceStatus Operation", () => {
         statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
-      expect(result.isDirty).toBe(true);
+      expect(result.status).toBe("touched");
       expect(result.agent).toEqual({ type: "none" });
     });
 
@@ -230,13 +237,13 @@ describe("GetWorkspaceStatus Operation", () => {
         statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
-      expect(result.isDirty).toBe(false);
+      expect(result.status).toBe("pristine");
       expect(result.agent).toEqual({ type: "none" });
     });
   });
 
-  describe("unmerged commits (#3)", () => {
-    it("returns unmergedCommits from hook result", async () => {
+  describe("the type's work status (#3)", () => {
+    it("passes the type's status, description and details through untouched", async () => {
       const dispatcher = createMockDispatcher();
       const workspaceName = "feature-x" as WorkspaceName;
 
@@ -246,15 +253,16 @@ describe("GetWorkspaceStatus Operation", () => {
         workspaces: { [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName } },
       });
 
-      const unmergedModule: IntentModule = {
+      const typeModule: IntentModule = {
         name: "test",
         hooks: {
           [GET_WORKSPACE_STATUS_OPERATION_ID]: {
             get: {
               handler: async (): Promise<HookOutput<GetStatusHookResult>> => ({
                 result: {
-                  isDirty: false,
-                  unmergedCommits: 3,
+                  status: "stale",
+                  statusDescription: "3 changes elsewhere",
+                  details: { behind: 3 },
                 },
               }),
             },
@@ -262,14 +270,18 @@ describe("GetWorkspaceStatus Operation", () => {
         },
       };
 
-      dispatcher.registerModule(unmergedModule);
+      dispatcher.registerModule(typeModule);
 
       const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_REF))) as WorkspaceStatus;
 
-      expect(result.unmergedCommits).toBe(3);
+      expect(result).toMatchObject({
+        status: "stale",
+        statusDescription: "3 changes elsewhere",
+        details: { behind: 3 },
+      });
     });
 
-    it("defaults unmergedCommits to 0 when not provided", async () => {
+    it("omits the description when the type has nothing to warn about", async () => {
       const setup = createTestSetup({
         workspaceProvider: createMockWorkspaceProvider({
           [WORKSPACE_PATH]: false,
@@ -281,12 +293,13 @@ describe("GetWorkspaceStatus Operation", () => {
         statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
-      expect(result.unmergedCommits).toBe(0);
+      expect(result.status).toBe("pristine");
+      expect(result).not.toHaveProperty("statusDescription");
     });
   });
 
   describe("no workspace provider", () => {
-    it("returns isDirty false when no provider", async () => {
+    it("omits the work status when no type reports one", async () => {
       const setup = createTestSetup({
         workspaceProvider: null,
         agentStatus: null,
@@ -296,7 +309,8 @@ describe("GetWorkspaceStatus Operation", () => {
         statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
-      expect(result.isDirty).toBe(false);
+      expect(result).not.toHaveProperty("status");
+      expect(result).not.toHaveProperty("statusDescription");
       expect(result.agent).toEqual({ type: "none" });
     });
   });
