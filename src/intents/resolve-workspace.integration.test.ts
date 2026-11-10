@@ -49,7 +49,7 @@ const IDENTITY = {
   projectRef: PROJECT_REF,
   projectPath: PROJECT_PATH,
   workspaceName: WORKSPACE_NAME,
-  branch: "feature-x",
+  subtitle: "feature-x",
   metadata: { title: "Fix login bug" },
 } satisfies ResolveHookResult;
 

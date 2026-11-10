@@ -69,7 +69,7 @@ const NEW_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
   workspaceName: "ws-1" as WorkspaceCreatedPayload["workspaceName"],
   workspaceRef: workspaceRefIn(projPath("/proj"), "ws-1"),
   projectRef: gitProjectRef(projPath("/proj")),
-  branch: "ws-1",
+  subtitle: "ws-1",
   metadata: {},
   workspaceUrl: "http://127.0.0.1:8080",
   fresh: true,

@@ -160,9 +160,8 @@ function createTestSetup(options?: { enabled?: boolean; activeWorkspace?: string
             return {
               result: {
                 workspacePath,
-                branch: existing?.branch ?? "feature-x",
+                subtitle: existing?.subtitle ?? "feature-x",
                 metadata: existing?.metadata ?? { base: "main" },
-                resolvedBase: "main",
               },
             };
           },
@@ -293,7 +292,7 @@ describe("AutoTaggingModule", () => {
           existingWorkspace: {
             path: WORKSPACE_PATH,
             name: "feature-x",
-            branch: "feature-x",
+            subtitle: "feature-x",
             metadata: { base: "main" },
           },
         })
@@ -379,7 +378,7 @@ describe("AutoTaggingModule", () => {
           existingWorkspace: {
             path: WORKSPACE_PATH,
             name: "feature-x",
-            branch: "feature-x",
+            subtitle: "feature-x",
             metadata: { base: "main", [NEW_TAG_KEY]: NEW_TAG_VALUE },
           },
         })
@@ -401,7 +400,7 @@ describe("AutoTaggingModule", () => {
           existingWorkspace: {
             path: WORKSPACE_PATH,
             name: "feature-x",
-            branch: "feature-x",
+            subtitle: "feature-x",
             metadata: { [NEW_TAG_KEY]: NEW_TAG_VALUE },
           },
         })

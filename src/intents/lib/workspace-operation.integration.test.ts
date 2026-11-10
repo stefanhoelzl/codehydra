@@ -117,7 +117,6 @@ function createSetup(opts: {
                   projectRef,
                   projectPath: projPath(PROJECT_ROOT),
                   workspaceName: WORKSPACE_NAME,
-                  branch: null,
                   metadata: {},
                 },
               };

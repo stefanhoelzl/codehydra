@@ -13,6 +13,7 @@ import type { AgentStatus, WorkspaceTag } from "./api/types";
 import type { UIMode } from "./ipc";
 import type { DialogConfig, DialogKind } from "./dialog-types";
 import type { NotificationConfig } from "./notification-types";
+import type { SubtitleIcon } from "../intents/contract";
 
 /** Resolved OS theme (mirrors the shell Theme type without importing it). */
 export type UiTheme = "dark" | "light";
@@ -138,11 +139,18 @@ export interface UiWorkspaceRow {
   readonly name: string;
   /**
    * User-given display title (workspace metadata `title`). Sidebar-only: the
-   * branch `name` stays the identity used for keys, sorting, and shortcut
+   * workspace `name` stays the identity used for keys, sorting, and shortcut
    * numbering. Absent when no title is set, in which case the row falls back to
    * showing `name`.
    */
   readonly title?: string;
+  /**
+   * The workspace's subtitle as its project type gives it (git: the branch),
+   * shown on a titled row's second line. Absent when the type gives none.
+   */
+  readonly subtitle?: string;
+  /** The icon before the subtitle; absent for none. */
+  readonly subtitleIcon?: SubtitleIcon;
   /**
    * `creating`: a new worktree is being made. `loading`: an existing worktree
    * is being opened (startup, project open). `open-failed`: that open failed —

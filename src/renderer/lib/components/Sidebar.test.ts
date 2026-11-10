@@ -540,6 +540,22 @@ describe("Sidebar", () => {
       expect(hibGroupOpen(container, "codehydra")).toBe(false);
     });
 
+    it("finds a row by its subtitle", async () => {
+      const first = sampleProjects()[0]!;
+      const project: UiProjectRow = {
+        ...first,
+        workspaces: first.workspaces.map((ws) =>
+          ws.key === "codehydra/redesign-sidebar" ? { ...ws, subtitle: "sb-v2" } : ws
+        ),
+      };
+      const { container } = setup({ projects: [project] });
+      const input = container.querySelector("input")!;
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "sb-v2" } });
+      expect(rowOpen(container, "codehydra/redesign-sidebar")).toBe(true);
+      expect(rowOpen(container, "codehydra/hibernation-age")).toBe(false);
+    });
+
     it("filters by project, title, branch or tag and marks the match", async () => {
       const { container } = setup({ projects: sampleProjects() });
       const input = container.querySelector("input")!;
@@ -821,6 +837,30 @@ describe("Sidebar", () => {
       expect(busy.querySelector(".txt > .sub > .proc")).not.toBeNull();
       expect(busy.querySelector(":scope > .meta, :scope > .enter")).toBeNull();
       expect(row(container, "codehydra/hibernation-age").querySelector(".meta")).toBeNull();
+    });
+
+    it("shows a titled row's subtitle with its type's icon, and the name without one", () => {
+      const first = sampleProjects()[0]!;
+      const project: UiProjectRow = {
+        ...first,
+        workspaces: first.workspaces.map((ws) => {
+          if (ws.key === "codehydra/redesign-sidebar") return { ...ws, subtitle: "sb-v2" };
+          if (ws.key !== "codehydra/hibernation-age") return ws;
+          const plain = { ...ws };
+          delete plain.subtitle;
+          delete plain.subtitleIcon;
+          return plain;
+        }),
+      };
+      const { container } = setup({ projects: [project] });
+
+      const described = row(container, "codehydra/redesign-sidebar").querySelector(".sub-main")!;
+      expect(described.querySelector(".mono")?.textContent).toBe("sb-v2");
+      expect(described.querySelector("svg.sb-icon")).not.toBeNull();
+
+      const plain = row(container, "codehydra/hibernation-age").querySelector(".sub-main")!;
+      expect(plain.querySelector(".mono")?.textContent).toBe("hibernation-age");
+      expect(plain.querySelector("svg.sb-icon")).toBeNull();
     });
 
     it("gives an awake row without title or tags a second line only for the summary", () => {

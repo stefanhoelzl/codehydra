@@ -99,12 +99,19 @@ import type { HookOutputSink } from "./output-sink";
 import { makeWorkspaceRef } from "../../utils/ref";
 import { gitProjectRef } from "../git/ref";
 import type { ProjectRef } from "../../intents/contract";
+import { descriptionOf } from "../../utils/workspace-conversion";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { testProjectTypes } from "../../intents/project-type-options.test-utils";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
+/** How a git-like type describes feature-x: the branch as subtitle, branch and base as details. */
+const FEATURE_X_DESCRIPTION = {
+  subtitle: "feature-x",
+  subtitleIcon: "branch",
+  details: { branch: "feature-x", base: "main" },
+} as const;
 const PROJECT_REF = gitProjectRef(PROJECT_ROOT);
 const WORKSPACE_REF = makeWorkspaceRef(PROJECT_REF, "feature-x");
 const WORKSPACE_URL = "http://127.0.0.1:25448/?folder=/workspaces/feature-x";
@@ -253,7 +260,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       [WORKSPACE_PATH]: {
         projectPath: PROJECT_ROOT,
         workspaceName: "feature-x" as WorkspaceName,
-        branch: "feature-x",
+        subtitle: "feature-x",
+        details: { branch: "feature-x", base: "main" },
         metadata: { base: "main" },
       },
     },
@@ -357,9 +365,9 @@ function createTestSetup(options?: SetupOptions): TestSetup {
             return {
               result: {
                 workspacePath: WORKSPACE_PATH,
-                branch: existing ? existing.branch : "feature-x",
+                // A git-like type: the branch as subtitle, branch and base as details.
+                ...(existing ? descriptionOf(existing) : FEATURE_X_DESCRIPTION),
                 metadata: existing?.metadata ?? { base: "main" },
-                resolvedBase: "main",
               },
             };
           },
@@ -605,7 +613,7 @@ async function reopenWorkspace(setup: TestSetup): Promise<void> {
       existingWorkspace: {
         path: WORKSPACE_PATH,
         name: "feature-x",
-        branch: "feature-x",
+        ...FEATURE_X_DESCRIPTION,
         metadata: { base: "main" },
       },
     },
@@ -680,10 +688,10 @@ describe("after-worktree-created", () => {
       projectPath: PROJECT_ROOT,
       workspace: WORKSPACE_REF,
       project: PROJECT_REF,
-      branch: "feature-x",
-      base: "main",
       // The creation's options, as workspace:open checked them: none were given.
       options: {},
+      subtitle: "feature-x",
+      details: { branch: "feature-x", base: "main" },
     });
     expect(new Path(setup.envs[0]!.CH_PLUGIN_DIR!).equals(new Path(LOCAL_PLUGINS, "setup"))).toBe(
       true

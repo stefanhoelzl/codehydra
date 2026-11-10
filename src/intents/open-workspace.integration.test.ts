@@ -69,6 +69,7 @@ import type { ProjectId, Workspace, WorkspaceName } from "../shared/api/types";
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 import { Path } from "../utils/path/path";
+import { descriptionOf } from "../utils/workspace-conversion";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "./switch-workspace";
 import type { SwitchWorkspaceHookResult, ActivateHookInput } from "./switch-workspace";
 import { registerTestInfrastructure } from "./operations.test-utils";
@@ -267,11 +268,8 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
               return {
                 result: {
                   workspacePath: existing.path,
-                  branch: existing.branch,
+                  ...descriptionOf(existing),
                   metadata: existing.metadata,
-                  ...(existing.metadata.base !== undefined && {
-                    resolvedBase: existing.metadata.base,
-                  }),
                 },
               };
             }
@@ -292,9 +290,9 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             return {
               result: {
                 workspacePath: wsPath(workspace.path.toString()),
-                branch: workspace.branch,
+                ...(workspace.branch !== null && { subtitle: workspace.branch }),
+                details: { base: intent.payload.options?.["base"] as string },
                 metadata: workspace.metadata,
-                resolvedBase: intent.payload.options?.["base"] as string,
               },
             };
           },
@@ -432,7 +430,7 @@ describe("OpenWorkspace Operation", () => {
       expect(result).toBeDefined();
       const workspace = result as Workspace;
       expect(workspace.path).toBe(WORKSPACE_PATH);
-      expect(workspace.branch).toBe(WORKSPACE_BRANCH);
+      expect(workspace.subtitle).toBe(WORKSPACE_BRANCH);
       expect(workspace.metadata).toEqual(WORKSPACE_METADATA);
       expect(workspace.projectId).toBe(setup.projectId);
       expect(workspace.name).toBe("feature-x");
@@ -461,8 +459,8 @@ describe("OpenWorkspace Operation", () => {
       expect(event.payload.workspaceName).toBe("feature-x");
       expect(event.payload.workspaceRef).toBe(makeWorkspaceRef(PROJECT_REF, "feature-x"));
       expect(event.payload.projectRef).toBe(PROJECT_REF);
-      expect(event.payload.branch).toBe(WORKSPACE_BRANCH);
-      expect(event.payload.base).toBe("main");
+      expect(event.payload.subtitle).toBe(WORKSPACE_BRANCH);
+      expect(event.payload.details).toEqual({ base: "main" });
       expect(event.payload.metadata).toEqual(WORKSPACE_METADATA);
       expect(event.payload.workspaceUrl).toBe(WORKSPACE_URL);
       expect(event.payload.fresh).toBe(true);
@@ -598,7 +596,7 @@ describe("OpenWorkspace Operation", () => {
           existingWorkspace: {
             path: WORKSPACE_PATH,
             name: "feature-x",
-            branch: WORKSPACE_BRANCH,
+            subtitle: WORKSPACE_BRANCH,
             metadata: {},
           } satisfies ExistingWorkspaceData,
         })
@@ -821,7 +819,7 @@ describe("OpenWorkspace Operation", () => {
       const existingWorkspace: ExistingWorkspaceData = {
         path: wsPath("/existing/workspace/feature-y"),
         name: "feature-y",
-        branch: "feature-y",
+        subtitle: "feature-y",
         metadata: { base: "main" },
       };
 
@@ -845,7 +843,7 @@ describe("OpenWorkspace Operation", () => {
       expect(result).toBeDefined();
       const workspace = result as Workspace;
       expect(workspace.path).toBe(testPath("/existing/workspace/feature-y").toString());
-      expect(workspace.branch).toBe("feature-y");
+      expect(workspace.subtitle).toBe("feature-y");
       expect(workspace.metadata).toEqual({ base: "main" });
 
       // Event emitted with existing workspace data
@@ -867,7 +865,6 @@ describe("OpenWorkspace Operation", () => {
       const existingWorkspace: ExistingWorkspaceData = {
         path: wsPath("/custom/workspace/my-ws"),
         name: "my-ws",
-        branch: null,
         metadata: { base: "develop" },
       };
 
@@ -891,7 +888,7 @@ describe("OpenWorkspace Operation", () => {
       expect(result).toBeDefined();
       const workspace = result as Workspace;
       // A detached HEAD stays null — never the workspace name standing in for it
-      expect(workspace.branch).toBeNull();
+      expect(workspace).not.toHaveProperty("subtitle");
 
       // Event names the provided project
       expect(receivedEvents).toHaveLength(1);
@@ -929,7 +926,7 @@ describe("OpenWorkspace Operation", () => {
       const existingWorkspace: ExistingWorkspaceData = {
         path: wsPath("/existing/workspace/sdk-214"), // lowercased by Path on Windows
         name: "SDK-214",
-        branch: "SDK-214",
+        subtitle: "SDK-214",
         metadata: { base: "main" },
       };
 
@@ -1004,7 +1001,7 @@ describe("OpenWorkspace Operation", () => {
           existingWorkspace: {
             path: wsPath("/existing/workspace/sdk-214"),
             name: "SDK-214",
-            branch: "SDK-214",
+            subtitle: "SDK-214",
             metadata: {},
           },
           projectRef: PROJECT_REF,
@@ -1098,7 +1095,7 @@ describe("OpenWorkspace Operation", () => {
               handler: async (): Promise<HookOutput<CreateHookResult>> => ({
                 result: {
                   workspacePath: WORKSPACE_PATH,
-                  branch: WORKSPACE_BRANCH,
+                  subtitle: WORKSPACE_BRANCH,
                   metadata: WORKSPACE_METADATA,
                 },
               }),
@@ -1252,7 +1249,7 @@ describe("OpenWorkspace Operation", () => {
           existingWorkspace: {
             path: WORKSPACE_PATH,
             name: "reopened",
-            branch: WORKSPACE_BRANCH,
+            subtitle: WORKSPACE_BRANCH,
             metadata: {},
           } satisfies ExistingWorkspaceData,
         })

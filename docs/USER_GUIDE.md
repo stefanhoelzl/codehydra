@@ -207,10 +207,12 @@ projects open, colors repeat.
   folded hibernated list (not while Find is open).
 
 A workspace row shows its title (or its name if it has none); with a title, the
-second line shows the branch. Tags follow, each in its color and with its label,
+second line shows the workspace's subtitle — for a git project the branch it
+has checked out, after a branch icon — or its name when it has none (a detached
+HEAD). Tags follow, each in its color and with its label,
 and its description on hover. With the process summary on, every awake row has
 a second line, ending in the workspace's CPU and memory at the row's right edge;
-the branch and tags clip to leave them room. A title that does not fit ends in
+the subtitle and tags clip to leave them room. Find matches the subtitle too. A title that does not fit ends in
 "…". The end of the first line shows how long the agent has been working while it works — `42s`, then
 `5m`, `1h 5m`, counted from when it last started (hover the spinner for the
 start time) — and for a hibernated workspace how long it has slept. The count
@@ -1097,15 +1099,21 @@ Every entry receives this core, plus a field of its own:
   "projectPath": "/home/me/src/my-app",
   "workspace": "ch::local::git::/home/me/src/my-app::feature-x",
   "project": "ch::local::git::/home/me/src/my-app",
-  "branch": "feature-x",
-  "base": "main"
+  "subtitle": "feature-x",
+  "details": { "branch": "feature-x", "base": "main" }
 }
 ```
 
-`branch` is the checked-out branch; it is absent on a detached HEAD. `base` is
-the base recorded for the workspace (the branch it was created from); it is
-absent when none is recorded, for example for a worktree adopted when the
-project was added. Neither is ever filled in with a stand-in. On Windows,
+`subtitle` is what the sidebar shows under the workspace's title, and `details`
+is what the project's type knows about the workspace, passed on as it is. For a
+git project, `subtitle` is the checked-out branch, and `details` holds `branch`
+(the checked-out branch) and `base` (the base recorded for the workspace, the
+branch it was created from). `subtitle` and `details.branch` are absent on a
+detached HEAD; `details.base` is absent when none is recorded, for example for a
+worktree adopted when the project was added. None is ever filled in with a
+stand-in. Before this, `branch` and `base` were top-level fields: a script that
+still reads them gets nothing, which looks like a detached HEAD, so read
+`details.branch` and `details.base` instead. On Windows,
 `workspacePath` is lower-case with forward slashes (`c:/users/…`). For a
 project cloned from a URL, `projectPath` is CodeHydra's bare clone, which has no
 working files. `workspace` and `project` are their [refs](#workspace-and-project-refs):
@@ -1124,8 +1132,9 @@ exits, including while the trust question is open.
 Extra input: `"options"` — the [create options](#workspace-options) the
 workspace was created with, as given, e.g. `{ "base": "main", "tracking":
 "origin/feature-x" }` for a git project (`{}` when none were given). On a new
-worktree `branch` and `base` are always present; the core `base` is the base
-it was actually created from, the project's default branch when none was given.
+git worktree `subtitle`, `details.branch` and `details.base` are always
+present; `details.base` is the base it was actually created from, the project's
+default branch when none was given.
 
 Output — every field optional:
 
@@ -1233,8 +1242,8 @@ leaves the worktrees on disk, and not for a forced deletion.
 
 Extra input: `"options"` — the [delete options](#workspace-options) the
 deletion runs with, defaults filled in: for a git project `{ "keepBranch": true
-| false }` (the user's choice in the delete dialog, or the caller's). `branch`
-and `base` are absent when CodeHydra does not know them.
+| false }` (the user's choice in the delete dialog, or the caller's).
+`subtitle` and `details` are absent when CodeHydra does not know them.
 
 To refuse, exit **0** and print:
 

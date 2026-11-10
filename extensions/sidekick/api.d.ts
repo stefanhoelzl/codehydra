@@ -142,11 +142,15 @@ export interface Workspace {
   readonly projectId: string;
   /** Workspace name: its branch when it was created, kept when the branch changes */
   readonly name: string;
-  /** Current branch name, or null for detached HEAD state */
-  readonly branch: string | null;
+  /** Display text from the project's type (git: the checked-out branch); absent when none, e.g. a detached HEAD */
+  readonly subtitle?: string;
+  /** Icon before the subtitle (git: "branch") */
+  readonly subtitleIcon?: "branch" | "cloud" | "info";
+  /** The project type's own data about the workspace, passed as-is (git: `{ branch?, base? }`) */
+  readonly details?: Readonly<Record<string, unknown>>;
   /**
    * Workspace metadata, stored in the worktree's git directory.
-   * Always contains a `base` key with the base branch the workspace was created from.
+   * For a git workspace, a `base` key holds the base branch it was created from, when recorded.
    */
   readonly metadata: Readonly<Record<string, string>>;
   /** Absolute path to the workspace directory */

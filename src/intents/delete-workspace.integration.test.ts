@@ -432,7 +432,6 @@ function createTestHarness(options?: {
                 projectRef,
                 projectPath: projPath(project.path),
                 workspaceName,
-                branch: null,
                 metadata: {},
               },
             };

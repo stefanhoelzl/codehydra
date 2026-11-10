@@ -32,12 +32,13 @@ import type { StateService } from "../../boundaries/platform/state-service";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import { Path } from "../../utils/path/path";
+import { descriptionOf } from "../../utils/workspace-conversion";
 import type { ProcessTotals } from "../../api/entries/deps";
 import type { CodeHydraTotals } from "../process-monitor/attribution";
 import type { ProcessTrees } from "../process-monitor/process-monitor-module";
 import type { WorkspaceRef } from "../../intents/contract";
 import { ApiIpcChannels } from "../../shared/ipc";
-import type { UiProjectRow, UiState } from "../../shared/ui-state";
+import type { UiProjectRow, UiState, UiWorkspaceRow } from "../../shared/ui-state";
 import type {
   Project,
   ProjectId,
@@ -327,7 +328,7 @@ function makeWorkspace(
     ref: workspaceRefIn(PROJECT_PATH, name),
     projectId: PROJECT_ID,
     name: name as WorkspaceName,
-    branch: name,
+    subtitle: name,
     metadata: options?.metadata ?? {},
     path: wsPath(`${PROJECT_PATH}/.worktrees/${name}`),
     ...(options?.url !== undefined && { url: options.url }),
@@ -380,7 +381,7 @@ async function openProject(module: IntentModule, project: Project): Promise<void
       workspaceName: workspace.name,
       workspaceRef: workspace.ref,
       projectRef: project.ref,
-      branch: workspace.branch,
+      ...descriptionOf(workspace),
       metadata: workspace.metadata,
       workspaceUrl: workspace.url,
       stealFocus: false,
@@ -654,6 +655,7 @@ describe("PresentationModule - ui:state snapshots", () => {
               {
                 key: keyOf("main"),
                 name: "main",
+                subtitle: "main",
                 status: "ready",
                 hibernated: false,
                 agent: { type: "none" },
@@ -681,6 +683,36 @@ describe("PresentationModule - ui:state snapshots", () => {
       dialogs: [],
       notifications: [],
     });
+  });
+
+  it("shows the subtitle and icon its type gives a row, and the newer one after a reopen", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = {
+      ...makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" }),
+      subtitleIcon: "branch" as const,
+    };
+    await openProject(module, makeProject([workspace]));
+    await flush();
+
+    const rowOf = (): UiWorkspaceRow => lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
+    expect(rowOf()).toMatchObject({ name: "feat", subtitle: "feat", subtitleIcon: "branch" });
+
+    // Reopened on another branch, with no icon this time: the row follows.
+    await emit(module, EVENT_WORKSPACE_CREATED, {
+      projectId: PROJECT_ID,
+      workspaceName: workspace.name,
+      workspaceRef: workspace.ref,
+      projectRef: PROJECT_REF,
+      subtitle: "elsewhere",
+      metadata: {},
+      workspaceUrl: "http://127.0.0.1:1/feat",
+      fresh: false,
+    });
+    await flush();
+
+    expect(rowOf().subtitle).toBe("elsewhere");
+    expect(rowOf()).not.toHaveProperty("subtitleIcon");
   });
 
   it("sorts projects and workspaces in AaBbCc display order", async () => {
@@ -1424,7 +1456,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       ref: makeWorkspaceRef(betaRef, "b"),
       projectId: otherId,
       name: "b" as WorkspaceName,
-      branch: "b",
+      subtitle: "b",
       metadata: {},
       path: wsPath("/projects/beta/.worktrees/b"),
       url: "http://127.0.0.1:1/b",
@@ -4626,7 +4658,7 @@ describe("PresentationModule - loading rows", () => {
       workspaceName: workspace.name,
       workspaceRef: workspace.ref,
       projectRef: PROJECT_REF,
-      branch: workspace.branch,
+      ...descriptionOf(workspace),
       metadata: workspace.metadata,
       workspaceUrl: `http://127.0.0.1:1/${workspace.name}`,
       stealFocus: false,

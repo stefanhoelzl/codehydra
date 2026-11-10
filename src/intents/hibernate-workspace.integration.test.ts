@@ -87,7 +87,7 @@ const REOPENED_WORKSPACE: Workspace = {
   ref: WORKSPACE_REF,
   projectId: PROJECT_ID,
   name: WORKSPACE_NAME,
-  branch: BRANCH,
+  subtitle: BRANCH,
   metadata: CLEAN_METADATA,
   path: WORKSPACE_PATH,
 };
@@ -318,7 +318,7 @@ function buildHarness(
         projectPath: PROJECT_PATH,
         workspaceName: WORKSPACE_NAME,
         active: opts.active ?? false,
-        branch: BRANCH,
+        subtitle: BRANCH,
       },
     },
     projects: () => ({ projectId: PROJECT_ID, projectName: "test-project" }),
@@ -590,7 +590,7 @@ describe("workspace:wake", () => {
     expect(recorder.cleanupCalled).toBe(true);
     expect(recorder.metadataWrites).toEqual(WAKE_WRITES);
 
-    // Reopen dispatched with the resolved branch and the clean (post-clear)
+    // Reopen dispatched with the resolved subtitle and the clean (post-clear)
     // metadata, via the existingWorkspace branch of workspace:open.
     expect(recorder.openPayload).toBeDefined();
     expect(recorder.openPayload?.projectRef).toBe(gitProjectRef(PROJECT_PATH));
@@ -598,7 +598,7 @@ describe("workspace:wake", () => {
     expect(recorder.openPayload?.existingWorkspace).toEqual({
       path: WORKSPACE_PATH,
       name: WORKSPACE_NAME,
-      branch: BRANCH,
+      subtitle: BRANCH,
       metadata: CLEAN_METADATA,
     });
     // Metadata is cleared before reopen runs.

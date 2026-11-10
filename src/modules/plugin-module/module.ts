@@ -92,7 +92,12 @@ import {
   INTENT_RESOLVE_WORKSPACE,
   type ResolveWorkspaceIntent,
 } from "../../intents/resolve-workspace";
-import { projectRefSchema, type ProjectRef, type WorkspaceRef } from "../../intents/contract";
+import {
+  projectRefSchema,
+  type ProjectRef,
+  type WorkspaceDescription,
+  type WorkspaceRef,
+} from "../../intents/contract";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
 import { INTENT_REFRESH_PROJECT, type RefreshProjectIntent } from "../../intents/refresh-project";
 import { resolveProjectReference, type ProjectLocation } from "../../api/workspace-lookup";
@@ -1201,7 +1206,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     return { result: { env: kept } };
   }
 
-  /** The core every open entry is handed. `branch`/`base` stay absent when unknown. */
+  /** The core every open entry is handed. `subtitle`/`details` stay absent when unknown. */
   function coreInput(input: ProvisionHookInput | PrepareHookInput): CoreInput {
     return {
       workspaceName: input.workspaceName,
@@ -1209,8 +1214,15 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       projectPath: input.projectPath,
       workspace: input.workspaceRef,
       project: input.projectRef,
-      ...(input.branch !== undefined && { branch: input.branch }),
-      ...(input.base !== undefined && { base: input.base }),
+      ...hookDescription(input),
+    };
+  }
+
+  /** The `subtitle` and `details` a hook is handed, each only when the type gave it. */
+  function hookDescription(from: WorkspaceDescription): Pick<CoreInput, "subtitle" | "details"> {
+    return {
+      ...(from.subtitle !== undefined && { subtitle: from.subtitle }),
+      ...(from.details !== undefined && { details: from.details }),
     };
   }
 
@@ -1260,7 +1272,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     const scripts = await hookScripts(entry, target, { ask: true });
     if (scripts.length === 0) return { result: {} };
 
-    const identity = await resolveBranchAndBase(input.workspaceRef);
+    const identity = await resolveDescription(input.workspaceRef);
 
     // The editor was torn down at "shutdown" and is not coming back: whatever
     // these scripts print belongs in their run logs, not in a buffer nobody
@@ -1344,8 +1356,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
           projectPath: resolved.projectPath,
           workspace: payload.workspaceRef,
           project: payload.projectRef,
-          ...(payload.branch !== undefined && { branch: payload.branch }),
-          ...(payload.base !== undefined && { base: payload.base }),
+          ...hookDescription(payload),
           reopened: !payload.fresh,
         };
         for (const script of await hookScripts(entry, target, { ask: true })) {
@@ -1400,31 +1411,29 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   }
 
   /**
-   * The branch and base for a workspace being deleted.
+   * The subtitle and details of a workspace being deleted.
    *
    * Read here rather than threaded through the deletion contract: the pipeline
    * resolves identity for its own purposes and has no use for either, and this
-   * is a git-config read on a path that is already doing far slower work.
+   * is a registry read on a path that is already doing far slower work.
    * Best-effort — a workspace we cannot resolve still gets its gate, just
    * without the two optional fields.
    */
-  async function resolveBranchAndBase(
+  async function resolveDescription(
     workspaceRef: WorkspaceRef
-  ): Promise<{ branch?: string; base?: string }> {
+  ): Promise<Pick<CoreInput, "subtitle" | "details">> {
     try {
       const resolved = await deps.dispatcher.dispatch<ResolveWorkspaceIntent>({
         type: INTENT_RESOLVE_WORKSPACE,
         payload: { workspaceRef },
       });
-      const base = resolved.metadata["base"];
-      return {
-        ...(resolved.branch !== null && { branch: resolved.branch }),
-        ...(base !== undefined && { base }),
-      };
+      return hookDescription(resolved);
     } catch (error) {
       deps.logger
         .scoped({ workspace: workspaceRef })
-        .debug("Could not resolve branch/base for a hook", { error: getErrorMessage(error) });
+        .debug("Could not resolve a workspace's description for a hook", {
+          error: getErrorMessage(error),
+        });
       return {};
     }
   }

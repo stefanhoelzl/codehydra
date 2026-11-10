@@ -44,7 +44,8 @@ import { Path } from "../../utils/path/path";
 import { getErrorMessage, WorkspaceError } from "../../shared/errors/service-errors";
 import { projectPathSchema, workspacePathSchema } from "../../intents/contract";
 import type { ProjectPath, WorkspacePath } from "../../intents/contract";
-import { toDiscoveredWorkspaces } from "../../utils/workspace-conversion";
+import { descriptionOf, toDiscoveredWorkspaces } from "../../utils/workspace-conversion";
+import { BASE_METADATA_KEY, branchOf, describeWorktree, registeredWorkspace } from "./describe";
 import type { WorkspaceRegistry } from "../workspace-registry-module";
 import type { WorktreePicker } from "./worktree-picker";
 import { gitCreateOptions, gitDeleteOptions } from "./options";
@@ -104,7 +105,7 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
   /** The base a workspace recorded in its metadata, if the registry holds it. */
   const recordedBase = (worktreePath: Path): string | undefined => {
     try {
-      return registry.metadata(worktreePath)["base"];
+      return registry.metadata(worktreePath)[BASE_METADATA_KEY];
     } catch {
       return undefined;
     }
@@ -222,7 +223,9 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
         workspacesRoot.previousWorkspacesDirs()
       );
 
-      const discovered = await gitWorktreeProvider.discover(projectPathObj);
+      const discovered = (await gitWorktreeProvider.discover(projectPathObj)).map(
+        registeredWorkspace
+      );
       registry.openProject(project);
       await Promise.all(discovered.map((ws) => registry.track(project, ws, locatorOf(ws.path))));
 
@@ -258,23 +261,18 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
       if (!fresh && existing !== undefined) {
         const workspacePath = existing.path;
         const metadata = existing.metadata;
-        // The recorded base, not the payload's: callers reopening a
-        // workspace know nothing better than its metadata, and a base
-        // that was never recorded stays absent rather than invented.
-        const base = metadata["base"];
+        // Described afresh from its metadata and the branch git told core at
+        // discovery: the base is the recorded one, never the payload's, and
+        // one never recorded stays absent rather than invented.
+        const description = describeWorktree(branchOf(existing.details), metadata);
 
         await registry.track(
           project,
-          { name: existing.name, path: new Path(workspacePath), branch: existing.branch, metadata },
+          { name: existing.name, path: new Path(workspacePath), metadata, ...description },
           locatorOf(new Path(workspacePath))
         );
 
-        return {
-          workspacePath,
-          branch: existing.branch,
-          metadata,
-          ...(base !== undefined && { resolvedBase: base }),
-        };
+        return { workspacePath, metadata, ...description };
       }
 
       // New workspace: create via provider
@@ -303,13 +301,13 @@ export function createGitWorktrees(deps: GitWorktreesDeps): GitWorktrees {
       }
 
       // The registry writes its metadata file: the base, and the name.
-      await registry.trackCreated(project, internalWorkspace, locatorOf(internalWorkspace.path));
+      const created = registeredWorkspace(internalWorkspace);
+      await registry.trackCreated(project, created, locatorOf(created.path));
 
       return {
-        workspacePath: workspaceKey(internalWorkspace.path.toString()),
-        branch: internalWorkspace.branch,
-        metadata: internalWorkspace.metadata,
-        resolvedBase: base,
+        workspacePath: workspaceKey(created.path.toString()),
+        metadata: created.metadata,
+        ...descriptionOf(created),
       };
     },
 

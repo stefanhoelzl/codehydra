@@ -41,7 +41,7 @@ import {
 } from "./open-workspace";
 import { activeWorkspaceRef } from "./lib/active-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
-import { toIpcWorkspaces } from "../utils/workspace-conversion";
+import { descriptionOf, toIpcWorkspaces } from "../utils/workspace-conversion";
 import { makeProjectRef } from "../utils/ref";
 import { Path } from "../utils/path/path";
 import { compareDisplayNames } from "../shared/ui-state";
@@ -527,7 +527,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         const existingWorkspace: ExistingWorkspaceData = {
           path: workspace.path,
           name: workspace.name,
-          branch: workspace.branch,
+          ...descriptionOf(workspace),
           metadata: workspace.metadata,
         };
 

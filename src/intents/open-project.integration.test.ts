@@ -59,6 +59,7 @@ import type {
 } from "./open-workspace";
 import type { Project, ProjectId, WorkspaceName } from "../shared/api/types";
 import { Path } from "../utils/path/path";
+import { descriptionOf } from "../utils/workspace-conversion";
 import { SwitchWorkspaceOperation } from "./switch-workspace";
 import {
   createTestViewManager,
@@ -177,13 +178,13 @@ function createTestHarness(options?: {
     {
       name: "feature-a" as WorkspaceName,
       path: wsPath(new Path(WORKSPACE_A_PATH).toString()),
-      branch: "feature-a",
+      subtitle: "feature-a",
       metadata: { base: "main" },
     },
     {
       name: "feature-b" as WorkspaceName,
       path: wsPath(new Path(WORKSPACE_B_PATH).toString()),
-      branch: "feature-b",
+      subtitle: "feature-b",
       metadata: { base: "main" },
     },
   ];
@@ -564,7 +565,7 @@ function createTestHarness(options?: {
               return {
                 result: {
                   workspacePath: existing.path,
-                  branch: existing.branch ?? existing.name,
+                  subtitle: existing.subtitle ?? existing.name,
                   metadata: existing.metadata,
                 },
               };
@@ -602,7 +603,7 @@ function createTestHarness(options?: {
           appState.registerWorkspace(projectPathOf(payload.projectRef), {
             path: wsPath(new Path(workspacePathOf(payload.workspaceRef)).toString()),
             name: payload.workspaceName,
-            branch: payload.branch,
+            ...descriptionOf(payload),
             metadata: payload.metadata,
           });
         },
@@ -753,7 +754,6 @@ describe("OpenProjectOperation", () => {
         {
           name: "adopted" as WorkspaceName,
           path: wsPath(new Path(WORKSPACE_A_PATH).toString()),
-          branch: null,
           metadata: {},
         },
       ],
@@ -767,7 +767,7 @@ describe("OpenProjectOperation", () => {
     // `base` is for creations and must not carry a "" stand-in.
     expect(harness.openPayloads).toHaveLength(1);
     expect(harness.openPayloads[0]).not.toHaveProperty("base");
-    expect(harness.openPayloads[0]!.existingWorkspace?.branch).toBeNull();
+    expect(harness.openPayloads[0]!.existingWorkspace).not.toHaveProperty("subtitle");
   });
 
   it("test 2: clones remote project then opens", async () => {
@@ -886,7 +886,7 @@ describe("OpenProjectOperation", () => {
                     {
                       name: "feature-a" as WorkspaceName,
                       path: wsPath(new Path(WORKSPACE_A_PATH).toString()),
-                      branch: "feature-a",
+                      subtitle: "feature-a",
                       metadata: { base: "main" },
                     },
                   ],

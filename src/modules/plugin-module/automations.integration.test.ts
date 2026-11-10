@@ -64,6 +64,7 @@ import { createMockState, type MockStateService } from "../../boundaries/platfor
 import { projPath, wsPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { workspaceNameOf } from "../../utils/ref";
 import { gitProjectRef } from "../git/ref";
+import { descriptionOf } from "../../utils/workspace-conversion";
 
 type StateEntry = {
   workspaceName: string;
@@ -209,7 +210,7 @@ function workspaceNamed(name: string, metadata: Record<string, string> = {}): Wo
     ref: workspaceRefIn(projPath(PROJECT_PATH), name),
     projectId: "project-1" as ProjectId,
     name: name as WorkspaceName,
-    branch: name,
+    subtitle: name,
     metadata: { base: "main", ...metadata },
     path: workspacePathOf(name),
   };
@@ -264,7 +265,7 @@ class ResolveWorkspaceOp implements Operation<typeof resolveWsSchemas> {
       projectPath: projPath(PROJECT_PATH),
       workspaceName: found.name,
       active: false,
-      branch: found.branch,
+      ...descriptionOf(found),
       metadata: found.metadata,
       closing: this.closing,
     };

@@ -55,7 +55,6 @@ export async function holdTestWorkspace(
   await registry.track(project, {
     name: workspacePath.basename,
     path: workspacePath,
-    branch: null,
     metadata,
   });
 }

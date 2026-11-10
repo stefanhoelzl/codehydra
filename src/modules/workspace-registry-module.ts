@@ -2,7 +2,8 @@
  * WorkspaceRegistryModule - The core workspace registry: every workspace of
  * every open project, whatever the project's type, and its metadata.
  *
- * Holds, per workspace, its name, path and branch under its project's ref, and
+ * Holds, per workspace, its name, path and its type's description of it
+ * (subtitle, subtitle icon, opaque details) under its project's ref, and
  * owns the metadata store (`WorkspaceMetadataStore`): memory-authoritative, one
  * file per workspace, one write queue per workspace. It computes nothing about
  * a workspace itself: the project's type module tells it what exists —
@@ -53,9 +54,13 @@ import { defineHooks } from "../intents/declarations";
 import { getErrorMessage, WorkspaceError } from "../shared/errors/service-errors";
 import { isValidMetadataKey } from "../shared/api/types";
 import { makeWorkspaceRef, parseWorkspaceRef, type WorkspaceRefParts } from "../utils/ref";
-import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
+import {
+  descriptionOf,
+  toDiscoveredWorkspaces,
+  type RegisteredWorkspace,
+} from "../utils/workspace-conversion";
 import { Path } from "../utils/path/path";
-import type { Workspace } from "../boundaries/platform/git-types";
+import type { WorkspaceDescription } from "../intents/contract";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { Logger } from "../boundaries/platform/logging";
 import { sanitizeWorkspaceName } from "../boundaries/platform/paths";
@@ -79,8 +84,7 @@ export const REQUIRES_FREE_NAME = { [WORKSPACE_NAME_FREE_CAPABILITY]: ANY_VALUE 
 /** Metadata key holding a workspace's name, written when it is created (see NAME_METADATA_KEY in git). */
 export const NAME_METADATA_KEY = "name";
 
-/** A workspace as a type reports it: its metadata is what its file holds. */
-export type RegisteredWorkspace = Workspace;
+export type { RegisteredWorkspace };
 
 /** A project the registry knows: its ref and the path it is open at. */
 export interface RegistryProject {
@@ -149,7 +153,8 @@ export interface WorkspaceRegistryDeps {
 interface HeldWorkspace {
   readonly name: string;
   readonly path: Path;
-  readonly branch: string | null;
+  /** How its type describes it, as reported when it was tracked. */
+  readonly description: WorkspaceDescription;
   /** Its file is the registry's default location, so it goes with the workspace. */
   readonly defaultLocation: Path | undefined;
 }
@@ -228,7 +233,7 @@ export function createWorkspaceRegistryModule(
     entry.workspaces.set(key, {
       name: workspace.name,
       path: workspace.path,
-      branch: workspace.branch,
+      description: descriptionOf(workspace),
       defaultLocation: defaultFile,
     });
     return true;
@@ -259,7 +264,7 @@ export function createWorkspaceRegistryModule(
       // Windows, so a path-derived name breaks the renderer's case-sensitive
       // name matching for uppercase workspace names.
       workspaceName: workspaceNameSchema.parse(ws.name),
-      branch: ws.branch,
+      ...ws.description,
       metadata: metadataOf(ws),
     };
   }
@@ -326,7 +331,7 @@ export function createWorkspaceRegistryModule(
       return [...project.workspaces.values()].map((ws) => ({
         name: ws.name,
         path: ws.path,
-        branch: ws.branch,
+        ...ws.description,
         metadata: metadataOf(ws),
       }));
     },

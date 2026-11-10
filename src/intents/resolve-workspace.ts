@@ -30,6 +30,7 @@ import {
   projectPathSchema,
   projectRefSchema,
   workspaceClosingSchema,
+  workspaceDescriptionShape,
   workspaceNameSchema,
   workspacePathSchema,
   workspaceRefSchema,
@@ -63,8 +64,8 @@ const workspaceIdentityShape = {
   projectRef: projectRefSchema,
   projectPath: projectPathSchema,
   workspaceName: workspaceNameSchema,
-  /** Current branch name, or null for detached HEAD. */
-  branch: z.string().nullable(),
+  /** How its project type describes it (subtitle, icon, opaque details). */
+  ...workspaceDescriptionShape,
   /** The workspace's raw domain metadata. Consumers interpret it (never store
    *  it raw) — see `readTitle`/`extractTags` in shared/api/types. */
   metadata: z.record(z.string(), z.string()).readonly(),
