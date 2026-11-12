@@ -1296,6 +1296,14 @@ Each workspace runs one coding agent — Claude Code or OpenCode, chosen by the
 editor. The agent is recorded in the workspace when it first opens, so changing
 the `agent` setting applies to new workspaces only.
 
+The editor's side-bar shortcuts — <kbd>Ctrl+Shift+E</kbd> (Explorer),
+<kbd>G</kbd> (Source Control), <kbd>F</kbd> (Search), <kbd>X</kbd>
+(Extensions) and <kbd>D</kbd> (Run and Debug) — work while the agent terminal
+has focus: CodeHydra lists their commands in the editor's
+`terminal.integrated.commandsToSkipShell` default. If you set that setting
+yourself, your list replaces CodeHydra's, so add the `workbench.view.*`
+commands to it to keep these shortcuts.
+
 ### Which agent binary runs
 
 Both agents follow the same rules, decided once at startup:
