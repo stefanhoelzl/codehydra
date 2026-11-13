@@ -121,7 +121,14 @@
       "window.autoDetectColorScheme": true,
       "workbench.preferredDarkColorTheme": "Default Dark+",
       "workbench.preferredLightColorTheme": "Default Light+",
-      "remote.autoForwardPorts": false
+      "remote.autoForwardPorts": false,
+      "terminal.integrated.commandsToSkipShell": [
+        "workbench.view.explorer",
+        "workbench.view.scm",
+        "workbench.view.search",
+        "workbench.view.extensions",
+        "workbench.view.debug"
+      ]
     }
   }
 }
