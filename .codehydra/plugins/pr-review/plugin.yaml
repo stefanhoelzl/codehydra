@@ -1,0 +1,8 @@
+description: >-
+  A review workspace for every open, non-draft pull request someone else opened, whose agent
+  summarizes the PR and walks through its decisions with you. Acts only when the GitHub user
+  running it owns the repository `origin` points at; for anyone else it does nothing.
+automations:
+  pr-review:
+    schedule: hourly
+    script: bash "$CH_PLUGIN_DIR/list.sh"
