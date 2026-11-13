@@ -95,6 +95,7 @@
     busy: 0,
     loading: 0,
     idle: 0,
+    freshIdle: 0,
     noAgent: 0,
     hibernated: counts.hibernated,
     automated: counts.automated,

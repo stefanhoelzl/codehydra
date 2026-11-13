@@ -173,6 +173,9 @@ export interface PresentationModuleDeps {
   readonly windowManager: {
     getTheme(): Theme;
     onThemeChange(callback: (theme: Theme) => void): Unsubscribe;
+    /** Whether the window has OS focus: the active workspace is only seen while it does. */
+    isFocused(): boolean;
+    onFocusChange(callback: (focused: boolean) => void): Unsubscribe;
   };
   readonly fileSystem: Pick<FileSystemBoundary, "readFileBuffer">;
   readonly pathProvider: PathProvider;
@@ -621,7 +624,34 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /** Projects and workspace rows, indexed by ref; the active workspace. */
   const model = new PresentationModel();
   /** Agent status by workspace ref. */
-  const agents = createWorkspaceStatusCache(() => scheduleUpdate());
+  const agents = createWorkspaceStatusCache((ref, previous, next) => {
+    trackFresh(ref, previous, next);
+    scheduleUpdate();
+  });
+  /**
+   * Workspaces whose agent turned idle since the user last saw them (the
+   * row's `fresh`). Turning idle from busy, mixed, none or untracked (an agent
+   * that connects idle: startup, project open, wake) adds a workspace; any
+   * other status drops it, and so does being seen (see markActiveSeen).
+   * In memory only: after a restart every agent connects again, so is fresh.
+   */
+  const fresh = new Set<WorkspaceRef>();
+  /** The window has OS focus; seeded and tracked from app start. */
+  let windowFocused = false;
+
+  function trackFresh(
+    ref: WorkspaceRef,
+    previous: AggregatedAgentStatus | undefined,
+    next: AggregatedAgentStatus | undefined
+  ): void {
+    if (next?.status !== "idle") fresh.delete(ref);
+    else if (previous?.status !== "idle") fresh.add(ref);
+  }
+
+  /** The active workspace, in a focused window, is seen: it is not fresh. */
+  function markActiveSeen(): void {
+    if (windowFocused && model.activeRef !== null) fresh.delete(model.activeRef);
+  }
   /**
    * Deletion lifecycle keyed by workspace ref (absent = not deleting). The
    * single source of truth for deletion progress: the row's render-ready
@@ -661,6 +691,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    */
   let pushScheduled = false;
   let themeUnsubscribe: Unsubscribe | null = null;
+  let focusUnsubscribe: Unsubscribe | null = null;
   // Each process scan's totals land on the rows; re-push when they change.
   const unsubscribeProcessSummaries = deps.processMonitor.onSummaries(() => scheduleUpdate());
 
@@ -803,6 +834,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       // the same as no question. Reverts on its own — the next snapshot reads
       // the tracked status again once the dialog closes or drops the flag.
       agent: waitingOnUser ? withAttention(agent) : agent,
+      // A waiting question stays fresh until answered, seen or not.
+      fresh: waitingOnUser || (agent.type === "idle" && fresh.has(workspace.ref)),
       // Copy: the model array mutates on tag changes; snapshots are immutable values.
       tags: [...workspace.tags],
       active: workspace.ref === model.activeRef,
@@ -1094,6 +1127,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         model.active()?.workspace.ref === hook.workspaceRef
     );
     pushScheduled = false;
+    // Every change that can make a workspace seen (a switch, the window
+    // gaining focus, an agent finishing under the user's eyes) pushes, so
+    // settling it here covers them all.
+    markActiveSeen();
     const snapshot = buildSnapshot();
     deps.viewManager.sendToUI(ApiIpcChannels.UI_STATE, snapshot);
     // Two fidelities, same message: `state` is the bounded projection every
@@ -1900,6 +1937,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
               theme = next;
               scheduleUpdate();
             });
+            windowFocused = deps.windowManager.isFocused();
+            focusUnsubscribe = deps.windowManager.onFocusChange((focused) => {
+              windowFocused = focused;
+              scheduleUpdate();
+            });
             scheduleUpdate();
           },
         },
@@ -1980,6 +2022,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
               themeUnsubscribe();
               themeUnsubscribe = null;
             }
+            focusUnsubscribe?.();
+            focusUnsubscribe = null;
             unsubscribeProcessSummaries();
           },
         },

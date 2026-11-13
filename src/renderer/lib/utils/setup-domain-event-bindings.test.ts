@@ -17,7 +17,16 @@ import { AgentNotificationService } from "$lib/services/agent-notifications";
 const KEY = "my-project-a1b2c3d4/feature-branch";
 
 function row(key: string, agent: AgentStatus): UiWorkspaceRow {
-  return { key, name: key, status: "ready", hibernated: false, agent, tags: [], active: false };
+  return {
+    key,
+    name: key,
+    status: "ready",
+    hibernated: false,
+    agent,
+    fresh: false,
+    tags: [],
+    active: false,
+  };
 }
 
 function makeState(workspaces: UiWorkspaceRow[]): UiState {

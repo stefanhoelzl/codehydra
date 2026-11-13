@@ -178,6 +178,14 @@ export interface UiWorkspaceRow {
    */
   readonly wakeupScript?: string;
   readonly agent: AgentStatus;
+  /**
+   * Something here is new to the user: its agent finished (went from busy to
+   * idle) or connected idle since the user last saw it — saw meaning it was the
+   * active workspace while the window had focus — or a question or dialog about
+   * it is waiting. Only true while `agent` reads idle; the sidebar shows such
+   * an idle dot with a halo, a seen one without.
+   */
+  readonly fresh: boolean;
   readonly tags: readonly WorkspaceTag[];
   readonly active: boolean;
   /** Why the open failed; present while `status` is `open-failed`. */

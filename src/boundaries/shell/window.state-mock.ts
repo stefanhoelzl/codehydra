@@ -108,7 +108,8 @@ export interface WindowBoundaryMockState extends MockState {
   triggerBlur(handle: WindowHandle): void;
 
   /**
-   * Mark a window as having OS focus, without going through focus().
+   * Give a window OS focus without going through focus(), firing its focus
+   * callbacks (as the OS does when the user brings the window forward).
    *
    * The counterpart to triggerBlur for tests that need to set up the focused
    * case: windows start unfocused, since nothing has shown them yet.
@@ -166,7 +167,8 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
     private readonly _maximizeCallbacks: CallbackRegistry,
     private readonly _unmaximizeCallbacks: CallbackRegistry,
     private readonly _closeCallbacks: CallbackRegistry,
-    private readonly _blurCallbacks: CallbackRegistry
+    private readonly _blurCallbacks: CallbackRegistry,
+    private readonly _focusCallbacks: CallbackRegistry
   ) {}
 
   get windows(): ReadonlyMap<string, WindowMockState> {
@@ -223,6 +225,7 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
     if (window) {
       window.isFocused = true;
     }
+    this._focusCallbacks.trigger(handle.id);
   }
 
   snapshot(): Snapshot {
@@ -274,12 +277,14 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
   const unmaximizeCallbacks = new CallbackRegistry();
   const closeCallbacks = new CallbackRegistry();
   const blurCallbacks = new CallbackRegistry();
+  const focusCallbacks = new CallbackRegistry();
   const registries = [
     resizeCallbacks,
     maximizeCallbacks,
     unmaximizeCallbacks,
     closeCallbacks,
     blurCallbacks,
+    focusCallbacks,
   ];
   const contentViews = new Map<string, ContentView>();
   let nextId = 1;
@@ -329,7 +334,8 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
     maximizeCallbacks,
     unmaximizeCallbacks,
     closeCallbacks,
-    blurCallbacks
+    blurCallbacks,
+    focusCallbacks
   );
 
   const layer: WindowBoundary = {
@@ -447,6 +453,11 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
     onBlur(handle: WindowHandle, callback: () => void): Unsubscribe {
       getWindow(handle); // Validate handle exists
       return blurCallbacks.add(handle.id, callback);
+    },
+
+    onFocus(handle: WindowHandle, callback: () => void): Unsubscribe {
+      getWindow(handle); // Validate handle exists
+      return focusCallbacks.add(handle.id, callback);
     },
 
     getContentView(handle: WindowHandle): ContentView {

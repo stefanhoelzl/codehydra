@@ -140,6 +140,7 @@ function createDeps() {
       onThemeChange: vi.fn<(callback: (theme: "dark" | "light") => void) => () => void>(() =>
         vi.fn()
       ),
+      ...createFakeWindowFocus(),
     },
     fileSystem: {
       readFileBuffer: vi.fn<() => Promise<Buffer>>(() =>
@@ -164,6 +165,25 @@ function createDeps() {
     formEdited: false,
     creationFormEdited(): boolean {
       return this.formEdited;
+    },
+  };
+}
+
+/** The window's OS focus as the presenter sees it: focused until a test calls `setFocused`. */
+function createFakeWindowFocus() {
+  let focused = true;
+  const listeners = new Set<(focused: boolean) => void>();
+  return {
+    isFocused: (): boolean => focused,
+    onFocusChange(listener: (focused: boolean) => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    setFocused(next: boolean) {
+      focused = next;
+      for (const listener of listeners) listener(next);
     },
   };
 }
@@ -659,6 +679,7 @@ describe("PresentationModule - ui:state snapshots", () => {
                 status: "ready",
                 hibernated: false,
                 agent: { type: "none" },
+                fresh: false,
                 tags: [],
                 active: true,
               },
@@ -797,6 +818,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         status: "creating",
         hibernated: false,
         agent: { type: "none" },
+        fresh: false,
         tags: [],
         active: true,
       },
@@ -843,6 +865,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         status: "ready",
         hibernated: false,
         agent: { type: "none" },
+        fresh: false,
         tags: [],
         active: true,
       },
@@ -4316,6 +4339,125 @@ describe("PresentationModule - attention highlight", () => {
     await flush();
 
     expect(rowAgent(deps, "feat")).toEqual({ type: "none" });
+  });
+});
+
+// =============================================================================
+// Fresh idle rows (new since the user last saw them)
+// =============================================================================
+
+describe("PresentationModule - fresh idle rows", () => {
+  const IDLE = { status: "idle", counts: { idle: 1, busy: 0 } } as const;
+  const BUSY = { status: "busy", counts: { idle: 0, busy: 1 } } as const;
+  const MIXED = { status: "mixed", counts: { idle: 1, busy: 1 } } as const;
+  const main = makeWorkspace("main");
+  const feat = makeWorkspace("feat");
+
+  /** Project alpha with main and feat open, main active. */
+  async function onMain(deps: Deps): Promise<UiPresenter> {
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([main, feat]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(main));
+    return module;
+  }
+
+  async function report(
+    module: IntentModule,
+    workspace: Workspace,
+    status: typeof IDLE | typeof BUSY | typeof MIXED
+  ): Promise<void> {
+    await emit(module, EVENT_AGENT_STATUS_UPDATED, {
+      workspaceRef: workspace.ref,
+      projectRef: PROJECT_REF,
+      projectId: PROJECT_ID,
+      workspaceName: workspace.name,
+      active: false,
+      status,
+    });
+  }
+
+  async function isFresh(deps: Deps, name: string): Promise<boolean> {
+    await flush();
+    const rows = lastSnapshot(deps).sidebar.projects[0]!.workspaces;
+    return rows.find((row) => row.name === name)!.fresh;
+  }
+
+  it("marks a workspace that finished out of sight, until the user goes there", async () => {
+    const deps = createDeps();
+    const module = await onMain(deps);
+    await report(module, feat, BUSY);
+    await report(module, feat, IDLE);
+    expect(await isFresh(deps, "feat")).toBe(true);
+
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(feat));
+    expect(await isFresh(deps, "feat")).toBe(false);
+  });
+
+  it("stays seen when it finishes while the user is on it", async () => {
+    const deps = createDeps();
+    const module = await onMain(deps);
+    await report(module, main, BUSY);
+    await report(module, main, IDLE);
+
+    expect(await isFresh(deps, "main")).toBe(false);
+  });
+
+  it("counts the active workspace as unseen while the window has no focus", async () => {
+    const deps = createDeps();
+    const module = await onMain(deps);
+    deps.windowManager.setFocused(false);
+    await report(module, main, BUSY);
+    await report(module, main, IDLE);
+    expect(await isFresh(deps, "main")).toBe(true);
+
+    deps.windowManager.setFocused(true);
+    expect(await isFresh(deps, "main")).toBe(false);
+  });
+
+  it("marks an agent that connects idle", async () => {
+    const deps = createDeps();
+    const module = await onMain(deps);
+    await report(module, feat, IDLE);
+
+    expect(await isFresh(deps, "feat")).toBe(true);
+  });
+
+  it("waits for the last busy session: mixed is still working", async () => {
+    const deps = createDeps();
+    const module = await onMain(deps);
+    await report(module, feat, IDLE);
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(feat));
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(main));
+    await report(module, feat, MIXED);
+    expect(await isFresh(deps, "feat")).toBe(false);
+
+    await report(module, feat, IDLE);
+    expect(await isFresh(deps, "feat")).toBe(true);
+  });
+
+  it("an idle report that changes nothing does not mark a seen workspace again", async () => {
+    const deps = createDeps();
+    const module = await onMain(deps);
+    await report(module, feat, IDLE);
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(feat));
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(main));
+    await report(module, feat, IDLE);
+
+    expect(await isFresh(deps, "feat")).toBe(false);
+  });
+
+  it("keeps a waiting question fresh, even on the active workspace, until it closes", async () => {
+    const deps = createDeps();
+    const module = await onMain(deps);
+    await report(module, main, IDLE);
+    const handle = module.dialog(
+      { sections: [], needsAttention: true },
+      { kind: "modal", workspaceRef: main.ref }
+    );
+    expect(await isFresh(deps, "main")).toBe(true);
+
+    handle.close();
+    expect(await isFresh(deps, "main")).toBe(false);
   });
 });
 

@@ -110,6 +110,19 @@ describe("WindowBoundary (integration)", () => {
       expect(windowLayer.isFocused(handle)).toBe(false);
     });
 
+    it("tells focus subscribers when the window gains focus, until they unsubscribe", () => {
+      const handle = windowLayer.createWindow({});
+      const onFocus = vi.fn();
+      const unsubscribe = windowLayer.onFocus(handle, onFocus);
+
+      windowLayer.$.triggerFocus(handle);
+      unsubscribe();
+      windowLayer.$.triggerFocus(handle);
+
+      expect(onFocus).toHaveBeenCalledTimes(1);
+      expect(windowLayer.isFocused(handle)).toBe(true);
+    });
+
     it("tracks focus per window", () => {
       const first = windowLayer.createWindow({});
       const second = windowLayer.createWindow({});

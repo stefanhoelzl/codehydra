@@ -137,7 +137,11 @@
         title={busy === null ? "Agent working" : `Agent working since ${busy.since}`}
       />
     {:else if glyph === "idle"}
-      <span class="dot idle" title="Agent waiting for you"></span>
+      <span
+        class="dot idle"
+        class:fresh={row.fresh}
+        title={row.fresh ? "Agent finished since your last visit" : "Agent waiting for you"}
+      ></span>
     {:else if glyph === "none"}
       <span class="dot none" title="No agent running"></span>
     {:else if glyph === "pending"}
@@ -421,6 +425,9 @@
   }
   .dot.idle {
     background: var(--ch-sb-idle);
+  }
+  /* New since the user's last visit: the halo. A seen idle dot has none. */
+  .dot.idle.fresh {
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--ch-sb-idle) 20%, transparent);
   }
   .dot.none {

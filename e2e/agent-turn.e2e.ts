@@ -288,8 +288,12 @@ test("a message from outside reaches the running agent, and --wake brings a clos
   ]);
   expect(created.status, `ch ws create failed: ${created.stderr}`).toBe(0);
 
+  // Created in the background, it is not the one shown: its idle row reads as
+  // new since the last visit.
   const idleRow = ui.getByRole("button", {
-    name: new RegExp(`^${MESSAGE_WORKSPACE_NAME} in .* - 1 agent idle$`),
+    name: new RegExp(
+      `^${MESSAGE_WORKSPACE_NAME} in .* - 1 agent idle(, finished since your last visit)?$`
+    ),
   });
   await expect(idleRow, "the agent never came up idle").toBeVisible({ timeout: TURN_TIMEOUT_MS });
 

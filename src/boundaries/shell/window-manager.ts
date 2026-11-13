@@ -211,6 +211,21 @@ export class WindowManager {
   }
 
   /**
+   * Subscribe to the window gaining and losing OS focus.
+   *
+   * @param callback - Called with `true` on focus and `false` on blur
+   * @returns Unsubscribe function
+   */
+  onFocusChange(callback: (focused: boolean) => void): Unsubscribe {
+    const offFocus = this.windowLayer.onFocus(this.windowHandle, () => callback(true));
+    const offBlur = this.windowLayer.onBlur(this.windowHandle, () => callback(false));
+    return () => {
+      offFocus();
+      offBlur();
+    };
+  }
+
+  /**
    * Returns the current resolved theme.
    */
   getTheme(): Theme {

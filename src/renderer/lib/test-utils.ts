@@ -21,6 +21,7 @@ export function makeUiWorkspaceRow(
     status: "ready",
     hibernated: false,
     agent: { type: "none" },
+    fresh: false,
     tags: [],
     active: false,
     ...overrides,

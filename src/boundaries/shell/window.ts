@@ -224,6 +224,16 @@ export interface WindowBoundary {
   onBlur(handle: WindowHandle, callback: () => void): Unsubscribe;
 
   /**
+   * Subscribe to window focus events (window gains OS focus).
+   *
+   * @param handle - Handle to the window
+   * @param callback - Called when window gains focus
+   * @returns Unsubscribe function
+   * @throws ShellError with code WINDOW_NOT_FOUND if handle is invalid
+   */
+  onFocus(handle: WindowHandle, callback: () => void): Unsubscribe;
+
+  /**
    * Get the content view of a window.
    * The content view is the container for child views.
    *
@@ -437,6 +447,12 @@ export class DefaultWindowBoundary implements WindowBoundary {
     const state = this.getWindowState(handle);
     state.window.on("blur", callback);
     return guardedUnsubscribe(state.window, () => state.window.off("blur", callback));
+  }
+
+  onFocus(handle: WindowHandle, callback: () => void): Unsubscribe {
+    const state = this.getWindowState(handle);
+    state.window.on("focus", callback);
+    return guardedUnsubscribe(state.window, () => state.window.off("focus", callback));
   }
 
   getContentView(handle: WindowHandle): ContentView {

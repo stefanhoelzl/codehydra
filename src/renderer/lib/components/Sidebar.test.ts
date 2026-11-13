@@ -215,6 +215,29 @@ describe("Sidebar", () => {
       expect(sum.querySelectorAll("i").length).toBe(2);
       expect(sum.getAttribute("title")).toBe("4 working · 4 waiting for you");
     });
+
+    it("rings an idle dot new since the last visit, on the row and in the footer count", () => {
+      const key = "acme-api/oauth-pkce";
+      const seen = sampleProjects();
+      const fresh = seen.map((project) => ({
+        ...project,
+        workspaces: project.workspaces.map((ws) => (ws.key === key ? { ...ws, fresh: true } : ws)),
+      }));
+      const { container, rerender } = setup({ projects: seen });
+      const foot = (): Element => container.querySelector(".sb-foot .sum")!;
+      expect(row(container, key).querySelector(".dot.idle.fresh")).toBeNull();
+      expect(foot().querySelector(".dot.idle.fresh")).toBeNull();
+
+      rerender({ projects: fresh });
+
+      const dot = row(container, key).querySelector(".dot.idle.fresh");
+      expect(dot?.getAttribute("title")).toBe("Agent finished since your last visit");
+      expect(foot().querySelector(".dot.idle.fresh")).not.toBeNull();
+      expect(foot().getAttribute("title")).toContain("4 waiting for you (1 new)");
+      expect(row(container, key).querySelector(".st")!.getAttribute("aria-label")).toMatch(
+        /1 agent idle, finished since your last visit$/
+      );
+    });
   });
 
   describe("hibernated list", () => {
