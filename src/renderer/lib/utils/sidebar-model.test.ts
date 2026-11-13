@@ -44,6 +44,7 @@ describe("sidebar-model", () => {
       busy: 1,
       loading: 1,
       idle: 1,
+      freshIdle: 0,
       noAgent: 0,
       hibernated: 2,
       automated: 2,

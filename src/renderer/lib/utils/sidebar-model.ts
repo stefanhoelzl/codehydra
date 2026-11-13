@@ -65,6 +65,8 @@ export interface RowCounts {
   readonly busy: number;
   readonly loading: number;
   readonly idle: number;
+  /** Of `idle`, the fresh ones: new since the user last saw them. */
+  readonly freshIdle: number;
   readonly noAgent: number;
   readonly hibernated: number;
   readonly automated: number;
@@ -75,10 +77,12 @@ export function rowCounts(rows: readonly UiWorkspaceRow[]): RowCounts {
     rows.filter((row) => rowGlyph(row) === glyph);
   const sleeping = showing("hibernated");
   const automated = sleeping.filter(isAutomated).length;
+  const idle = showing("idle");
   return {
     busy: showing("busy").length,
     loading: showing("pending").length,
-    idle: showing("idle").length,
+    idle: idle.length,
+    freshIdle: idle.filter((row) => row.fresh).length,
     noAgent: showing("none").length,
     hibernated: sleeping.length - automated,
     automated,
@@ -90,7 +94,10 @@ export function describeRowCounts(counts: RowCounts): string {
   const named: readonly (readonly [number, string])[] = [
     [counts.busy, "working"],
     [counts.loading, "loading"],
-    [counts.idle, "waiting for you"],
+    [
+      counts.idle,
+      counts.freshIdle > 0 ? `waiting for you (${counts.freshIdle} new)` : "waiting for you",
+    ],
     [counts.noAgent, "no agent"],
     [counts.hibernated, "hibernated"],
     [counts.automated, "automated"],
@@ -124,7 +131,11 @@ export function rowStatusText(row: UiWorkspaceRow, hibernated: string): string {
   if (row.agent.type === "none") return "No agents running";
   const { idle, busy } = row.agent.counts;
   const agents = (count: number): string => `${count} ${count === 1 ? "agent" : "agents"}`;
-  if (busy === 0) return `${agents(idle)} idle`;
+  if (busy === 0) {
+    return row.fresh
+      ? `${agents(idle)} idle, finished since your last visit`
+      : `${agents(idle)} idle`;
+  }
   if (idle === 0) return `${agents(busy)} busy`;
   return `${idle} idle, ${busy} busy`;
 }

@@ -798,7 +798,7 @@
             {@const glyph = rowGlyph(row)}
             <div class="r-ws" class:active={row.active}>
               {#if glyph === "busy"}<Spinner tone="busy" />
-              {:else if glyph === "idle"}<span class="dot idle"></span>
+              {:else if glyph === "idle"}<span class="dot idle" class:fresh={row.fresh}></span>
               {:else if glyph === "none"}<span class="dot none"></span>
               {:else if glyph === "pending"}<Spinner class="pending" />
               {:else if glyph === "failed"}<span class="failed-icon"
@@ -1162,6 +1162,9 @@
   }
   .dot.idle {
     background: var(--ch-sb-idle);
+  }
+  /* As on the row: the halo marks an idle workspace new since the last visit. */
+  .dot.idle.fresh {
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--ch-sb-idle) 20%, transparent);
   }
   .dot.none {

@@ -233,7 +233,8 @@ counts as loading, not as hibernated.
 | ------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------- |
 | Red spinner                                             | The agent is working                                              | footer, project header |
 | Grey spinner                                            | Being created, opened or removed                                  | footer, project header |
-| Green dot                                               | The agent is waiting for you                                      | footer, project header |
+| Green dot with a halo                                   | The agent is waiting for you, new since your last visit           | footer, project header |
+| Green dot                                               | The agent is waiting for you, and you have seen it since          | footer, project header |
 | Hollow dot                                              | No agent running (also while its agent is still starting)         | footer, project header |
 | Red warning                                             | Could not be opened (the reason on hover), or its deletion failed | —                      |
 | Moon                                                    | Hibernated                                                        | footer, project header |
@@ -242,6 +243,19 @@ counts as loading, not as hibernated.
 A row also turns green while a question or dialog about that workspace is
 waiting for you — a question open in its editor, a hook trust question, a failed
 deletion — including the placeholder row of a workspace still being created.
+
+The halo tells you that something changed since you last looked. A green dot
+gets it when its agent finishes (stops working) or starts up idle — at
+startup, when a project opens, when a workspace wakes — while you are not
+looking at it, and while a question or dialog about it waits for you. You have
+seen a workspace while it is the one shown and the CodeHydra window has focus:
+going there takes the halo off, and an agent that finishes while you are
+watching never gets one. A workspace with several agents gets it once the last
+of them finishes. A waiting question keeps its halo until it is answered, even
+while you are on it. Nothing of this is saved: after a restart every idle
+workspace has its halo again, except the one you are on. Footer and project
+header count both green dots as one; the count's dot has the halo while any of
+them does, and hovering it names how many are new.
 
 ### Opening and closing projects
 
