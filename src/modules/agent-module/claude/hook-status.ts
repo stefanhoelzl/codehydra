@@ -20,6 +20,7 @@ import {
   isOptedOutSubagent,
   isOptedOutWorkflow,
   taskKeepsBusy,
+  type ClaudeCodeBackgroundTask,
   type ClaudeCodeBridgePayload,
   type ClaudeCodeHookName,
 } from "./types";
@@ -54,6 +55,13 @@ export interface HookFlags {
    */
   readonly idleBesideBackgroundAgents: boolean;
   /**
+   * `ch ws status set busy` asked the coming Stop to stay busy: the main agent
+   * ends its turn to wait on a `[bg]` sub-agent or workflow. The main agent's
+   * Stop consumes it — busy while `[bg]` work still runs, idle as usual when
+   * none does — and a prompt (the result arriving, or the user's) drops it.
+   */
+  readonly holdBusy: boolean;
+  /**
    * The agent terminal is open (WrapperStart, until WrapperEnd). Open without an
    * inbox means `claude` is still starting.
    */
@@ -67,6 +75,7 @@ export const INITIAL_HOOK_FLAGS: HookFlags = {
   ignoreNextSessionStart: false,
   busyForBackgroundTasks: false,
   idleBesideBackgroundAgents: false,
+  holdBusy: false,
   terminalOpen: false,
 };
 
@@ -203,7 +212,9 @@ export type HookSuppression =
       /** The tasks keeping the workspace busy (Stop only; idle_prompt names none). */
       readonly tasks?: string;
     }
-  | { readonly reason: "ask-user-question" };
+  | { readonly reason: "ask-user-question" }
+  /** The Stop stayed busy for `ch ws status set busy`, beside these `[bg]` tasks. */
+  | { readonly reason: "held-busy"; readonly tasks: string };
 
 /** A hook that does not drive the main status at all. */
 export interface IgnoredHook {
@@ -233,6 +244,11 @@ export interface DerivedStatus {
 }
 
 export type HookStatusResult = IgnoredHook | DerivedStatus;
+
+/** A background task as the log names it. */
+function describeTask(task: ClaudeCodeBackgroundTask): string {
+  return task.command ?? task.agent_type ?? task.type ?? "unknown";
+}
 
 /** Notification types that mean the agent is waiting for the user. */
 const WAITING_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
@@ -290,6 +306,7 @@ export function deriveStatus(
     ignoreNextSessionStart,
     busyForBackgroundTasks,
     idleBesideBackgroundAgents,
+    holdBusy,
     terminalOpen,
   } = input.flags;
   let startupTimer: DerivedStatus["startupTimer"] = null;
@@ -436,31 +453,44 @@ export function deriveStatus(
     const wasParked = awaitingUserInputResolution;
     awaitingUserInputResolution = false;
     busyForBackgroundTasks = busyTasks.length > 0;
-    // Idle with `[bg]` sub-agents, workflows or their shells still at work (a
-    // Stop held back by compaction does not go idle, so it does not count).
+    // `[bg]` sub-agents, workflows or their shells still at work.
+    const optedOutTasks = tasks.filter(
+      (task) =>
+        isOptedOutSubagent(task) ||
+        isOptedOutWorkflow(task) ||
+        isOptedOutShell(task, input.optedOutShells)
+    );
+    // Idle beside them (a Stop held back by compaction does not go idle, so it
+    // does not count).
     idleBesideBackgroundAgents =
-      busyTasks.length === 0 &&
-      !ignoreNextSessionStart &&
-      tasks.some(
-        (task) =>
-          isOptedOutSubagent(task) ||
-          isOptedOutWorkflow(task) ||
-          isOptedOutShell(task, input.optedOutShells)
-      );
+      busyTasks.length === 0 && !ignoreNextSessionStart && optedOutTasks.length > 0;
     if (busyTasks.length > 0) {
       status = wasParked ? "busy" : null;
       suppressed.push({
         reason: "background-tasks",
-        tasks: busyTasks.map((task) => task.command ?? task.agent_type ?? task.type).join(", "),
+        tasks: busyTasks.map(describeTask).join(", "),
       });
+    } else if (idleBesideBackgroundAgents && holdBusy) {
+      // The agent ended its turn to wait on its `[bg]` work (`ch ws status set
+      // busy`): stay busy as for any other background task until the next
+      // prompt, which clears busyForBackgroundTasks so the next Stop decides
+      // afresh. Not idle beside them, so their hooks count again.
+      busyForBackgroundTasks = true;
+      idleBesideBackgroundAgents = false;
+      status = "busy";
+      suppressed.push({ reason: "held-busy", tasks: optedOutTasks.map(describeTask).join(", ") });
     }
+    // This Stop consumes the hold, unless compaction holds the Stop back.
+    if (!ignoreNextSessionStart) holdBusy = false;
   } else if (hookName === "StopFailure") {
     busyForBackgroundTasks = false;
     idleBesideBackgroundAgents = false;
+    holdBusy = false;
   }
   if (hookName === "UserPromptSubmit") {
     busyForBackgroundTasks = false;
     awaitingUserInputResolution = false;
+    holdBusy = false;
   }
 
   // The main agent working again ends the idle beside `[bg]` sub-agents — a
@@ -481,6 +511,7 @@ export function deriveStatus(
     busyForBackgroundTasks = false;
     awaitingUserInputResolution = false;
     idleBesideBackgroundAgents = false;
+    holdBusy = false;
   }
 
   // While parked on an AskUserQuestion the main agent is blocked on the user;
@@ -508,6 +539,7 @@ export function deriveStatus(
       ignoreNextSessionStart,
       busyForBackgroundTasks,
       idleBesideBackgroundAgents,
+      holdBusy,
       terminalOpen,
     },
     status,

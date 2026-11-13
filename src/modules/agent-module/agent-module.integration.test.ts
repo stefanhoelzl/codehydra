@@ -76,6 +76,10 @@ import {
   INTENT_AGENT_LIFECYCLE,
 } from "../../intents/agent-lifecycle";
 import {
+  AGENT_HOLD_BUSY_OPERATION_ID,
+  INTENT_AGENT_HOLD_BUSY,
+} from "../../intents/agent-hold-busy";
+import {
   VSCODE_MODAL_CHANGED_OPERATION_ID,
   INTENT_VSCODE_MODAL_CHANGED,
 } from "../../intents/vscode-modal-changed";
@@ -136,6 +140,7 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
     stopWorkspace: vi.fn().mockResolvedValue({ success: true }),
     restartWorkspace: vi.fn().mockResolvedValue({ success: true, port: 8081 }),
     applyTerminalLifecycle: vi.fn(),
+    holdBusy: vi.fn(),
     setModalOpen: vi.fn(),
     getStatus: vi.fn().mockReturnValue({
       status: "none",
@@ -1513,6 +1518,49 @@ describe("createAgentModule", () => {
       });
 
       expect(mockProvider.applyTerminalLifecycle).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // hold busy (agent:hold-busy)
+  // ---------------------------------------------------------------------------
+
+  describe("hold busy", () => {
+    function registerHoldOp(dispatcher: Dispatcher, agent: string): void {
+      dispatcher.registerOperation(
+        createMinimalOperation<void>(AGENT_HOLD_BUSY_OPERATION_ID, INTENT_AGENT_HOLD_BUSY, "hold", {
+          hookContext: (ctx) => ({
+            intent: ctx.intent,
+            workspaceRef: TEST_WS_REF,
+            workspacePath: testPath("/test/workspace").toNative(),
+            capabilities: { agent },
+          }),
+        })
+      );
+    }
+
+    it("forwards to provider.holdBusy for the workspace's agent", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      registerHoldOp(dispatcher, "claude");
+
+      await dispatcher.dispatch({
+        type: "agent:hold-busy",
+        payload: { workspaceRef: TEST_WS_REF },
+      });
+
+      expect(mockProvider.holdBusy).toHaveBeenCalledWith(TEST_WS_REF);
+    });
+
+    it("does not run when agent capability does not match provider type", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      registerHoldOp(dispatcher, "opencode");
+
+      await dispatcher.dispatch({
+        type: "agent:hold-busy",
+        payload: { workspaceRef: TEST_WS_REF },
+      });
+
+      expect(mockProvider.holdBusy).not.toHaveBeenCalled();
     });
   });
 

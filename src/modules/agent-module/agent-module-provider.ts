@@ -148,6 +148,15 @@ export interface AgentModuleProvider {
   applyTerminalLifecycle(workspaceRef: WorkspaceRef, event: AgentLifecycleEvent): void;
 
   /**
+   * Keep the workspace busy when the agent's turn ends while `[bg]` sub-agents
+   * (Claude: or workflows, and their shells) still run, until the next prompt:
+   * the agent ends its turn to wait on them (`ch ws status set busy`). With no
+   * `[bg]` work left at the turn's end, it goes idle as usual. A no-op for
+   * unknown workspaces.
+   */
+  holdBusy(workspaceRef: WorkspaceRef): void;
+
+  /**
    * Record whether a question from `source` is open: a modal in the workspace's
    * editor, or a sidebar card attached to it that waits for an answer. While any
    * is, the workspace reports "idle" whatever the agent is doing (even with no

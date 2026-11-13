@@ -212,6 +212,27 @@ describe("a [bg] sub-agent's background shell", () => {
   });
 });
 
+describe("waiting on a [bg] sub-agent (status set busy)", () => {
+  let run: ScenarioRun;
+  beforeAll(async () => {
+    // The hold is armed mid-turn, once the main agent's Task call has returned,
+    // as `ch ws status set busy` from a tool call would be. Two main-agent
+    // Stops: one beside the running sub-agent, one after the wake-up its end sends.
+    run = await runScenario("bgwait", {
+      until: (r) => seen(r, "Stop", 2),
+      holdBusyAfter: "PostToolUse",
+    });
+  }, SCENARIO_TIMEOUT_MS);
+
+  it("stays busy at the Stop beside the [bg] sub-agent", () => {
+    expect(run.statusAcross("Stop", 0)).toEqual({ before: "busy", after: "busy" });
+  });
+
+  it("goes idle at the Stop after the result arrived", () => {
+    expect(run.statusAfter("Stop", 1)).toBe("idle");
+  });
+});
+
 describe("a turn that dies on max_tokens", () => {
   let run: ScenarioRun;
   beforeAll(async () => {

@@ -422,6 +422,57 @@ describe("OpenCodeClient", () => {
         mock.$.emitEvent({ type: "session.deleted", sessionID: CHILD });
         expect(client["_currentStatus"]).toBe("idle");
       });
+
+      describe("holding busy (status set busy)", () => {
+        const bgChild = { id: CHILD, title: "[bg] review auth (@general subagent)" };
+
+        it("stays busy when the root goes idle beside a busy [bg] child", () => {
+          const { client, mock, listener } = withChildren([bgChild]);
+          status(mock, ROOT, "busy");
+          status(mock, CHILD, "busy");
+          client.holdBusy();
+          status(mock, ROOT, "idle");
+          expect(listener.mock.calls).toEqual([["busy"]]);
+        });
+
+        it("ends when the root starts its next turn", () => {
+          const { client, mock, listener } = withChildren([bgChild]);
+          status(mock, ROOT, "busy");
+          status(mock, CHILD, "busy");
+          client.holdBusy();
+          status(mock, ROOT, "idle");
+          status(mock, ROOT, "busy");
+          status(mock, ROOT, "idle");
+          expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
+        });
+
+        it("ends when no [bg] child is busy any more", () => {
+          const { client, mock, listener } = withChildren([bgChild]);
+          status(mock, ROOT, "busy");
+          status(mock, CHILD, "busy");
+          client.holdBusy();
+          status(mock, ROOT, "idle");
+          status(mock, CHILD, "idle");
+          expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
+        });
+
+        it("goes idle as usual when no [bg] child runs at the turn's end", () => {
+          const { client, mock, listener } = withChildren([bgChild]);
+          status(mock, ROOT, "busy");
+          client.holdBusy();
+          status(mock, ROOT, "idle");
+          expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
+        });
+
+        it("is dropped by a turn that starts before the root goes idle again", () => {
+          const { client, mock, listener } = withChildren([bgChild]);
+          client.holdBusy();
+          status(mock, ROOT, "busy");
+          status(mock, CHILD, "busy");
+          status(mock, ROOT, "idle");
+          expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
+        });
+      });
     });
   });
 

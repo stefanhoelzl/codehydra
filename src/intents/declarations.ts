@@ -32,6 +32,10 @@ import type {
   schemas as agentLaunchOptionsSchemas,
 } from "./agent-launch-options";
 import type {
+  AGENT_HOLD_BUSY_OPERATION_ID,
+  schemas as agentHoldBusySchemas,
+} from "./agent-hold-busy";
+import type {
   AGENT_LIFECYCLE_OPERATION_ID,
   schemas as agentLifecycleSchemas,
 } from "./agent-lifecycle";
@@ -152,6 +156,7 @@ interface Entry<Id extends string, S extends OperationSchemas> {
 /** Every operation the app registers. Add a new operation here. */
 type Operations =
   | Entry<typeof GET_LAUNCH_OPTIONS_OPERATION_ID, typeof agentLaunchOptionsSchemas>
+  | Entry<typeof AGENT_HOLD_BUSY_OPERATION_ID, typeof agentHoldBusySchemas>
   | Entry<typeof AGENT_LIFECYCLE_OPERATION_ID, typeof agentLifecycleSchemas>
   | Entry<typeof APP_READY_OPERATION_ID, typeof appReadySchemas>
   | Entry<typeof APP_RESUME_OPERATION_ID, typeof appResumeSchemas>

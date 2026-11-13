@@ -936,6 +936,18 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   }
 
   /**
+   * Hold the workspace busy across the main agent's coming Stop while `[bg]`
+   * work still runs (`ch ws status set busy`; see `holdBusy` in hook-status.ts).
+   * A no-op for unknown workspaces.
+   */
+  holdBusy(workspaceRef: WorkspaceRef): void {
+    const state = this.workspaces.get(workspaceRef);
+    if (state === undefined) return;
+    state.flags = { ...state.flags, holdBusy: true };
+    this.logger.scoped({ workspace: workspaceRef }).debug("Holding busy until the next prompt");
+  }
+
+  /**
    * Handle a hook notification.
    */
   private handleHook(hookName: ClaudeCodeHookName, payload: ClaudeCodeBridgePayload): void {
@@ -1025,6 +1037,10 @@ export class ClaudeCodeServerManager implements AgentServerManager {
           "Idle suppressed for background tasks",
           suppression.tasks !== undefined ? { tasks: suppression.tasks } : undefined
         );
+      } else if (suppression.reason === "held-busy") {
+        log.debug("Idle held off beside [bg] tasks (status set busy)", {
+          tasks: suppression.tasks,
+        });
       } else {
         log.debug("Busy suppressed while parked on AskUserQuestion", { hookName });
       }

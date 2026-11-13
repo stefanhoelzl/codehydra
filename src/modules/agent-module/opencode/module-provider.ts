@@ -196,6 +196,10 @@ export function createOpenCodeModuleProvider(
         }
       },
 
+      holdBusy: (workspaceRef, ctx) => {
+        ctx.getProvider(workspaceRef)?.holdBusy();
+      },
+
       clearWorkspaceTracking: (workspaceRef) => {
         tuiAttachedWorkspaces.delete(workspaceRef);
         initialPromptAccepted.delete(workspaceRef);

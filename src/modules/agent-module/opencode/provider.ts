@@ -201,6 +201,15 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   }
 
   /**
+   * Hold the workspace busy across the root session's coming idle while `[bg]`
+   * child sessions still run (`ch ws status set busy`). A no-op before the
+   * client exists.
+   */
+  holdBusy(): void {
+    this.client?.holdBusy();
+  }
+
+  /**
    * Get effective counts accounting for pending user requests.
    * A session waiting on the user counts as idle.
    * Returns { idle: 0, busy: 0 } if TUI has not attached yet (no MCP request received).

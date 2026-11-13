@@ -143,6 +143,10 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
         );
       },
 
+      holdBusy: (workspaceRef) => {
+        serverManager.holdBusy(workspaceRef);
+      },
+
       // --- Launch options ---
       getLaunchOptions: async () => ({ permissionModes: await detectPermissionModes() }),
     },
