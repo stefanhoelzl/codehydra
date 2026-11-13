@@ -163,6 +163,12 @@ export interface AgentModuleSpec<P extends AgentProvider> {
     ctx: SpecContext<P>
   ): void;
 
+  /**
+   * Keep the workspace busy when the agent's turn ends while `[bg]` work still
+   * runs, until the next prompt (`ch ws status set busy`).
+   */
+  holdBusy(workspaceRef: WorkspaceRef, ctx: SpecContext<P>): void;
+
   /** Wire agent-specific server callbacks (called once, alongside core wiring). */
   wireExtraCallbacks?(ctx: SpecContext<P>): void;
 
@@ -583,6 +589,10 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     applyTerminalLifecycle(workspaceRef: WorkspaceRef, event: AgentLifecycleEvent): void {
       spec.applyTerminalLifecycle(workspaceRef, event, ctx);
+    },
+
+    holdBusy(workspaceRef: WorkspaceRef): void {
+      spec.holdBusy(workspaceRef, ctx);
     },
 
     setModalOpen(workspaceRef: WorkspaceRef, source: ModalSource, open: boolean): void {

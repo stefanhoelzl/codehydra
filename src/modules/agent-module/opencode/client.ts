@@ -106,6 +106,18 @@ export class OpenCodeClient implements IDisposable {
    */
   private readonly busyChildSessions = new Set<string>();
 
+  /** Opted-out child sessions that are busy: the `[bg]` work a hold waits on. */
+  private readonly busyOptedOutChildSessions = new Set<string>();
+
+  /**
+   * `ch ws status set busy` asked the root's coming idle to stay busy (see
+   * {@link holdBusy}); consumed by that idle, dropped when the root next turns busy.
+   */
+  private holdArmed = false;
+
+  /** The root went idle with the hold armed: busy while `[bg]` children run. */
+  private holding = false;
+
   /** The status the root session last reported. */
   private rootStatus: ClientStatus = "idle";
 
@@ -173,6 +185,16 @@ export class OpenCodeClient implements IDisposable {
    */
   addRootSession(sessionId: string): void {
     this.rootSessionIds.add(sessionId);
+  }
+
+  /**
+   * Hold the workspace busy across the root's coming idle while `[bg]` child
+   * sessions still run: the agent ends its turn to wait on them. The hold lasts
+   * until the root next turns busy, or until no `[bg]` child is busy; a root
+   * going idle with none busy goes idle as usual.
+   */
+  holdBusy(): void {
+    this.holdArmed = true;
   }
 
   /**
@@ -313,6 +335,9 @@ export class OpenCodeClient implements IDisposable {
     this.childToRootSession.clear();
     this.optedOutChildSessions.clear();
     this.busyChildSessions.clear();
+    this.busyOptedOutChildSessions.clear();
+    this.holdArmed = false;
+    this.holding = false;
   }
 
   /**
@@ -361,24 +386,37 @@ export class OpenCodeClient implements IDisposable {
       this.updateRootStatus(status);
       return;
     }
-    if (!this.childToRootSession.has(sessionId) || this.optedOutChildSessions.has(sessionId)) {
+    if (!this.childToRootSession.has(sessionId)) {
       return;
     }
+    const busySet = this.optedOutChildSessions.has(sessionId)
+      ? this.busyOptedOutChildSessions
+      : this.busyChildSessions;
     if (status === "busy") {
-      this.busyChildSessions.add(sessionId);
+      busySet.add(sessionId);
     } else {
-      this.busyChildSessions.delete(sessionId);
+      busySet.delete(sessionId);
     }
     this.recomputeStatus();
   }
 
   private updateRootStatus(status: ClientStatus): void {
+    if (this.rootStatus === "idle" && status === "busy") {
+      // A new turn: the hold has done its job, or was never needed.
+      this.holdArmed = false;
+      this.holding = false;
+    } else if (this.rootStatus === "busy" && status === "idle" && this.holdArmed) {
+      this.holdArmed = false;
+      this.holding = this.busyOptedOutChildSessions.size > 0;
+    }
     this.rootStatus = status;
     this.recomputeStatus();
   }
 
   private recomputeStatus(): void {
-    this.updateCurrentStatus(this.busyChildSessions.size > 0 ? "busy" : this.rootStatus);
+    if (this.busyOptedOutChildSessions.size === 0) this.holding = false;
+    const busy = this.busyChildSessions.size > 0 || this.holding;
+    this.updateCurrentStatus(busy ? "busy" : this.rootStatus);
   }
 
   /**
@@ -400,7 +438,8 @@ export class OpenCodeClient implements IDisposable {
     // Clean up child mapping if this was a child session
     this.childToRootSession.delete(sessionId);
     this.optedOutChildSessions.delete(sessionId);
-    if (this.busyChildSessions.delete(sessionId)) {
+    const wasBusy = this.busyChildSessions.delete(sessionId);
+    if (this.busyOptedOutChildSessions.delete(sessionId) || wasBusy) {
       this.recomputeStatus();
     }
 

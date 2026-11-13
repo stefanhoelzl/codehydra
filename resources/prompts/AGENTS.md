@@ -1,6 +1,6 @@
 # Agent system prompt (`resources/prompts/`)
 
-What every agent session is told about its environment: busy/idle and `[bg]` for background sub-agents, `ch --help` / `ch guide` for help, pages go to `ch ws browser` (logins excepted), worktree ownership, a stale `index.lock` (survives a retry with no git process running: delete it, else give the user its path), operator-driven delegation; background shells via `ch bg` and `[bg]` for workflows (`meta.description`) for Claude only.
+What every agent session is told about its environment: busy/idle, `[bg]` for background sub-agents and `ch ws status set busy` to wait on one (only when no user response is awaited), `ch --help` / `ch guide` for help, pages go to `ch ws browser` (logins excepted), worktree ownership, a stale `index.lock` (survives a retry with no git process running: delete it, else give the user its path), operator-driven delegation; background shells via `ch bg` and `[bg]` for workflows (`meta.description`) for Claude only.
 
 ## Build
 
@@ -14,5 +14,5 @@ What every agent session is told about its environment: busy/idle and `[bg]` for
 
 ## Rules
 
-- 350-word budget per composed file (`MAX_WORDS` in `src/modules/agent-module/codehydra-prompt.boundary.test.ts`, which asserts load-bearing phrases on the built files — rewording is free, dropping a rule is not). Additions displace something.
+- 385-word budget per composed file (`MAX_WORDS` in `src/modules/agent-module/codehydra-prompt.boundary.test.ts`, which asserts load-bearing phrases on the built files — rewording is free, dropping a rule is not). Additions displace something.
 - Complements `SERVER_INSTRUCTIONS` (`src/cli/mcp.ts`), which cover only cross-tool facts no MCP tool schema can carry.

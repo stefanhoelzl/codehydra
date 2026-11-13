@@ -151,6 +151,12 @@ export interface ScenarioOptions {
     records: readonly HookRecord[],
     progress: ScenarioProgress
   ) => boolean;
+  /**
+   * Call the bridge's `holdBusy` (what `ch ws status set busy` reaches) once the
+   * first hook of this name has been handled, before Claude gets its answer — as
+   * a tool call of the agent's own would, mid-turn.
+   */
+  readonly holdBusyAfter?: ClaudeCodeHookName;
 }
 
 /** What the mock model has seen so far in a scenario. */
@@ -172,6 +178,7 @@ export type ScenarioName =
   | "chbg"
   | "subagent"
   | "bgsubagentshell"
+  | "bgwait"
   | "maxtokens"
   | "suggestionfork"
   | "message"
@@ -456,6 +463,19 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
     });
   }
 
+  if (scenario === "bgwait") {
+    // The `[bg]` sub-agent the main agent waits on: a foreground sleep keeps it
+    // running well past the main Stop, and its end wakes the main agent.
+    mock.addFixture({
+      match: { systemMessage: SUBAGENT_SYSTEM_PROMPT, hasToolResult: false },
+      response: bashCall("sleep 3", "sub-agent's work", false),
+    });
+    mock.addFixture({
+      match: { systemMessage: SUBAGENT_SYSTEM_PROMPT },
+      response: { content: "Sub-agent done." },
+    });
+  }
+
   if (scenario === "workflow") {
     // The workflow's one agent (agent_type "workflow-subagent") sleeps first,
     // so the workflow is still running when the main turn ends: a `Workflow`
@@ -562,6 +582,7 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
       mock.addFixture({ match: {}, response: bashCall("ch-bg sleep 30", "opted-out sleep", true) });
       break;
     case "bgsubagentshell":
+    case "bgwait":
       // Only the opening turn delegates: the wake-up Claude sends the main agent
       // when the sub-agent finishes carries no tool result, and must not spawn
       // another (see `isFirstAgentTurn`).
@@ -580,7 +601,7 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
               arguments: JSON.stringify({
                 subagent_type: "general-purpose",
                 description: "[bg] measure",
-                prompt: "start a shell",
+                prompt: scenario === "bgwait" ? "do the work" : "start a shell",
                 run_in_background: true,
               }),
             },
@@ -743,10 +764,13 @@ async function runScenarioInner(
   let status: AgentActivity = "none";
   const bridge: { port?: number } = {};
   const records: HookRecord[] = [];
+  // Set once the manager exists; the tap calls it before answering Claude.
+  let onHandled: (hook: ClaudeCodeHookName) => void = () => {};
   const tap = await startRecordingTap(
     () => bridge.port,
     records,
-    () => status
+    () => status,
+    (hook) => onHandled(hook)
   );
   disposables.cleanups.push(() => tap.close());
 
@@ -768,6 +792,15 @@ async function runScenarioInner(
   manager.onStatusChange(BOUNDARY_WORKSPACE_REF, (next) => {
     status = next;
   });
+  const { holdBusyAfter } = options;
+  if (holdBusyAfter !== undefined) {
+    let held = false;
+    onHandled = (hook) => {
+      if (held || hook !== holdBusyAfter) return;
+      held = true;
+      manager.holdBusy(BOUNDARY_WORKSPACE_REF);
+    };
+  }
 
   const mode = options.mode ?? "headless";
   if (mode === "tui" && options.thenEndSession === true) {
@@ -844,7 +877,8 @@ interface AgentHandle {
 async function startRecordingTap(
   bridgePort: () => number | undefined,
   records: HookRecord[],
-  readStatus: () => AgentActivity
+  readStatus: () => AgentActivity,
+  onHandled: (hook: ClaudeCodeHookName) => void
 ): Promise<{ readonly port: number; close: () => Promise<void> }> {
   const server: Server = createServer((req, res) => {
     let body = "";
@@ -871,6 +905,7 @@ async function startRecordingTap(
         }
         if (hook !== undefined && isValidHookName(hook)) {
           records.push({ hook, before, after: readStatus(), toolName });
+          onHandled(hook);
         }
         res.writeHead(upstream?.status ?? 502, { "Content-Type": "application/json" });
         res.end(upstream === undefined ? "{}" : await upstream.text());

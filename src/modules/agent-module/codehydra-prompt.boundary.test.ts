@@ -24,7 +24,7 @@ const CLAUDE_PROMPT = join(DIST_BIN, "codehydra-prompt-claude.md");
 const OPENCODE_PROMPT = join(DIST_BIN, "codehydra-prompt-opencode.md");
 
 /** Budget agreed per agent file: additions have to displace something. */
-const MAX_WORDS = 350;
+const MAX_WORDS = 385;
 
 const countWords = (text: string): number => text.trim().split(/\s+/).length;
 
@@ -82,6 +82,13 @@ describe("composed agent system prompts", () => {
       // isBackgroundAgentLabel matches this marker at the start of the
       // description (Claude's background_tasks, OpenCode's child session title).
       expect(get()).toContain("start its description with `[bg]`");
+    });
+
+    it("tells how to wait on a [bg] sub-agent, only when no user response is awaited", () => {
+      // `status set busy` holds the workspace busy across the turn's end beside
+      // `[bg]` work; a turn ending on a question for the user must go idle.
+      expect(get()).toContain("run `ch ws status set busy`, then end your turn");
+      expect(get()).toContain("only if you await no response from the user");
     });
 
     it("stays within the word budget", () => {

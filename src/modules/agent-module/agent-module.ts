@@ -56,6 +56,7 @@ import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../../intents/get-workspace-s
 import { GET_AGENT_SESSION_OPERATION_ID } from "../../intents/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../../intents/restart-agent";
 import { AGENT_LIFECYCLE_OPERATION_ID } from "../../intents/agent-lifecycle";
+import { AGENT_HOLD_BUSY_OPERATION_ID } from "../../intents/agent-hold-busy";
 import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../../intents/vscode-modal-changed";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import { SetupError, getErrorMessage } from "../../shared/errors/service-errors";
@@ -528,6 +529,15 @@ export function createAgentModule(
           handler: async (ctx): Promise<void> => {
             const { workspaceRef, event } = ctx;
             provider.applyTerminalLifecycle(workspaceRef, event);
+          },
+        },
+      },
+
+      [AGENT_HOLD_BUSY_OPERATION_ID]: {
+        hold: {
+          requires: { agent: provider.type },
+          handler: async (ctx): Promise<void> => {
+            provider.holdBusy(ctx.workspaceRef);
           },
         },
       },

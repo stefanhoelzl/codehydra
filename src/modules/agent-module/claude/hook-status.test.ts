@@ -419,6 +419,85 @@ describe("deriveStatus", () => {
     });
   });
 
+  describe("holding busy (status set busy)", () => {
+    const bgAgent = { type: "subagent", status: "running", description: "[bg] review auth" };
+    const held = (status: AgentActivity, flags: Partial<HookFlags> = {}) =>
+      input(status, { holdBusy: true, ...flags });
+
+    it("stays busy on a Stop beside [bg] sub-agents, like any background task", () => {
+      const result = derive(held("busy"), "Stop", { background_tasks: [bgAgent] });
+      expect(result).toMatchObject({
+        status: "busy",
+        flags: { busyForBackgroundTasks: true, idleBesideBackgroundAgents: false, holdBusy: false },
+        suppressed: [{ reason: "held-busy", tasks: "subagent" }],
+      });
+    });
+
+    it("holds beside a [bg] workflow and a shell a [bg] sub-agent started", () => {
+      const workflow = { type: "workflow", status: "running", description: "[bg] review" };
+      const shell = { id: "b1", type: "shell", status: "running", command: "sleep 60" };
+      const result = derive(input("busy", { holdBusy: true }, false, new Set(["b1"])), "Stop", {
+        background_tasks: [workflow, shell],
+      });
+      expect(result.status).toBe("busy");
+    });
+
+    it("goes idle as usual when no [bg] work is left", () => {
+      const result = derive(held("busy"), "Stop", { background_tasks: [] });
+      expect(result).toMatchObject({ status: "idle", flags: { holdBusy: false } });
+    });
+
+    it("does not count a `ch bg` shell as [bg] work to wait on", () => {
+      const result = derive(held("busy"), "Stop", {
+        background_tasks: [{ type: "shell", status: "running", command: "ch bg npm run dev" }],
+      });
+      expect(result).toMatchObject({ status: "idle", flags: { holdBusy: false } });
+    });
+
+    it("lets the [bg] sub-agents' hooks count while held", () => {
+      const stop = derive(held("busy"), "Stop", { background_tasks: [bgAgent] });
+      const permission = derive(input("busy", stop.flags), "PermissionRequest", {
+        agent_id: "a1",
+      });
+      expect(permission.status).toBe("idle");
+    });
+
+    it("suppresses the lagging idle_prompt while held", () => {
+      const stop = derive(held("busy"), "Stop", { background_tasks: [bgAgent] });
+      const echo = derive(input("busy", stop.flags), "Notification", {
+        notification_type: "idle_prompt",
+      });
+      expect(echo.status).toBeNull();
+    });
+
+    it("ends with the next prompt: the Stop after it decides afresh", () => {
+      const stop = derive(held("busy"), "Stop", { background_tasks: [bgAgent] });
+      const woken = derive(input("busy", stop.flags), "UserPromptSubmit");
+      expect(woken.flags).toMatchObject({ busyForBackgroundTasks: false, holdBusy: false });
+      const next = derive(input("busy", woken.flags), "Stop", { background_tasks: [bgAgent] });
+      expect(next).toMatchObject({ status: "idle", flags: { idleBesideBackgroundAgents: true } });
+    });
+
+    it.each(["UserPromptSubmit", "StopFailure", "SessionEnd", "WrapperEnd"] as const)(
+      "is dropped by %s before any Stop",
+      (hookName) => {
+        expect(derive(held("busy"), hookName).flags.holdBusy).toBe(false);
+      }
+    );
+
+    it("survives a Stop held back by compaction, for the real Stop after it", () => {
+      const result = derive(held("busy", { ignoreNextSessionStart: true }), "Stop", {
+        background_tasks: [bgAgent],
+      });
+      expect(result).toMatchObject({ status: null, flags: { holdBusy: true } });
+    });
+
+    it("stays armed through the turn's own tool calls", () => {
+      const result = derive(held("busy"), "PostToolUse", { tool_name: "Bash" });
+      expect(result.flags.holdBusy).toBe(true);
+    });
+  });
+
   describe("untracked turns", () => {
     it("flags a main-agent Stop on an idle workspace", () => {
       expect(derive(input("idle"), "Stop").untrackedTurn).toBe(true);

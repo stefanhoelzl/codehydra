@@ -100,6 +100,7 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. Everyt
 | `get-agent-session`    | `get`                                     | Return session info                                        |
 | `restart-agent`        | `restart`                                 | Restart agent server                                       |
 | `agent-lifecycle`      | `lifecycle`                               | Terminal open/close transitions (reported by the sidekick) |
+| `agent-hold-busy`      | `hold`                                    | Hold busy across the turn's end beside `[bg]` work         |
 | `vscode-modal-changed` | `modal`                                   | Park the workspace on idle while a question is open        |
 
 Provider initialization is lazy: it happens on the first `open-workspace` for the configured agent, using the MCP port captured during `app:start`.
@@ -289,7 +290,7 @@ A question put to the user blocks the workspace on them, so it reads **idle** wh
 - **`sidebar`**: a `notification:show` card attached to the workspace that waits for an answer (`ch ws ask --sidebar`, a question card in the workspace's sidebar row), counted by the presenter's notification hooks until it is answered, dismissed or released.
 
 - **Edges**: each source dispatches its 0↔1 transitions as `vscode:modal-changed { source }` (`createModalEdges`, serialized per workspace), resolved to the workspace's agent module like `agent:lifecycle`, which calls `setModalOpen(ref, source, open)`. Terminal focus is held back only by an `editor` modal.
-- **Overlay**: the module-provider core keeps the agent's own status in its cache and reports `idle` while any source has a question open; agent changes made meanwhile are recorded but not reported. Each edge re-reports the effective status unconditionally, so an `agent.status.set` nudge (which bypasses the core) is corrected on the next edge. `getStatus` returns the effective status.
+- **Overlay**: the module-provider core keeps the agent's own status in its cache and reports `idle` while any source has a question open; agent changes made meanwhile are recorded but not reported. Each edge re-reports the effective status unconditionally, so an `agent.status.set` nudge (which bypasses the core; only its `agent:hold-busy` reaches the provider) is corrected on the next edge. `getStatus` returns the effective status.
 - Parking is ordinary idle: the badge, chime and OS notification follow their usual idle-count rules.
 
 ### Background Tasks: Sub-agents and Shells (Claude Code)
@@ -341,6 +342,22 @@ and a sub-agent that crashes without reporting completion can't leak (the next e
 is authoritative). `StopFailure` carries no `background_tasks` (it's an API error — rate
 limit, auth, max-tokens), so it always transitions to idle to surface the stuck main agent
 regardless of background work. `PermissionRequest` → idle is never suppressed.
+
+**Waiting on `[bg]` work** (`ch ws status set busy`). An agent that ends its turn to wait
+on a `[bg]` sub-agent would read idle. `agent.status.set busy` therefore dispatches
+`agent:hold-busy` (hook `hold`, resolved to the workspace's agent module like
+`agent:lifecycle`) before its status nudge, and the provider's `holdBusy(ref)` arms a hold:
+
+- **Claude**: the `holdBusy` flag (`hook-status.ts`). The main agent's next `Stop` consumes
+  it: with no task keeping the workspace busy but `[bg]` sub-agents, workflows or their
+  shells still running, it stays busy as for any background task (`busyForBackgroundTasks`,
+  not `idleBesideBackgroundAgents`, so their hooks count) until the next `UserPromptSubmit`.
+  With no `[bg]` work left (`ch bg` shells do not count), the `Stop` goes idle as usual. A
+  `Stop` held back by compaction keeps the hold; a prompt, `StopFailure`, `SessionEnd` or
+  `WrapperEnd` drops it.
+- **OpenCode**: the client's `holdBusy()`. The root's next busy→idle consumes it: while a
+  `[bg]` child session is still busy, the workspace stays busy until the root turns busy
+  again or no `[bg]` child is busy any more. The root turning busy first drops it.
 
 A `Stop`/`StopFailure` that carries an `agent_id` is a **sub-agent's** turn end (the main
 agent's `Stop` has none) and is ignored for the workspace status entirely.

@@ -4,6 +4,7 @@
  * real send-agent-message operation, with a test module standing in for the
  * agent's "send" hook — so targeting (by name or ref, relative to the caller),
  * the sender name and input validation are asserted as a caller sees them.
+ * Also `agent.status.set`, through the real agent-hold-busy operation.
  */
 
 import { describe, it, expect } from "vitest";
@@ -19,6 +20,15 @@ import {
   type SendHookResult,
 } from "../../intents/send-agent-message";
 import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
+import {
+  AGENT_HOLD_BUSY_OPERATION_ID,
+  AgentHoldBusyOperation,
+  type AgentHoldBusyHookInput,
+} from "../../intents/agent-hold-busy";
+import {
+  INTENT_UPDATE_AGENT_STATUS,
+  type UpdateAgentStatusPayload,
+} from "../../intents/update-agent-status";
 import type {
   HookContext,
   HookOutput,
@@ -93,10 +103,30 @@ class ListProjectsOp implements Operation<typeof listProjectsSchemas> {
   }
 }
 
+const updateStatusSchemas = {
+  type: INTENT_UPDATE_AGENT_STATUS,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
+
+/** Stands in for agent:update-status: records each status nudge into `calls`. */
+class UpdateStatusOp implements Operation<typeof updateStatusSchemas> {
+  readonly id = "update-agent-status";
+  readonly schemas = updateStatusSchemas;
+  constructor(private readonly calls: string[]) {}
+  async execute(ctx: { intent: { payload: unknown } }): Promise<void> {
+    const { workspaceRef, status } = ctx.intent.payload as UpdateAgentStatusPayload;
+    this.calls.push(`status ${status.status} ${workspaceRef}`);
+  }
+}
+
 function setup() {
   const dispatcher = createMockDispatcher();
+  /** Hold-busy requests and status nudges, in the order they reached the app. */
+  const statusCalls: string[] = [];
   dispatcher.registerOperation(new SendAgentMessageOperation());
   dispatcher.registerOperation(new ListProjectsOp());
+  dispatcher.registerOperation(new AgentHoldBusyOperation());
+  dispatcher.registerOperation(new UpdateStatusOp(statusCalls));
   registerTestInfrastructure(dispatcher, {
     workspaces: Object.fromEntries(
       PROJECTS.flatMap((project) =>
@@ -123,6 +153,13 @@ function setup() {
             if (unreachable !== null) return { result: { sent: false, reason: unreachable } };
             sent.push((ctx.intent as SendAgentMessageIntent).payload);
             return { result: { sent: true } };
+          },
+        },
+      },
+      [AGENT_HOLD_BUSY_OPERATION_ID]: {
+        hold: {
+          handler: async (ctx: HookContext): Promise<void> => {
+            statusCalls.push(`hold ${(ctx as AgentHoldBusyHookInput).workspaceRef}`);
           },
         },
       },
@@ -155,9 +192,19 @@ function setup() {
     };
     return registry.invoke(registry.get("agent.message"), ctx, input);
   };
+  const setStatus = (caller: WorkspaceRef | null, input: Record<string, unknown>) => {
+    const ctx: OperationContext = {
+      workspaceRef: caller,
+      cwd: null,
+      signal: new AbortController().signal,
+    };
+    return registry.invoke(registry.get("agent.status.set"), ctx, input);
+  };
 
   return {
     call,
+    setStatus,
+    statusCalls,
     sent,
     setUnreachable: (reason: string) => {
       unreachable = reason;
@@ -315,5 +362,31 @@ describe("agent.message entry", () => {
     await call(inFeat, { text: "hello", from: "someone else" });
 
     expect(sent[0]!.from).toBe("CodeHydra · workspace feat");
+  });
+});
+
+describe("agent.status.set entry", () => {
+  it("busy asks the agent to hold busy, then reports busy", async () => {
+    const { setStatus, statusCalls } = setup();
+
+    await setStatus(inFeat, { status: "busy" });
+
+    expect(statusCalls).toEqual([`hold ${FEAT}`, `status busy ${FEAT}`]);
+  });
+
+  it("busy holds the named workspace", async () => {
+    const { setStatus, statusCalls } = setup();
+
+    await setStatus(inFeat, { workspace: "other", status: "busy" });
+
+    expect(statusCalls).toEqual([`hold ${OTHER}`, `status busy ${OTHER}`]);
+  });
+
+  it("idle only reports idle", async () => {
+    const { setStatus, statusCalls } = setup();
+
+    await setStatus(inFeat, { status: "idle" });
+
+    expect(statusCalls).toEqual([`status idle ${FEAT}`]);
   });
 });

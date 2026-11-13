@@ -24,6 +24,8 @@ import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import type { UpdateAgentStatusIntent } from "../../intents/update-agent-status";
 import { INTENT_AGENT_LIFECYCLE } from "../../intents/agent-lifecycle";
 import type { AgentLifecycleIntent } from "../../intents/agent-lifecycle";
+import { INTENT_AGENT_HOLD_BUSY } from "../../intents/agent-hold-busy";
+import type { AgentHoldBusyIntent } from "../../intents/agent-hold-busy";
 import { INTENT_VSCODE_COMMAND } from "../../intents/vscode-command";
 import type { VscodeCommandIntent } from "../../intents/vscode-command";
 import { INTENT_SEND_AGENT_MESSAGE } from "../../intents/send-agent-message";
@@ -156,9 +158,12 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Report this workspace's agent status as idle or busy.",
     instructions:
-      "A one-shot report, not a pinned override: the value stands until the agent provider " +
-      "next pushes a status change of its own. Because the provider only pushes on change, a " +
-      "nudge sent while the agent is idle sticks until the agent next does something; one sent " +
+      "busy is how an agent waits on its `[bg]` sub-agents: send it, then end the turn, " +
+      "and the workspace stays busy until the next prompt (a result arriving, or the " +
+      "user's) instead of going idle. Only when no response from the user is awaited. A turn " +
+      "that ends with no `[bg]` work left running goes idle as usual. Otherwise the value " +
+      "stands until the agent provider next pushes a status change of its own: sent while " +
+      "the agent is idle it sticks until the agent next does something, and idle sent " +
       "mid-turn is replaced by the next hook event.",
     input: z.object({
       ...targetFields,
@@ -167,10 +172,18 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const busy = input.status === "busy";
+      const workspaceRef = await targetOf(ctx, input);
+      if (busy) {
+        // Before the nudge: the provider keeps the turn's end from going idle.
+        await dispatcher.dispatch<AgentHoldBusyIntent>({
+          type: INTENT_AGENT_HOLD_BUSY,
+          payload: { workspaceRef },
+        });
+      }
       await dispatcher.dispatch<UpdateAgentStatusIntent>({
         type: INTENT_UPDATE_AGENT_STATUS,
         payload: {
-          workspaceRef: await targetOf(ctx, input),
+          workspaceRef,
           status: {
             status: input.status,
             counts: { idle: busy ? 0 : 1, busy: busy ? 1 : 0 },

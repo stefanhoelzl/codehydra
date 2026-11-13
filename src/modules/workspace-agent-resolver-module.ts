@@ -28,6 +28,7 @@ import { GET_AGENT_SESSION_OPERATION_ID } from "../intents/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../intents/restart-agent";
 import { SEND_AGENT_MESSAGE_OPERATION_ID } from "../intents/send-agent-message";
 import { AGENT_LIFECYCLE_OPERATION_ID } from "../intents/agent-lifecycle";
+import { AGENT_HOLD_BUSY_OPERATION_ID } from "../intents/agent-hold-busy";
 import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../intents/vscode-modal-changed";
 import { defineHooks, type HookHandlerOf } from "../intents/declarations";
 import type { WorkspaceRegistry } from "./workspace-registry-module";
@@ -174,6 +175,9 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
       },
       [AGENT_LIFECYCLE_OPERATION_ID]: {
         lifecycle: makeResolverHandler(deps),
+      },
+      [AGENT_HOLD_BUSY_OPERATION_ID]: {
+        hold: makeResolverHandler(deps),
       },
       [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
         modal: makeResolverHandler(deps),

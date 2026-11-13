@@ -578,6 +578,13 @@ environment (e.g. from a `before-workspace-opened` plugin hook's `env`). Agents 
 prompt, and the description shows in their task list, so you can see which
 sub-agents were opted out.
 
+When the agent later has to wait for a `[bg]` sub-agent or workflow after all,
+it runs `ch ws status set busy` before ending its turn. Then the workspace stays
+**busy** until the next prompt reaches the agent, either that result or your
+message. If no `[bg]` work is still running when the turn ends, it goes idle as
+usual. Agents are told to do this only when they need nothing from you: a turn
+that ends on a question for you goes idle.
+
 ### Processes
 
 CodeHydra can show what is running in each workspace — the dev server an agent
@@ -1813,7 +1820,8 @@ opened on purpose with `xdg-open`, `open` or `ch ws open`.
 You don't have to explain CodeHydra to your agent. Every session gets a short
 system prompt: what busy and idle mean (so it ends its turn only when it needs
 you) and when a background sub-agent (or, in Claude Code, a workflow) may stop holding it busy (`[bg]`: only
-one it isn't waiting on, see [Background processes](#background-processes-ch-bg)), that the worktree's
+one it isn't waiting on, see [Background processes](#background-processes-ch-bg)), how to wait on
+one later (`ch ws status set busy`, only when it needs no response from you), that the worktree's
 lifecycle belongs to CodeHydra, that an `index.lock`
 that survives a retry while no git process is running is stale and can be
 deleted (otherwise it gives you the lock's path), that creating another
@@ -1853,7 +1861,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `ws metadata get`, `ws metadata set <key> <value>`                 | Raw workspace metadata                                                                                                                                                                                                 |
 | `ws agent open\|close\|restart\|session`                           | The agent terminal and server                                                                                                                                                                                          |
 | `ws agent message <text>`                                          | [Message the running agent](#messages-to-a-running-agent) (`-` reads stdin, `--wake`)                                                                                                                                  |
-| `ws status set <idle\|busy>`                                       | Report the agent's status                                                                                                                                                                                              |
+| `ws status set <idle\|busy>`                                       | Report the agent's status; `busy` before the turn ends keeps it busy beside `[bg]` work until the next prompt ([Background processes](#background-processes-ch-bg))                                                    |
 | `ws notify`, `ws status-bar`                                       | For you: a toast or status-bar text in the editor; neither waits                                                                                                                                                       |
 | `ws ask`, `ws select`, `ws input`, `ws pick-file`                  | For you: a question that waits for your answer, see [Asking you](#asking-you)                                                                                                                                          |
 | `notification show <title>`, `notification close <id>`             | For you: a card in CodeHydra's sidebar, see below                                                                                                                                                                      |
