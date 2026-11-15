@@ -8,7 +8,7 @@
  *    alongside `code` and the agent wrappers.
  * 2. Generate the shared secret that separates a deliberate caller from any
  *    local process that guessed the API server port.
- * 3. Publish the port and that secret into state.json, which is how `ch` finds
+ * 3. Publish the port and that secret in `session.json`, which is how `ch` finds
  *    its instance — it resolves its own path to the data directory and reads
  *    them there, needing no environment variables at all.
  *
@@ -26,10 +26,14 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { ConfigureResult, RequiredScript } from "../intents/app-start";
 import type { StateService } from "../boundaries/platform/state-service";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import { storeNumber, storeString } from "../boundaries/platform/store-definition";
 import type { Logger } from "../boundaries/platform/logging-types";
+import { FileSystemError } from "../shared/errors/service-errors";
 import { getErrorMessage } from "../shared/error-utils";
 import { defineHooks } from "../intents/declarations";
+import { Path } from "../utils/path/path";
+import type { SessionFile } from "../cli/discovery";
 
 /**
  * Capability announcing that the CLI's port and token have been published.
@@ -58,6 +62,11 @@ export const CLI_SCRIPTS = [
 
 export interface CliModuleDeps {
   readonly stateService: StateService;
+  readonly fileSystem: FileSystemBoundary;
+  /** `<dataRoot>/session.json` (`SESSION_FILE`), where `ch` looks for this instance. */
+  readonly sessionPath: Path;
+  /** This app's process id, recorded so `ch` can tell a crashed launch's file from a live one. */
+  readonly pid: number;
   readonly logger: Logger;
 }
 
@@ -74,27 +83,47 @@ export interface CliModuleHandle {
 }
 
 export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
-  const { stateService, logger } = deps;
+  const { stateService, fileSystem, sessionPath, pid, logger } = deps;
 
-  // 0 means "not published": the API server never binds port 0, so the
-  // sentinel cannot be mistaken for a real value, and storeNumber has no
-  // nullable form.
-  const portState = stateService.register("api.port", {
+  // Where the connection lived before session.json. Still registered, read-only,
+  // only so a state.json written by an earlier release can be stripped of them.
+  const legacyPort = stateService.register("api.port", {
     default: 0,
-    description: "Port the API server bound, published for the ch CLI (0 = not running)",
+    deprecated: true,
+    description: "Port the API server bound, from before it moved to session.json",
     ...storeNumber({ min: 0 }),
   });
-
-  const tokenState = stateService.register("api.token", {
+  const legacyToken = stateService.register("api.token", {
     default: null,
-    description: "Shared secret the ch CLI presents when connecting",
-    // Never leaves the machine in a bug report: possession of it is authority
-    // to run every operation against this instance.
+    deprecated: true,
+    description: "Shared secret for the ch CLI, from before it moved to session.json",
     redact: true,
     ...storeString({ nullable: true }),
   });
 
   let token: string | null = null;
+
+  /**
+   * Publish the connection in one write: beside the file, then renamed over it,
+   * so a reader sees no file or a whole one — never a port without its token.
+   * After a clean shutdown there is no file to rename over, so no reader can
+   * be holding it open.
+   */
+  async function publish(session: SessionFile): Promise<void> {
+    const tempPath = new Path(sessionPath.dirname, `${sessionPath.basename}.tmp`);
+    await fileSystem.writeFile(tempPath, JSON.stringify(session, null, 2));
+    await fileSystem.rename(tempPath, sessionPath);
+  }
+
+  /** Withdraw the published connection; nothing to withdraw is not a failure. */
+  async function withdraw(): Promise<void> {
+    try {
+      await fileSystem.unlink(sessionPath);
+    } catch (error) {
+      if (error instanceof FileSystemError && error.fsCode === "ENOENT") return;
+      throw error;
+    }
+  }
 
   return {
     token: () => token,
@@ -108,6 +137,22 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
             },
           },
 
+          migrations: {
+            handler: async (): Promise<void> => {
+              // Each reset rewrites state.json, so only when there is
+              // something to strip — not on every start. Best-effort: a
+              // failed migration aborts startup, and leftover keys are inert.
+              try {
+                if (legacyPort.get() !== 0) await legacyPort.reset();
+                if (legacyToken.get() !== null) await legacyToken.reset();
+              } catch (error) {
+                logger.warn("Could not remove the old CLI connection keys from state.json", {
+                  error: getErrorMessage(error),
+                });
+              }
+            },
+          },
+
           start: {
             // The port is only known once the API server has bound one.
             requires: { apiPort: ANY_VALUE },
@@ -118,14 +163,17 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
               const apiPort = (ctx.capabilities?.apiPort as number | null | undefined) ?? null;
 
               if (apiPort === null) {
-                // The API server failed to start. Clearing the published
-                // details is what stops `ch` from attempting a stale port and
-                // reporting a confusing connection error instead of "not running".
-                // Port first here, mirroring the publish order: withdrawing the
-                // barrier before what it guards means a reader never sees a
-                // live port with no token behind it.
-                await portState.set(0);
-                await tokenState.set(null);
+                // The API server failed to start. Removing a file a crashed
+                // launch left behind is what stops `ch` from attempting a
+                // stale port and reporting a confusing connection error
+                // instead of "not running".
+                try {
+                  await withdraw();
+                } catch (error) {
+                  logger.warn("Could not remove a stale session file", {
+                    error: getErrorMessage(error),
+                  });
+                }
                 logger.warn("API server did not start; the ch CLI will report it as offline");
                 return { provides: { [CLI_CONNECTION_CAPABILITY]: true } };
               }
@@ -135,16 +183,7 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
               token = randomBytes(32).toString("hex");
 
               try {
-                // Token first, port last. Each set() persists state.json on its
-                // own, so the two writes are visible to a reader separately —
-                // and `ch` reads the file once and requires both, reporting
-                // "CodeHydra does not appear to be running" if either is
-                // missing. Writing the port last makes it the commit barrier:
-                // a reader that sees a port has already been able to see the
-                // token. The reverse order left a window, tens of milliseconds
-                // wide on a loaded machine, in which a healthy app looked dead.
-                await tokenState.set(token);
-                await portState.set(apiPort);
+                await publish({ port: apiPort, token, pid });
                 logger.debug("Published CLI connection details", { port: apiPort });
               } catch (error) {
                 // Not fatal: the app runs fine, only `ch` cannot find it.
@@ -167,13 +206,9 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
               // next — and would make it report a connection error rather than
               // the truth, which is that CodeHydra is not running.
               // Best-effort, like every other stop handler: the dispatcher logs a
-              // failure, and a stale entry costs a confusing message, not
-              // correctness.
+              // failure, and `ch` still checks the recorded pid.
               token = null;
-              // Port first, the mirror of the publish order: clearing the
-              // barrier before the token it guards.
-              await portState.set(0);
-              await tokenState.set(null);
+              await withdraw();
             },
           },
         },

@@ -9,10 +9,14 @@ import {
   DiscoveryError,
   readConnection,
   resolveDataDir,
-  STATE_PORT_KEY,
-  STATE_TOKEN_KEY,
+  SESSION_FILE,
   type DiscoveryFs,
+  type IsProcessAlive,
 } from "./discovery";
+
+/** The one process the tests treat as running. */
+const LIVE_PID = 1000;
+const isAlive: IsProcessAlive = (pid) => pid === LIVE_PID;
 
 function fakeFs(files: Record<string, string>, links: Record<string, string> = {}): DiscoveryFs {
   return {
@@ -53,80 +57,66 @@ describe("resolveDataDir", () => {
 });
 
 describe("readConnection", () => {
-  const statePath = join("/data", "state.json");
+  const sessionPath = join("/data", SESSION_FILE);
+  const session = (fields: Record<string, unknown>) => ({
+    [sessionPath]: JSON.stringify({ port: 45123, token: "secret", pid: LIVE_PID, ...fields }),
+  });
 
   it("reads the port and token the instance published", () => {
-    const fs = fakeFs({
-      [statePath]: JSON.stringify({ [STATE_PORT_KEY]: 45123, [STATE_TOKEN_KEY]: "secret" }),
-    });
-
-    expect(readConnection("/data", fs)).toEqual({
+    expect(readConnection("/data", fakeFs(session({})), isAlive)).toEqual({
       port: 45123,
       token: "secret",
       dataDir: "/data",
     });
   });
 
-  it("ignores unrelated state keys", () => {
+  it("does not look in state.json, where earlier releases published them", () => {
     const fs = fakeFs({
-      [statePath]: JSON.stringify({
-        "telemetry.distinct-id": "abc",
-        [STATE_PORT_KEY]: 1,
-        [STATE_TOKEN_KEY]: "t",
-      }),
+      [join("/data", "state.json")]: JSON.stringify({ "api.port": 1, "api.token": "t" }),
     });
 
-    expect(readConnection("/data", fs).port).toBe(1);
+    expect(() => readConnection("/data", fs, isAlive)).toThrow(/not appear to be running/);
   });
 
   it("reports a missing file as CodeHydra not running", () => {
-    expect(() => readConnection("/data", fakeFs({}))).toThrow(DiscoveryError);
-    expect(() => readConnection("/data", fakeFs({}))).toThrow(/not appear to be running/);
+    expect(() => readConnection("/data", fakeFs({}), isAlive)).toThrow(DiscoveryError);
+    expect(() => readConnection("/data", fakeFs({}), isAlive)).toThrow(/not appear to be running/);
   });
 
-  it("reports connection details missing from an otherwise valid file", () => {
-    // A state file exists from a previous version, or the app is mid-startup.
-    const fs = fakeFs({ [statePath]: JSON.stringify({ "telemetry.distinct-id": "abc" }) });
+  it("reports a file left by a launch that has exited as not running", () => {
+    // A crash skips the shutdown that deletes the file; its port may belong
+    // to anyone now, and must not be handed this token.
+    const fs = fakeFs(session({ pid: LIVE_PID + 1 }));
 
-    expect(() => readConnection("/data", fs)).toThrow(/no connection details/);
+    expect(() => readConnection("/data", fs, isAlive)).toThrow(/process that has exited/);
   });
 
   it("names the file when its contents are not JSON", () => {
-    const fs = fakeFs({ [statePath]: "{ truncated" });
+    const fs = fakeFs({ [sessionPath]: "{ truncated" });
 
-    expect(() => readConnection("/data", fs)).toThrow(/not valid JSON/);
+    expect(() => readConnection("/data", fs, isAlive)).toThrow(/not valid JSON/);
   });
 
-  it("treats a zero port as not running", () => {
-    // The app writes 0 when the API server failed to start.
-    const fs = fakeFs({
-      [statePath]: JSON.stringify({ [STATE_PORT_KEY]: 0, [STATE_TOKEN_KEY]: "t" }),
-    });
-
-    expect(() => readConnection("/data", fs)).toThrow(/no connection details/);
-  });
-
-  it("rejects an empty token rather than attempting an unauthenticated connection", () => {
-    const fs = fakeFs({
-      [statePath]: JSON.stringify({ [STATE_PORT_KEY]: 1, [STATE_TOKEN_KEY]: "" }),
-    });
-
-    expect(() => readConnection("/data", fs)).toThrow(/no connection details/);
+  it.each([
+    ["a zero port", { port: 0 }],
+    ["an empty token", { token: "" }],
+    ["no pid", { pid: undefined }],
+  ])("rejects %s rather than attempting a connection", (_name, fields) => {
+    expect(() => readConnection("/data", fakeFs(session(fields)), isAlive)).toThrow(
+      /no connection details/
+    );
   });
 });
 
 describe("chooseConnection", () => {
   const SELF = "/self/bin/ch.cjs";
-  const state = (dir: string, port: number) => ({
-    [join(dir, "state.json")]: JSON.stringify({
-      [STATE_PORT_KEY]: port,
-      [STATE_TOKEN_KEY]: `token-${port}`,
-    }),
+  const session = (dir: string, port: number) => ({
+    [join(dir, SESSION_FILE)]: JSON.stringify({ port, token: `token-${port}`, pid: LIVE_PID }),
   });
   const inherited = { _CH_API_PORT: "41000", _CH_API_TOKEN: "from-env" };
 
-  it("uses the port and token it was handed, so ch mcp needs no state file", () => {
-    expect(chooseConnection(SELF, inherited, fakeFs({}))).toEqual({
+  it("uses the port and token it was handed, so ch mcp needs no session file", () => {
+    expect(chooseConnection(SELF, inherited, fakeFs({}), isAlive)).toEqual({
       port: 41000,
       token: "from-env",
       dataDir: "/self",
@@ -134,9 +124,9 @@ describe("chooseConnection", () => {
   });
 
   it("lets _CH_DATA_DIR beat the port and token it inherited", () => {
-    const fs = fakeFs({ ...state("/data", 42000), ...state("/self", 43000) });
+    const fs = fakeFs({ ...session("/data", 42000), ...session("/self", 43000) });
 
-    expect(chooseConnection(SELF, { ...inherited, _CH_DATA_DIR: "/data" }, fs)).toEqual({
+    expect(chooseConnection(SELF, { ...inherited, _CH_DATA_DIR: "/data" }, fs, isAlive)).toEqual({
       port: 42000,
       token: "token-42000",
       dataDir: "/data",
@@ -144,9 +134,11 @@ describe("chooseConnection", () => {
   });
 
   it("falls back to its own data directory when the environment names nothing usable", () => {
-    const fs = fakeFs(state("/self", 43000));
+    const fs = fakeFs(session("/self", 43000));
 
-    expect(chooseConnection(SELF, { _CH_API_PORT: "41000", _CH_DATA_DIR: "" }, fs)).toEqual({
+    expect(
+      chooseConnection(SELF, { _CH_API_PORT: "41000", _CH_DATA_DIR: "" }, fs, isAlive)
+    ).toEqual({
       port: 43000,
       token: "token-43000",
       dataDir: "/self",

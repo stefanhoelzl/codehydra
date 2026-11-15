@@ -14,7 +14,7 @@ Full reference: [docs/API.md](../../docs/API.md) (`ch` CLI, MCP, WebSocket hands
 
 ## Finding the instance (`discovery.ts`, `chooseConnection`)
 
-Precedence: `_CH_DATA_DIR`, then `_CH_API_PORT` + `_CH_API_TOKEN` (so `ch mcp` needs no state file), then `api.port` + `api.token` from `state.json` in the data dir `ch`'s own realpath resolves to.
+Precedence: `_CH_DATA_DIR`, then `_CH_API_PORT` + `_CH_API_TOKEN` (so `ch mcp` needs no session file), then `port` + `token` from `session.json` in the data dir `ch`'s own realpath resolves to. `cli-module` writes that file once at start and deletes it at shutdown; its `pid` lets `ch` report a crashed launch's leftover file as not running. Never put connection details back in `state.json`: it is rewritten on every state change, and on Windows a reader holding it open makes that rename fail.
 
 - An app always clears every inherited `_CH_*` at startup (`clearInheritedEnv`, `src/utils/inherited-env.ts`, first thing in `src/main.ts`), so an app started from inside a workspace (`pnpm dev`, `pnpm preview`, e2e) gets its own terminals, agents and plugin hooks talking to it, not to the instance it was launched from. `_CHDEV_ROOT_DIR` (the root override, any build flavor) and `CH_*` config vars are not cleared.
 - `ch` connects with only who the caller is (its `cwd`); it deliberately ignores `_CH_WORKSPACE` (only `ch mcp` uses it). Never put a target in the handshake — the target is the call's own fields, so no adapter shaping can drop it and act on the caller instead.

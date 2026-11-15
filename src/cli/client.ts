@@ -100,7 +100,7 @@ export interface Client {
 /**
  * Connect, or fail with a message that says what to do about it.
  *
- * A refused connection and a stale `state.json` are the same situation from the
+ * A refused connection and a stale `session.json` are the same situation from the
  * caller's side — CodeHydra is not listening — so they report identically.
  */
 export async function connect(options: ClientOptions): Promise<Client> {

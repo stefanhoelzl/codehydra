@@ -161,7 +161,13 @@ export async function removeRoot(): Promise<void> {
 export async function resetDataState(options: { keepConfig: boolean }): Promise<void> {
   // Plugins go with every reset: a spec that installs one must not leave it
   // running scripts in the next spec's workspaces.
-  const entries = ["projects", "state.json", join("vscode", "user-data"), join("home", "plugins")];
+  const entries = [
+    "projects",
+    "state.json",
+    "session.json",
+    join("vscode", "user-data"),
+    join("home", "plugins"),
+  ];
   if (!options.keepConfig) entries.push("home");
 
   for (const entry of entries) {

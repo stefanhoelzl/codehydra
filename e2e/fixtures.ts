@@ -518,27 +518,27 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
  * immediately after launch legitimately races startup.
  */
 export async function waitForConnectionDetails(timeoutMs = 60_000): Promise<void> {
-  const statePath = join(DATA_ROOT, "state.json");
+  // resetDataState removes it between specs and a clean shutdown deletes it,
+  // so a file here is this launch's.
+  const sessionPath = join(DATA_ROOT, "session.json");
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
     try {
-      const state = JSON.parse(readFileSync(statePath, "utf-8")) as Record<string, unknown>;
-      // Both fields, the same pair `ch` requires — not the port alone. The app
-      // writes them in two separate persists, so a reader can catch the file
-      // between them; the port is written last precisely so that cannot happen,
-      // and checking both here keeps this honest if that order ever changes.
-      const token = state["api.token"];
+      const session = JSON.parse(readFileSync(sessionPath, "utf-8")) as Record<string, unknown>;
+      // Every field `ch` requires, not the port alone.
+      const { port, token, pid } = session;
       if (
-        typeof state["api.port"] === "number" &&
-        state["api.port"] > 0 &&
+        typeof port === "number" &&
+        port > 0 &&
         typeof token === "string" &&
-        token.length > 0
+        token.length > 0 &&
+        typeof pid === "number"
       ) {
         return;
       }
     } catch {
-      // Not written yet, or written but not yet complete.
+      // Not written yet.
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }

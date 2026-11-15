@@ -12,8 +12,8 @@
  * The second process is started from the driver's own launch recipe, which
  * gives it a free `--ide-server.port` of its own — so nothing but the lock can
  * stop it. Without the lock it would start completely, and the
- * state.json assertion below is what would catch the damage: its shutdown would
- * withdraw the *running* instance's CLI connection details, breaking `ch` in
+ * session.json assertion below is what would catch the damage: its shutdown would
+ * delete the *running* instance's CLI connection details, breaking `ch` in
  * every workspace of a perfectly healthy app.
  *
  * Runs in both modes: `launchCommand()` resolves the packaged binary under
@@ -27,26 +27,23 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_ROOT, launchCommand, useApp, waitForConnectionDetails } from "./fixtures";
 
-const STATE_FILE = join(DATA_ROOT, "state.json");
+const SESSION_FILE = join(DATA_ROOT, "session.json");
 
 interface ApiState {
   readonly port: number;
   readonly token: string | null;
+  readonly pid: number;
 }
 
-/**
- * The CLI connection details `ch` resolves an instance by. StateService writes
- * dot-separated keys flat, so these are `state["api.port"]`, not a nested
- * `api` object.
- */
+/** The CLI connection details `ch` resolves an instance by. */
 function readApiState(): ApiState {
-  expect(existsSync(STATE_FILE), `expected ${STATE_FILE} to exist`).toBe(true);
-  const state = JSON.parse(readFileSync(STATE_FILE, "utf-8")) as Record<string, unknown>;
-  const port = state["api.port"];
-  const token = state["api.token"];
+  expect(existsSync(SESSION_FILE), `expected ${SESSION_FILE} to exist`).toBe(true);
+  const session = JSON.parse(readFileSync(SESSION_FILE, "utf-8")) as Record<string, unknown>;
+  const { port, token, pid } = session;
   return {
     port: typeof port === "number" ? port : 0,
     token: typeof token === "string" ? token : null,
+    pid: typeof pid === "number" ? pid : 0,
   };
 }
 
@@ -54,7 +51,7 @@ const app = useApp();
 
 test("a second launch exits quietly and leaves the first instance untouched", async () => {
   // The UI is up two hook points before `start`, where the API server binds
-  // and publishes. Reading state.json without this races startup.
+  // and publishes. Reading session.json without this races startup.
   await waitForConnectionDetails();
 
   // Sanity: the running instance published connection details for `ch`.
@@ -91,8 +88,8 @@ test("a second launch exits quietly and leaves the first instance untouched", as
   expect(second.stderr).not.toContain("already in use");
   expect(second.stdout).not.toContain("Startup Failed");
 
-  // The running instance still owns state.json. A second instance that reached
-  // app:shutdown would have reset these to 0 / null on its way out.
+  // The running instance still owns session.json. A second instance that
+  // reached app:shutdown would have deleted it on its way out.
   expect(readApiState()).toEqual(before);
 
   // And it is still a working app, not just a healthy-looking file.

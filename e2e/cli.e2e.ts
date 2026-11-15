@@ -73,14 +73,15 @@ test.describe("ch CLI", () => {
   });
 
   test("publishes connection details another process can read", () => {
-    const state = JSON.parse(readFileSync(join(DATA_ROOT, "state.json"), "utf-8")) as Record<
+    const session = JSON.parse(readFileSync(join(DATA_ROOT, "session.json"), "utf-8")) as Record<
       string,
       unknown
     >;
 
-    expect(typeof state["api.port"]).toBe("number");
-    expect(state["api.port"]).toBeGreaterThan(0);
-    expect(typeof state["api.token"]).toBe("string");
+    expect(typeof session["port"]).toBe("number");
+    expect(session["port"]).toBeGreaterThan(0);
+    expect(typeof session["token"]).toBe("string");
+    expect(typeof session["pid"]).toBe("number");
   });
 
   test("connects, authenticates and answers an app-global command", () => {
