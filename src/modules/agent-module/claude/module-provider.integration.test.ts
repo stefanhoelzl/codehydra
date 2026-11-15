@@ -84,6 +84,7 @@ describe("createClaudeModuleProvider", () => {
   let mockServerManager: ClaudeCodeServerManager;
   let binary: FakeBinaryResolver;
   let processRunner: MockProcessRunner;
+  let stopBgShellsOnLowMemory: boolean;
 
   const SYSTEM_CLAUDE: ResolvedAgentBinary = {
     path: "/usr/local/bin/claude",
@@ -101,6 +102,7 @@ describe("createClaudeModuleProvider", () => {
     capturedStatusCallback = null;
     mockServerManager = createMockServerManager();
     binary = createFakeBinaryResolver({ binary: SYSTEM_CLAUDE });
+    stopBgShellsOnLowMemory = true;
   });
 
   function createProvider(
@@ -113,6 +115,7 @@ describe("createClaudeModuleProvider", () => {
       platform: "linux",
       logger: SILENT_LOGGER,
       processRunner,
+      stopBgShellsOnLowMemory: { get: () => stopBgShellsOnLowMemory },
     });
   }
 
@@ -903,6 +906,26 @@ describe("createClaudeModuleProvider", () => {
       const result = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
 
       expect(result.envVars).not.toHaveProperty("DISABLE_AUTOUPDATER");
+    });
+
+    it("leaves Claude's low-memory stopping of background shells on by default", async () => {
+      const provider = createProvider();
+
+      const result = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
+
+      expect(result.envVars).not.toHaveProperty("CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP");
+    });
+
+    it("turns Claude's low-memory stopping off when the setting is false, read at each start", async () => {
+      const provider = createProvider();
+      stopBgShellsOnLowMemory = false;
+
+      const off = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
+      expect(off.envVars).toMatchObject({ CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP: "1" });
+
+      stopBgShellsOnLowMemory = true;
+      const on = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
+      expect(on.envVars).not.toHaveProperty("CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP");
     });
 
     it("calls setInitialPrompt when initialPrompt option is provided", async () => {
