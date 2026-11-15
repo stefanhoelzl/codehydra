@@ -25,11 +25,10 @@
     UiWorkspaceRow,
   } from "@shared/ui-state";
   import {
-    automatedShown,
     describeRowCounts,
+    moonToggle,
     projectColor,
     rowCounts,
-    rowGroup,
     rowOn,
     rowQuestions,
     sleepingCounts,
@@ -39,6 +38,7 @@
   import SidebarIcon from "./SidebarIcon.svelte";
   import RowCountItems from "./RowCountItems.svelte";
   import WorkspaceRow from "./WorkspaceRow.svelte";
+  import HibernatedList from "./HibernatedList.svelte";
 
   interface Props {
     /** The inactive projects, in main's order. */
@@ -125,16 +125,9 @@
     const act = target.closest("[data-act]")?.getAttribute("data-act") ?? null;
     if (act !== "hibtoggle" && act !== "autoshow") hideHibernated(project);
     switch (act) {
-      case "hibtoggle": {
-        if (project.hibernatedView !== "hidden") {
-          onSetHibernatedView(project, "hidden");
-          return;
-        }
-        // Only automated ones to show: show them, not a list with just the menu item.
-        const manual = project.workspaces.some((row) => rowGroup(row) === "hibernated");
-        onSetHibernatedView(project, manual ? "manual" : "all");
+      case "hibtoggle":
+        onSetHibernatedView(project, moonToggle(project));
         return;
-      }
       case "autoshow":
         onSetHibernatedView(project, "all");
         return;
@@ -161,9 +154,6 @@
   {@const lineCounts = sleepingCounts(rowCounts(project.workspaces))}
   {@const sleepers = lineCounts.hibernated + lineCounts.automated > 0}
   {@const listOpen = project.hibernatedView !== "hidden"}
-  {@const hibernated = project.workspaces.filter((row) => rowGroup(row) === "hibernated")}
-  {@const automated = project.workspaces.filter((row) => rowGroup(row) === "automated")}
-  {@const menuOn = automated.length > 0 && !automatedShown(project)}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
     class="iproj"
@@ -204,23 +194,8 @@
       >
     </div>
     {#if sleepers}
-      <div class="hib-group" class:open={listOpen} inert={!listOpen}>
-        <div class="hib-inner">
-          {#each hibernated as row (row.key)}{@render rowFold(shown, row)}{/each}
-          {#if automated.length > 0}
-            <div class="cl" class:open={menuOn}>
-              <div class="clin">
-                <button type="button" class="auto-menu" data-act="autoshow"
-                  ><SidebarIcon name="moon" />Show automated workspaces{lineCounts.automated > 0
-                    ? ` (${lineCounts.automated})`
-                    : ""}</button
-                >
-              </div>
-            </div>
-          {/if}
-          {#each automated as row (row.key)}{@render rowFold(shown, row)}{/each}
-        </div>
-      </div>
+      {#snippet row(ws: UiWorkspaceRow)}{@render rowFold(shown, ws)}{/snippet}
+      <HibernatedList project={shown} open={listOpen} menuAllowed indented {row} />
     {/if}
   </div>
 {/snippet}
@@ -479,30 +454,7 @@
     color: #fff;
   }
 
-  .hib-group {
-    display: grid;
-    grid-template-rows: 0fr;
-    margin-left: 12px;
-    transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  .hib-group.open {
-    grid-template-rows: 1fr;
-  }
-  .hib-inner {
-    overflow: hidden;
-    min-height: 0;
-    border-left: 1px dashed var(--ch-sb-line-2);
-    padding-left: 4px;
-  }
-  .hib-group .hib-inner :global(.ws) {
-    transition:
-      opacity 0.2s,
-      transform 0.24s cubic-bezier(0.3, 0.7, 0.2, 1);
-  }
-  .hib-group:not(.open) .hib-inner :global(.ws) {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
+  /* Its rows' folds (the hibernated list itself is HibernatedList's). */
   .cl {
     display: grid;
     grid-template-rows: 0fr;
@@ -523,37 +475,10 @@
   .cl:not(.open) {
     pointer-events: none;
   }
-  .auto-menu {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    border: 0;
-    background: transparent;
-    color: var(--ch-sb-auto);
-    font: inherit;
-    font-size: 12px;
-    font-weight: 500;
-    padding: 6px 10px;
-    margin: 1px 0;
-    border-radius: 8px;
-    cursor: pointer;
-    text-align: left;
-  }
-  .auto-menu :global(.sb-icon) {
-    width: 14px;
-    height: 14px;
-    margin: 0 1px;
-  }
-  .auto-menu:hover {
-    background: color-mix(in srgb, var(--ch-sb-auto) 12%, transparent);
-  }
 
   /* with reduced motion the layout lands at once */
   :global(.sb.instant) .body-wrap,
-  :global(.sb.instant) .hib-group,
   :global(.sb.instant) .cl,
-  :global(.sb.instant) .hib-inner :global(.ws),
   :global(.sb.instant) .inact-h :global(.sb-icon.chev) {
     transition: none;
   }

@@ -15,6 +15,7 @@
   import {
     automatedShown,
     describeRowCounts,
+    moonToggle,
     projectColor,
     projectFolds,
     rowCounts,
@@ -30,6 +31,7 @@
   import RowCountItems from "./RowCountItems.svelte";
   import Highlighted from "./Highlighted.svelte";
   import WorkspaceRow from "./WorkspaceRow.svelte";
+  import HibernatedList from "./HibernatedList.svelte";
   import type { TransitionConfig } from "svelte/transition";
   import type { RowMotion } from "./motion";
 
@@ -87,6 +89,7 @@
   const menuOn = $derived(
     !finding && folds.expanded && automated.length > 0 && !automatedShown(project)
   );
+  // The dashed line between the hibernated list and the awake rows.
   const delimOn = $derived(([...hibernated, ...automated].some(on) || menuOn) && awake.some(on));
   const counts = $derived(rowCounts(project.workspaces));
   // Split so an expanded header's hibernated button can hold the sleeping counts,
@@ -106,7 +109,7 @@
     }
     switch (act) {
       case "hibtoggle":
-        onSetHibernatedView(project, hibernatedOpen ? "hidden" : "manual");
+        onSetHibernatedView(project, moonToggle(project));
         return;
       case "autoshow":
         onSetHibernatedView(project, "all");
@@ -217,28 +220,13 @@
   <div class="body-wrap" class:open={folds.bodyOpen}>
     <div class="body-inner">
       {#if hibernated.length + automated.length > 0}
-        <div class="hib-group" class:open={folds.hibernatedOpen}>
-          <div class="hib-inner">
-            {#each hibernated as row (row.key)}{@render rowFold(row)}{/each}
-            {#if automated.length > 0}
-              <div class="cl" class:open={menuOn}>
-                <div class="clin">
-                  <button type="button" class="auto-menu" data-act="autoshow"
-                    ><SidebarIcon name="moon" />Show automated workspaces{counts.automated > 0
-                      ? ` (${counts.automated})`
-                      : ""}</button
-                  >
-                </div>
-              </div>
-            {/if}
-            {#each automated as row (row.key)}{@render rowFold(row)}{/each}
-            {#if awake.length > 0}
-              <div class="cl" class:open={delimOn}>
-                <div class="clin"><div class="hib-delim"><span></span></div></div>
-              </div>
-            {/if}
-          </div>
-        </div>
+        <HibernatedList
+          {project}
+          open={folds.hibernatedOpen}
+          menuAllowed={!finding && folds.expanded}
+          delimiter={awake.length > 0 ? delimOn : undefined}
+          row={rowFold}
+        />
       {/if}
       {#each awake as row (row.key)}{@render rowFold(row)}{/each}
     </div>
@@ -282,7 +270,8 @@
     overflow: hidden;
     min-height: 0;
   }
-  .body-inner > :first-child {
+  /* The first child may be HibernatedList's root, outside this component's scope. */
+  .body-inner > :global(:first-child) {
     margin-top: 2px;
   }
   .mono-av {
@@ -404,30 +393,6 @@
     padding: 0 2px;
   }
 
-  .hib-group {
-    display: grid;
-    grid-template-rows: 0fr;
-    transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  .hib-inner {
-    overflow: hidden;
-    min-height: 0;
-  }
-  .hib-group.open {
-    grid-template-rows: 1fr;
-  }
-  .hib-group .hib-inner :global(.ws) {
-    transition:
-      opacity 0.2s,
-      transform 0.24s cubic-bezier(0.3, 0.7, 0.2, 1);
-  }
-  .hib-group:not(.open) .hib-inner :global(.ws) {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  .hib-group :global(.ws:first-child) {
-    margin-top: 2px;
-  }
   .cl {
     display: grid;
     grid-template-rows: 0fr;
@@ -448,56 +413,10 @@
   .cl:not(.open) {
     pointer-events: none;
   }
-  .auto-menu {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    border: 0;
-    background: transparent;
-    color: var(--ch-sb-auto);
-    font: inherit;
-    font-size: 12px;
-    font-weight: 500;
-    padding: 6px 10px;
-    margin: 1px 0;
-    border-radius: 8px;
-    cursor: pointer;
-    text-align: left;
-  }
-  .auto-menu :global(.sb-icon) {
-    width: 14px;
-    height: 14px;
-    margin: 0 1px;
-  }
-  .auto-menu:hover {
-    background: color-mix(in srgb, var(--ch-sb-auto) 12%, transparent);
-  }
-  .hib-delim {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 3px 8px 4px;
-  }
-  .hib-delim::before,
-  .hib-delim::after {
-    content: "";
-    flex: 1;
-    height: 1px;
-    background: repeating-linear-gradient(90deg, var(--ch-sb-line-2) 0 4px, transparent 4px 8px);
-  }
-  .hib-delim span {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: var(--ch-sb-line-2);
-  }
 
   /* while typing in Find (or with reduced motion) the layout lands at once */
   :global(.sb.instant) .body-wrap,
-  :global(.sb.instant) .hib-group,
   :global(.sb.instant) .cl,
-  :global(.sb.instant) .hib-inner :global(.ws),
   :global(.sb.instant) .proj-h :global(.sb-icon.chev) {
     transition: none;
   }

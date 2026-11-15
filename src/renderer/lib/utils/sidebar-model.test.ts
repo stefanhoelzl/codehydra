@@ -138,9 +138,16 @@ describe("sidebar-model", () => {
     expect(rowStatusText(none, "Hibernated")).toBe("No agents running");
   });
 
-  it("toggles the moon", () => {
-    expect(moonToggle("hidden")).toBe("manual");
-    expect(moonToggle("all")).toBe("hidden");
+  it("toggles the moon, straight to the automated ones when there are no others", () => {
+    const p = project("codehydra");
+    expect(moonToggle(p)).toBe("manual");
+    expect(moonToggle({ ...p, hibernatedView: "manual" })).toBe("hidden");
+    expect(moonToggle({ ...p, hibernatedView: "all" })).toBe("hidden");
+    const onlyAutomated = {
+      ...p,
+      workspaces: p.workspaces.filter((row) => rowGroup(row) !== "hibernated"),
+    };
+    expect(moonToggle(onlyAutomated)).toBe("all");
   });
 
   it("has a distinct color for every index main assigns", () => {
