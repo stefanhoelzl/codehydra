@@ -4,27 +4,27 @@
 # checkout. The agent's prompt is prompt.md with its {{placeholders}} filled in, wakeup.sh
 # embedded verbatim: the workspace checks out the PR's head, which need not contain this folder.
 # A failing gh call (offline, rate limit) exits 75, a temporary failure.
+# Needs only gh: its --jq filters do the shaping (no standalone jq, which Git for Windows lacks),
+# reading their inputs from the environment ($ENV) since gh --jq takes no --arg.
 set -euo pipefail
 
 here="${CH_PLUGIN_DIR:-$(dirname "$0")}"
 
-repo_json=$(gh repo view --json nameWithOwner,owner) || exit 75
+repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || exit 75
+owner=$(gh repo view --json owner --jq .owner.login) || exit 75
 me=$(gh api user --jq .login) || exit 75
-owner=$(jq -r .owner.login <<<"$repo_json")
-repo=$(jq -r .nameWithOwner <<<"$repo_json")
 
 if [ "$me" != "$owner" ]; then
   echo '[]'
   exit 0
 fi
 
-prs=$(gh pr list --repo "$repo" --state open --limit 200 \
-  --json number,title,url,headRefName,isDraft,author) || exit 75
-
-jq --arg me "$me" --arg repo "$repo" \
-  --rawfile prompt "$here/prompt.md" --rawfile wakeup "$here/wakeup.sh" '
-  def fill($vars): reduce ($vars | to_entries[]) as $v (.; gsub("\\{\\{" + $v.key + "\\}\\}"; $v.value));
-  [ .[]
+ME="$me" REPO="$repo" PROMPT="$(cat "$here/prompt.md")" WAKEUP="$(cat "$here/wakeup.sh")" \
+  gh pr list --repo "$repo" --state open --limit 200 \
+  --json number,title,url,headRefName,isDraft,author --jq '
+  def fill($vars): reduce ($vars | to_entries[]) as $v (.; gsub("[{][{]" + $v.key + "[}][}]"; $v.value));
+  $ENV.ME as $me | $ENV.REPO as $repo
+  | [ .[]
     | select(.isDraft | not)
     | select(.author.login != $me)
     | . as $pr
@@ -38,7 +38,7 @@ jq --arg me "$me" --arg repo "$repo" \
           title: "PR #\(.number): \(.title)",
           tags: { review: { color: "#d29922", description: "Pull request review" } }
         },
-        prompt: ($prompt | fill({
+        prompt: ($ENV.PROMPT | fill({
           number: ($pr.number | tostring),
           title: $pr.title,
           url: $pr.url,
@@ -46,7 +46,7 @@ jq --arg me "$me" --arg repo "$repo" \
           repo: $repo,
           me: $me,
           workspace: $name,
-          wakeup: $wakeup
+          wakeup: $ENV.WAKEUP
         }))
       }
-  ]' <<<"$prs"
+  ]' || exit 75
