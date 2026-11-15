@@ -27,6 +27,7 @@ vi.mock("$lib/api");
 
 import { emitEvent, sendNotificationEvent } from "$lib/api";
 import Sidebar from "./Sidebar.svelte";
+import { rowGroup } from "$lib/utils/sidebar-model.js";
 
 type Props = {
   projects: readonly UiProjectRow[];
@@ -340,6 +341,19 @@ describe("Sidebar", () => {
       await fireEvent.click(card(container, "codehydra").querySelector(".sleepers")!);
       expect(events()).toEqual([
         { kind: "set-hibernated-view", projectId: "codehydra", view: "hidden" },
+      ]);
+    });
+
+    it("with only automated ones asleep, the moon shows them at once", async () => {
+      const base = sampleProjects();
+      const codehydra = base.find((p) => p.id === "codehydra")!;
+      const projects = withProject(base, "codehydra", {
+        workspaces: codehydra.workspaces.filter((ws) => rowGroup(ws) !== "hibernated"),
+      });
+      const { container } = setup({ projects });
+      await fireEvent.click(card(container, "codehydra").querySelector(".sleepers")!);
+      expect(events()).toEqual([
+        { kind: "set-hibernated-view", projectId: "codehydra", view: "all" },
       ]);
     });
 

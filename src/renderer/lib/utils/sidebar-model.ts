@@ -324,9 +324,14 @@ export function projectColor(colorIndex: number): string {
   return PROJECT_COLORS[colorIndex % PROJECT_COLORS.length] ?? PROJECT_COLORS[0];
 }
 
-/** The next view the moon button toggles to: open the hibernated list, or close it. */
-export function moonToggle(view: HibernatedView): HibernatedView {
-  return view === "hidden" ? "manual" : "hidden";
+/**
+ * The view a project's moon button toggles to: close an open hibernated list,
+ * or open it — straight to the automated workspaces when there are no others,
+ * rather than to a list holding only the "Show automated workspaces" item.
+ */
+export function moonToggle(project: UiProjectRow): HibernatedView {
+  if (project.hibernatedView !== "hidden") return "hidden";
+  return project.workspaces.some((row) => rowGroup(row) === "hibernated") ? "manual" : "all";
 }
 
 /** Split text into runs, marking the first match of each word of the Find text. */

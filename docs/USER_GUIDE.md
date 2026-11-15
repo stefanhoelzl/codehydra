@@ -189,7 +189,8 @@ projects open, colors repeat.
   being deleted or failed to delete, which it does not count. Click it to show
   the hibernated ones at the top of the card,
   most recently hibernated first; a **Show automated workspaces** item, in its
-  own color, shows the automated ones below them. Moving the pointer off the
+  own color, shows the automated ones below them. With only automated ones,
+  the click shows those directly. Moving the pointer off the
   card, or clicking anything else in it, folds the list away again. The
   hibernated workspace you are on stays shown.
 - <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> steps the current project's list
