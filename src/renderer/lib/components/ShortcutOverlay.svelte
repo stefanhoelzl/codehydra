@@ -52,10 +52,9 @@
   const showNew = true;
   const showDelete = $derived(hasActiveWorkspace && !activeWorkspaceDeletionInProgress);
   const showIdleNavigation = $derived(idleWorkspaceCount >= minToNavigate);
-  // T cycles hidden → hibernated → hibernated and automated → hidden.
+  // T toggles the hibernated list (automated workspaces included).
   const NEXT_HIBERNATED_LABEL: Record<HibernatedView, string> = {
     hidden: "Show hibernated",
-    manual: "Show automated",
     all: "Hide hibernated",
   };
 </script>

@@ -187,14 +187,12 @@ projects open, colors repeat.
   [wakeup script](#wakeup-scripts), they wake by themselves; see
   [status](#status-indicators)); it is a bare moon while every one of them is
   being deleted or failed to delete, which it does not count. Click it to show
-  the hibernated ones at the top of the card,
-  most recently hibernated first; a **Show automated workspaces** item, in its
-  own color, shows the automated ones below them. With only automated ones,
-  the click shows those directly. Moving the pointer off the
+  them at the top of the card: the hibernated ones, most recently hibernated
+  first, then the automated ones in their own color. Moving the pointer off the
   card, or clicking anything else in it, folds the list away again. The
   hibernated workspace you are on stays shown.
-- <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> steps the current project's list
-  through the same three states: hidden, hibernated shown, automated shown too.
+- <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> shows or hides the current
+  project's list, as the button does.
 - <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>C</kbd> collapses or expands the current
   project, as a click on its header does.
 - Notifications (clone progress, failures, updates) stack at the bottom of the
@@ -222,7 +220,7 @@ A project whose hibernated workspace you are on keeps its card.
   counts and, on hover, a trash icon (close the project) and a lit **+**.
 - Click a line (or its **+**) to open the New workspace form for that project.
 - Click its moon/alarm counts to show the project's hibernated workspaces below
-  the line (with only automated ones, those directly); click one to wake it.
+  the line, the automated ones last; click one to wake it.
 - The entry folds shut shortly after the pointer leaves it, and a line's
   hibernated list as the pointer leaves the line.
 - As soon as a project has an awake workspace — a new one, or one you woke — it
@@ -377,9 +375,9 @@ is easy to spot. Turn this off with `auto-tag.new`.
 - **Find** — click the Find field at the top of the sidebar (or
   <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>F</kbd>, or <kbd>/</kbd> while the sidebar has
   the focus). While it has the focus every project is expanded and their
-  hibernated workspaces are shown; <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> steps
-  all projects at once through hibernated shown, automated shown too, and
-  none. Typing filters the rows: every space-separated word must appear in the
+  hibernated workspaces, automated ones included, are shown;
+  <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd> hides or shows them for all
+  projects at once. Typing filters the rows: every space-separated word must appear in the
   workspace's title, name, project, or a tag's name, label or description
   (`sna 4-` finds the `4-…` workspaces of `snapsync`), and each is marked where
   it first matches. A marker sits on the current workspace (else the
@@ -461,8 +459,8 @@ ch ws hibernate --wakeup 'gh pr checks 12 >/dev/null && echo "{\"action\":\"wake
   run succeeds or the workspace is woken. `ch ws wakeup show` lists the failure with its run log, kept under
   `<data directory>/logs/wakeup/`.
 - A hibernated workspace with a wakeup script is **automated**: the sidebar
-  lists it apart, in its own color, behind its project's **Show automated
-  workspaces** item; hover its row to see the script.
+  lists it apart, in its own color, after the project's other hibernated
+  workspaces; hover its row to see the script.
 
 ### Deleting a workspace
 

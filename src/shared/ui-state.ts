@@ -54,13 +54,12 @@ export const PROCESS_TREE_MIN_HEIGHT = 0.1;
 export const PROCESS_TREE_MAX_HEIGHT = 0.7;
 
 /**
- * How much of a project's hibernated list the sidebar shows: `hidden` (none,
- * the resting state), `manual` (the hibernated workspaces without a wakeup
- * script) or `all` (the automated ones too). Main-owned, not persisted: the
- * project's moon button, its "Show automated workspaces" item and
- * Alt+X, T change it; leaving the project card resets it to `hidden`.
+ * Whether the sidebar shows a project's hibernated list: `hidden` (the resting
+ * state) or `all` (the hibernated workspaces, then the automated ones).
+ * Main-owned, not persisted: the project's moon button and Alt+X, T toggle it;
+ * leaving the project card resets it to `hidden`.
  */
-export const HIBERNATED_VIEWS = ["hidden", "manual", "all"] as const;
+export const HIBERNATED_VIEWS = ["hidden", "all"] as const;
 export type HibernatedView = (typeof HIBERNATED_VIEWS)[number];
 
 /**
@@ -173,8 +172,8 @@ export interface UiWorkspaceRow {
   /**
    * The wakeup script of a hibernated workspace that has one (an "automated"
    * workspace: it wakes by itself). Present only while `hibernated`. The
-   * sidebar lists these after the other hibernated workspaces, behind their
-   * own "Show automated workspaces" item.
+   * sidebar lists these after the other hibernated workspaces, in their own
+   * color.
    */
   readonly wakeupScript?: string;
   readonly agent: AgentStatus;

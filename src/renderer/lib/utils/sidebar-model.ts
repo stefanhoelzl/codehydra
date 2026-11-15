@@ -202,33 +202,15 @@ export function matches(project: UiProjectRow, row: UiWorkspaceRow, ql: string):
   return queryWords(ql).every((word) => fields.some((field) => field.includes(word)));
 }
 
-/** Whether a project's automated rows are shown (outside Find). */
-export function automatedShown(project: UiProjectRow): boolean {
-  return (
-    project.hibernatedView === "all" ||
-    project.workspaces.some((row) => row.active && isAutomated(row))
-  );
-}
-
-/** Which hibernated rows Find shows. */
-function findShows(view: HibernatedView, row: UiWorkspaceRow): boolean {
-  switch (rowGroup(row)) {
-    case "awake":
-      return true;
-    case "hibernated":
-      return view !== "hidden";
-    case "automated":
-      return view === "all";
-  }
-}
-
 /** Is the row part of the list right now (before its project's own folds)? */
 export function rowOn(project: UiProjectRow, row: UiWorkspaceRow, view: SidebarView): boolean {
   if (view.find !== null) {
-    return matches(project, row, normalizedQuery(view)) && findShows(view.find.hibernatedView, row);
+    return (
+      matches(project, row, normalizedQuery(view)) &&
+      (!row.hibernated || view.find.hibernatedView !== "hidden")
+    );
   }
-  if (project.collapsed) return false;
-  return !isAutomated(row) || automatedShown(project);
+  return !project.collapsed;
 }
 
 /**
@@ -324,14 +306,9 @@ export function projectColor(colorIndex: number): string {
   return PROJECT_COLORS[colorIndex % PROJECT_COLORS.length] ?? PROJECT_COLORS[0];
 }
 
-/**
- * The view a project's moon button toggles to: close an open hibernated list,
- * or open it — straight to the automated workspaces when there are no others,
- * rather than to a list holding only the "Show automated workspaces" item.
- */
-export function moonToggle(project: UiProjectRow): HibernatedView {
-  if (project.hibernatedView !== "hidden") return "hidden";
-  return project.workspaces.some((row) => rowGroup(row) === "hibernated") ? "manual" : "all";
+/** The view the moon button toggles to: open the whole hibernated list, or close it. */
+export function moonToggle(view: HibernatedView): HibernatedView {
+  return view === "hidden" ? "all" : "hidden";
 }
 
 /** Split text into runs, marking the first match of each word of the Find text. */
