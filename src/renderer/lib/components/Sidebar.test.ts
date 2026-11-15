@@ -18,8 +18,8 @@ import type {
   UiProcessTree,
   UiProjectRow,
 } from "@shared/ui-state";
-import { createMockApi, makeUiWorkspaceRow } from "../test-utils";
-import { NOW, question, sampleProjects } from "./sidebar-fixture";
+import { createMockApi, makeUiProjectRow, makeUiWorkspaceRow } from "../test-utils";
+import { NOW, inactiveProjects, question, sampleProjects } from "./sidebar-fixture";
 
 const mockApi: Api = createMockApi();
 window.api = mockApi;
@@ -277,7 +277,10 @@ describe("Sidebar", () => {
     });
 
     it("the button counts only ready rows, and is a bare moon while none are", () => {
+      // An awake row keeps the project a card (not an inactive one).
+      const awake = makeUiWorkspaceRow("awake", { key: "website/awake" });
       const rows = (status: "ready" | "deleting") => [
+        awake,
         makeUiWorkspaceRow("sleeping", { key: "website/sleeping", hibernated: true, status }),
         makeUiWorkspaceRow("cron", {
           key: "website/cron",
@@ -416,7 +419,8 @@ describe("Sidebar", () => {
     it("counts a row mid-change as loading only, and a failed row nowhere", () => {
       const projects = withProject(sampleProjects(), "infra", {
         workspaces: [
-          makeUiWorkspaceRow("sleeping", { key: "infra/sleeping", hibernated: true }),
+          // Active, so the all-asleep project stays a card (not an inactive one).
+          makeUiWorkspaceRow("sleeping", { key: "infra/sleeping", hibernated: true, active: true }),
           makeUiWorkspaceRow("gone", { key: "infra/gone", hibernated: true, status: "deleting" }),
           makeUiWorkspaceRow("stuck", {
             key: "infra/stuck",
@@ -912,14 +916,18 @@ describe("Sidebar", () => {
       expect(rowStats(container, key)).toBe("10% · 100M · 2");
     });
 
-    it("leaves the project header without a process icon or numbers, collapsed or expanded", () => {
+    it("leaves the project header without a process icon or numbers, collapsed, expanded or inactive", () => {
       const { container } = setup({
         processSummary: "total",
         projects: [...withProcesses(), asleep()],
       });
-      // infra is collapsed and has three awake rows; website is expanded.
-      for (const name of ["infra", "website", "asleep"]) {
-        const header = card(container, name).querySelector(".proj-h")!;
+      // infra is collapsed and has three awake rows; website is expanded; asleep is inactive.
+      const headers = [
+        card(container, "infra").querySelector(".proj-h")!,
+        card(container, "website").querySelector(".proj-h")!,
+        container.querySelector('.iproj[data-project-id="asleep"] .iline')!,
+      ];
+      for (const header of headers) {
         expect(header.querySelector('[title*="processes"]')).toBeNull();
         expect(header.textContent).not.toContain("300M");
       }
@@ -1171,6 +1179,226 @@ describe("Sidebar", () => {
           );
         });
       });
+    });
+  });
+
+  describe("inactive projects", () => {
+    const withInactive = (): UiProjectRow[] => [...sampleProjects(), ...inactiveProjects()];
+    const entry = (container: Element): Element => {
+      const el = container.querySelector(".inact");
+      if (el === null) throw new Error("no inactive entry");
+      return el;
+    };
+    const line = (container: Element, id: string): Element => {
+      const el = entry(container).querySelector(`.iproj[data-project-id="${id}"]`);
+      if (el === null) throw new Error(`no inactive line ${id}`);
+      return el;
+    };
+    const entryOpen = (container: Element): boolean =>
+      entry(container).querySelector(".body-wrap")?.classList.contains("open") ?? false;
+    const lineListOpen = (container: Element, id: string): boolean =>
+      line(container, id).querySelector(".hib-group")?.classList.contains("open") ?? false;
+
+    it("folds the projects without an awake workspace into one entry above the cards", () => {
+      const { container } = setup({ projects: withInactive() });
+      for (const id of ["empty-repo", "docs", "scripts"]) {
+        expect(container.querySelector(`.proj[data-project-id="${id}"]`)).toBeNull();
+      }
+      expect(container.querySelectorAll(".proj").length).toBe(4);
+      expect(container.querySelector(".sb-body")?.firstElementChild).toBe(entry(container));
+      expect(entryOpen(container)).toBe(false);
+      const header = entry(container).querySelector(".inact-h")!;
+      expect(header.querySelector(".label")?.textContent).toBe("Inactive projects");
+      expect([...header.querySelectorAll(".stack .mono-av")].map((el) => el.textContent)).toEqual([
+        "E",
+        "D",
+        "S",
+      ]);
+      expect(header.querySelector(".more")).toBeNull();
+      expect(header.querySelector(".cnt .hib")?.textContent).toBe("1");
+      expect(header.querySelector(".cnt .auto")?.textContent).toBe("2");
+      expect(header.getAttribute("title")).toBe(
+        "3 inactive projects · empty-repo, docs, scripts · 1 hibernated · 2 automated"
+      );
+    });
+
+    it("stacks three badges, then counts the rest", () => {
+      const more = [1, 2].map((n) =>
+        makeUiProjectRow([], { id: `extra-${n}`, name: `extra-${n}` })
+      );
+      const { container } = setup({ projects: [...withInactive(), ...more] });
+      expect(entry(container).querySelectorAll(".stack .mono-av").length).toBe(3);
+      expect(entry(container).querySelector(".stack .more")?.textContent).toBe("+2");
+    });
+
+    it("is not there while every project has an awake workspace", () => {
+      const { container } = setup({ projects: sampleProjects() });
+      expect(container.querySelector(".inact")).toBeNull();
+    });
+
+    it("keeps a project whose active workspace is hibernated a card", () => {
+      const projects = withInactive().map((project) =>
+        project.id === "docs"
+          ? {
+              ...project,
+              workspaces: project.workspaces.map((ws, i) =>
+                i === 0 ? { ...ws, active: true } : ws
+              ),
+            }
+          : project
+      );
+      const { container } = setup({ projects });
+      expect(card(container, "docs")).not.toBeNull();
+      expect(entry(container).querySelector('.iproj[data-project-id="docs"]')).toBeNull();
+    });
+
+    it("unfolds on a click into a line per project, each with its sleeping counts", async () => {
+      const { container } = setup({ projects: withInactive() });
+      await fireEvent.click(entry(container).querySelector(".inact-h")!);
+      expect(entryOpen(container)).toBe(true);
+      expect(entry(container).querySelector(".inact-h")?.getAttribute("aria-expanded")).toBe(
+        "true"
+      );
+      expect(line(container, "empty-repo").querySelector(".sleepers")).toBeNull();
+      expect(line(container, "docs").querySelector(".sleepers .hib")?.textContent).toBe("1");
+      expect(line(container, "docs").querySelector(".sleepers .auto")?.textContent).toBe("1");
+      await fireEvent.click(entry(container).querySelector(".inact-h")!);
+      expect(entryOpen(container)).toBe(false);
+    });
+
+    it("a click on a line or its + opens the form for that project; the trash closes it", async () => {
+      const { container } = setup({ projects: withInactive() });
+      await fireEvent.click(line(container, "empty-repo").querySelector(".name")!);
+      await fireEvent.click(line(container, "docs").querySelector(".plus")!);
+      await fireEvent.click(line(container, "scripts").querySelector('[data-act="closeproj"]')!);
+      expect(events()).toEqual([
+        { kind: "open-new-workspace", projectId: "empty-repo" },
+        { kind: "open-new-workspace", projectId: "docs" },
+        { kind: "close-project", projectId: "scripts" },
+      ]);
+    });
+
+    it("the moon shows a project's hibernated list, where a click wakes a workspace", async () => {
+      const projects = withInactive();
+      const { container, rerender } = setup({ projects });
+      await fireEvent.click(entry(container).querySelector(".inact-h")!);
+      await fireEvent.click(line(container, "docs").querySelector(".sleepers")!);
+      // Only automated ones: straight to them, not to a list holding just the menu item.
+      await fireEvent.click(line(container, "scripts").querySelector(".sleepers")!);
+      expect(events()).toEqual([
+        { kind: "set-hibernated-view", projectId: "docs", view: "manual" },
+        { kind: "set-hibernated-view", projectId: "scripts", view: "all" },
+      ]);
+
+      rerender({
+        projects: withProject(
+          withProject(projects, "docs", { hibernatedView: "manual" }),
+          "scripts",
+          { hibernatedView: "all" }
+        ),
+      });
+      expect(lineListOpen(container, "docs")).toBe(true);
+      expect(rowOpen(container, "docs/old-guide")).toBe(true);
+      expect(rowOpen(container, "docs/nightly-check")).toBe(false);
+      expect(line(container, "docs").querySelector(".auto-menu")?.textContent).toContain(
+        "Show automated workspaces (1)"
+      );
+      // A collapsed card does not keep its rows folded in the entry.
+      expect(lineListOpen(container, "scripts")).toBe(true);
+      expect(rowOpen(container, "scripts/cron")).toBe(true);
+
+      vi.mocked(emitEvent).mockClear();
+      await fireEvent.click(row(container, "docs/old-guide"));
+      expect(events()).toEqual([
+        { kind: "set-hibernated-view", projectId: "docs", view: "hidden" },
+        { kind: "wake-workspace", key: "docs/old-guide" },
+        { kind: "switch-workspace", key: "docs/old-guide" },
+      ]);
+    });
+
+    it("folds shut a moment after the pointer leaves, hiding the hibernated lists", async () => {
+      const projects = withInactive();
+      const { container, rerender } = setup({ projects });
+      await fireEvent.click(entry(container).querySelector(".inact-h")!);
+      rerender({ projects: withProject(projects, "docs", { hibernatedView: "manual" }) });
+      vi.mocked(emitEvent).mockClear();
+
+      // A brief slip out and back in changes nothing.
+      await fireEvent.mouseLeave(entry(container));
+      vi.advanceTimersByTime(200);
+      await fireEvent.mouseEnter(entry(container));
+      vi.advanceTimersByTime(500);
+      flushSync();
+      expect(entryOpen(container)).toBe(true);
+      expect(events()).toEqual([]);
+
+      await fireEvent.mouseLeave(entry(container));
+      vi.advanceTimersByTime(300);
+      flushSync();
+      expect(entryOpen(container)).toBe(false);
+      expect(events()).toEqual([
+        { kind: "set-hibernated-view", projectId: "docs", view: "hidden" },
+      ]);
+    });
+
+    it("a line's hibernated list folds as the pointer leaves the line", async () => {
+      const projects = withProject(withInactive(), "docs", { hibernatedView: "manual" });
+      const { container } = setup({ projects });
+      await fireEvent.mouseLeave(line(container, "docs"));
+      expect(events()).toEqual([
+        { kind: "set-hibernated-view", projectId: "docs", view: "hidden" },
+      ]);
+    });
+
+    it("moves a project to the cards once it has an awake workspace, and back once it has none", () => {
+      const projects = withInactive();
+      const { container, rerender } = setup({ projects });
+      const creating = makeUiWorkspaceRow("new-one", {
+        key: "empty-repo/new-one",
+        status: "creating",
+      });
+      rerender({ projects: withProject(projects, "empty-repo", { workspaces: [creating] }) });
+      expect(card(container, "empty-repo")).not.toBeNull();
+      expect(entry(container).querySelector('.iproj[data-project-id="empty-repo"]')).toBeNull();
+
+      const website = projects.find((project) => project.id === "website")!;
+      rerender({
+        projects: withProject(projects, "website", {
+          workspaces: website.workspaces.map((ws) => ({ ...ws, hibernated: true })),
+        }),
+      });
+      expect(container.querySelector('.proj[data-project-id="website"]')).toBeNull();
+      expect(line(container, "website")).not.toBeNull();
+    });
+
+    it("dissolves in Find, so every project is a card", async () => {
+      const { container } = setup({ projects: withInactive() });
+      await fireEvent.focus(container.querySelector("input")!);
+      expect(container.querySelector(".inact")).toBeNull();
+      expect(card(container, "docs")).not.toBeNull();
+      expect(card(container, "empty-repo")).not.toBeNull();
+    });
+
+    it("a question arriving for one of its workspaces unfolds the entry", () => {
+      const projects = withInactive();
+      const { container, rerender } = setup({ projects });
+      rerender({
+        projects: withProject(projects, "docs", { hibernatedView: "manual" }),
+        notifications: [question("q1", "docs/old-guide", "Go on?", ["Yes", "No"])],
+      });
+      expect(entryOpen(container)).toBe(true);
+    });
+
+    it("is a single glyph on the collapsed rail", () => {
+      const { container } = setup({
+        projects: withInactive(),
+        sidebarMode: "overlay",
+        mode: "workspace",
+      });
+      const groups = [...container.querySelectorAll(".rail .rgrp")];
+      expect(groups.length).toBe(5);
+      expect(groups[0]?.classList.contains("inactive")).toBe(true);
+      expect(groups[0]?.querySelectorAll(".r-ws").length).toBe(1);
     });
   });
 

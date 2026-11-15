@@ -106,6 +106,31 @@ export function sampleProjects(activeKey = "codehydra/redesign-sidebar"): UiProj
   ];
 }
 
+/**
+ * Projects without an awake workspace, which the sidebar folds into its
+ * "Inactive projects" entry: one with no workspaces, one with a hibernated and
+ * an automated one, and a collapsed one with only an automated one.
+ */
+export function inactiveProjects(): UiProjectRow[] {
+  return [
+    makeUiProjectRow([], { id: "empty-repo", name: "empty-repo", colorIndex: 4 }),
+    makeUiProjectRow(
+      [
+        ws("docs", "old-guide", { ago: 600 }),
+        ws("docs", "nightly-check", { ago: 90, wakeupScript: "wake every night" }),
+      ],
+      { id: "docs", name: "docs", colorIndex: 5 }
+    ),
+    makeUiProjectRow([ws("scripts", "cron", { ago: 60, wakeupScript: "wake every hour" })], {
+      id: "scripts",
+      name: "scripts",
+      remote: true,
+      colorIndex: 6,
+      collapsed: true,
+    }),
+  ];
+}
+
 export function question(
   id: string,
   key: string,

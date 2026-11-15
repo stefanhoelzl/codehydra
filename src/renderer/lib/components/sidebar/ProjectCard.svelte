@@ -22,6 +22,7 @@
     rowOn,
     rowHidden,
     rowQuestions,
+    sleepingCounts,
     type RowAction,
     type SidebarView,
   } from "$lib/utils/sidebar-model.js";
@@ -91,15 +92,7 @@
   // Split so an expanded header's hibernated button can hold the sleeping counts,
   // which stay where a collapsed header has them. The button has its own tooltip.
   const awakeCounts = $derived({ ...counts, hibernated: 0, automated: 0 });
-  const sleepingCounts = $derived({
-    busy: 0,
-    loading: 0,
-    idle: 0,
-    freshIdle: 0,
-    noAgent: 0,
-    hibernated: counts.hibernated,
-    automated: counts.automated,
-  });
+  const sleeping = $derived(sleepingCounts(counts));
   const hibernatedOpen = $derived(project.hibernatedView !== "hidden");
   const color = $derived(projectColor(project.colorIndex));
 
@@ -190,7 +183,7 @@
     <span class="cnt" title={describeRowCounts(folds.expanded ? awakeCounts : counts) || undefined}>
       <RowCountItems counts={awakeCounts} />
       {#if !folds.expanded}
-        <RowCountItems counts={sleepingCounts} />
+        <RowCountItems counts={sleeping} />
       {:else if hibernated.length + automated.length > 0}
         <button
           type="button"
@@ -199,7 +192,7 @@
           aria-pressed={hibernatedOpen}
           title={`${hibernatedOpen ? "Hide" : "Show"} hibernated: ${counts.hibernated} · automated: ${counts.automated}`}
         >
-          <RowCountItems counts={sleepingCounts} />
+          <RowCountItems counts={sleeping} />
           {#if counts.hibernated + counts.automated === 0}<SidebarIcon name="moon" size={11} />{/if}
         </button>
       {/if}

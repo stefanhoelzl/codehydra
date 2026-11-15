@@ -101,8 +101,9 @@ describe("MainView close project integration", () => {
   it("emits close-project for a project with no workspaces (user still confirms main-side)", async () => {
     await renderWithSnapshot();
 
+    // Without workspaces it is a line in the Inactive projects entry, not a card.
     const closeButton = document.querySelector(
-      `.proj[data-project-id="${projectWithoutWorkspaces.id}"] [data-act="closeproj"]`
+      `.inact .iproj[data-project-id="${projectWithoutWorkspaces.id}"] [data-act="closeproj"]`
     );
     expect(closeButton).toBeInTheDocument();
     await fireEvent.click(closeButton!);
