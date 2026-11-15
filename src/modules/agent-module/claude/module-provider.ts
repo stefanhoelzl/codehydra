@@ -49,6 +49,12 @@ export interface ClaudeModuleProviderDeps {
   readonly logger: Logger;
   /** Process runner used to detect permission modes via `claude --help`. */
   readonly processRunner: Pick<ProcessRunner, "run">;
+  /**
+   * `claude.stop-bg-shells-on-low-memory`: false keeps Claude from stopping an
+   * idle session's background commands under memory pressure. Read at each
+   * workspace start, so a change reaches agents started afterwards.
+   */
+  readonly stopBgShellsOnLowMemory: { get(): boolean };
 }
 
 // =============================================================================
@@ -59,7 +65,7 @@ export interface ClaudeModuleProviderDeps {
  * Create an AgentModuleProvider for Claude Code.
  */
 export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): AgentModuleProvider {
-  const { serverManager, binary, platform, logger, processRunner } = deps;
+  const { serverManager, binary, platform, logger, processRunner, stopBgShellsOnLowMemory } = deps;
 
   // Owned by the module: parse `claude --help` once (cached) for the permission
   // modes the creation form offers, from the same binary workspaces run. Before
@@ -105,6 +111,9 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
         // CodeHydra updates the binaries it downloads; a system install is the
         // user's to manage.
         ...(resolved.source === "download" && { DISABLE_AUTOUPDATER: "1" }),
+        // Claude stops an idle session's background shells when the OS reports
+        // critical memory pressure (Windows included); this is its opt-out.
+        ...(!stopBgShellsOnLowMemory.get() && { CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP: "1" }),
       }),
 
       // --- Provider lifecycle ---

@@ -622,6 +622,12 @@ message. If no `[bg]` work is still running when the turn ends, it goes idle as
 usual. Agents are told to do this only when they need nothing from you: a turn
 that ends on a question for you goes idle.
 
+Claude Code stops an idle session's background commands (a Docker build, a
+dev server) when the system is critically low on memory, and tells the agent not
+to restart them. To keep them running, set
+`claude.stop-bg-shells-on-low-memory` to `false` (settings dialog, group
+**claude**). It applies to agents started or restarted afterwards.
+
 ### Processes
 
 CodeHydra can show what is running in each workspace — the dev server an agent

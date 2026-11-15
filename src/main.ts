@@ -294,6 +294,18 @@ const opencodeVersionConfig = configService.register("version.opencode", {
     "else latest; x.y.z | latest",
   ...storeString({ nullable: true }),
 });
+// Read by the Claude module provider when it builds an agent terminal's env.
+const claudeStopBgShellsOnLowMemoryConfig = configService.register(
+  "claude.stop-bg-shells-on-low-memory",
+  {
+    default: true,
+    description:
+      "Let Claude stop idle background commands when the system is low on memory " +
+      "(false sets CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP; applies to agents started afterwards)",
+    applies: "live",
+    ...storeBoolean(),
+  }
+);
 const downloadBinariesConfig = configService.register("download-binaries", {
   default: false,
   description: "Download the IDE server and both agents' binaries, then exit",
@@ -736,6 +748,7 @@ const claudeProvider = createClaudeModuleProvider({
   platform,
   logger: providerLogger,
   processRunner,
+  stopBgShellsOnLowMemory: claudeStopBgShellsOnLowMemoryConfig,
 });
 const claudeAgentModule = createAgentModule(claudeProvider, {
   dispatcher,

@@ -22,7 +22,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 
 ### Where keys are defined
 
-- Each module registers its keys with `Config.register()` in its factory and keeps the returned typed `PersistedAccessor`; keys no single module owns (`agent`, `telemetry.enabled`, `help`, `version.claude`, `version.opencode`, `download-binaries`, `sidebar.width`) are registered in `src/main.ts` and their accessors threaded in.
+- Each module registers its keys with `Config.register()` in its factory and keeps the returned typed `PersistedAccessor`; keys no single module owns (`agent`, `telemetry.enabled`, `help`, `version.claude`, `version.opencode`, `claude.stop-bg-shells-on-low-memory`, `download-binaries`, `sidebar.width`) are registered in `src/main.ts` and their accessors threaded in.
 - Service: `src/boundaries/platform/config.ts`. Key definitions (`PersistedKeyDefinition`) and the `store*` builders: `src/boundaries/platform/store-definition.ts`.
 - A key's `settingsControl` (attached by the typed builders) puts it in the settings dialog; `applies: "live" | "restart"` (absent = restart) drives the dialog's "Restart to apply" note.
 - `isUserSetting` (`config.ts`) — not deprecated, has a `settingsControl`, not `help`/`download-binaries` — decides which keys the settings dialog and `ch config` both expose.
@@ -95,6 +95,10 @@ Default `30` · `poll-module.ts`. Seconds a poll script (automation, wakeup scri
 #### `version.claude`
 
 Default `null` · `src/main.ts`. `null` = the `claude` on PATH, else a download of the latest `stable`; set = that version (exact, or `latest`/`stable` re-resolved each start), downloaded and used even over a system install. Any string; a bad one fails on the setup screen.
+
+#### `claude.stop-bg-shells-on-low-memory`
+
+Default `true` · `src/main.ts`, read by `agent-module/claude/module-provider.ts`. `false` adds `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1` to each Claude agent terminal's environment, so Claude no longer stops an idle session's background shells under critical memory pressure (observed on Windows too, though Claude's docs list macOS/Linux only). Read at each workspace start: applies to agents started afterwards.
 
 #### `version.opencode`
 
