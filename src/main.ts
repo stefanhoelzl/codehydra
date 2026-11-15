@@ -717,6 +717,7 @@ const apiServerModule = createApiServerModule({
   logger: apiLogger,
   registry: operationRegistry,
   cliToken: () => cliModule.token(),
+  configService,
   options: {
     isDevelopment: buildInfo.isDevelopment,
     extensionLogger: loggingService.createLogger("extension"),

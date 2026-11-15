@@ -91,6 +91,7 @@ const CONFIG = {
   workspaceEnv: null,
   agentType: "claude" as const,
   resetWorkspace: true,
+  terminalForward: ["shift+enter", "ctrl+shift+d"],
 };
 
 describe("sidekick agent lifecycle emits", () => {
@@ -250,6 +251,39 @@ describe("sidekick agent lifecycle emits", () => {
     expect(socket.emit).not.toHaveBeenCalledWith("api:workspace:agentLifecycle", {
       event: "close",
     });
+  });
+});
+
+// The forwarding keybindings find their key, quoted, in this JSON string.
+describe("sidekick forwarded-keys context key", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetVscodeFake();
+    process.env._CH_API_PORT = "8123";
+  });
+
+  afterEach(() => {
+    deactivate();
+    delete process.env._CH_API_PORT;
+  });
+
+  it("publishes the config's terminal.forward keys, also on a reconnect", async () => {
+    activate(makeContext());
+    const socket = getSocket();
+
+    await socket._handlers.config!(CONFIG);
+    expect(commands.executeCommand).toHaveBeenCalledWith(
+      "setContext",
+      "codehydra.terminalForward",
+      '["shift+enter","ctrl+shift+d"]'
+    );
+
+    await socket._handlers.config!({ ...CONFIG, terminalForward: ["ctrl+enter"] });
+    expect(commands.executeCommand).toHaveBeenLastCalledWith(
+      "setContext",
+      "codehydra.terminalForward",
+      '["ctrl+enter"]'
+    );
   });
 });
 

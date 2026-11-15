@@ -155,6 +155,13 @@ export interface ApiConfig {
   readonly agentType: AgentType | null;
   /** True for new workspaces (reset editor layout), false for reopened (preserve layout) */
   readonly resetWorkspace: boolean;
+  /**
+   * Keys the agent terminal sends to the agent instead of the editor (config
+   * `terminal.forward`), in VS Code keybinding syntax. The sidekick publishes
+   * them as the `codehydra.terminalForward` context key its forwarding
+   * keybindings test.
+   */
+  readonly terminalForward: readonly string[];
 }
 
 // ============================================================================

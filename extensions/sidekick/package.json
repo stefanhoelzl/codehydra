@@ -114,6 +114,262 @@
         "command": "codehydra.openAgent",
         "key": "ctrl+;",
         "mac": "cmd+;"
+      },
+      {
+        "key": "shift+enter",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[13;2u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"shift\\+enter\"/i"
+      },
+      {
+        "key": "ctrl+enter",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[13;5u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+enter\"/i"
+      },
+      {
+        "key": "ctrl+shift+enter",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[13;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+enter\"/i"
+      },
+      {
+        "key": "shift+space",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[32;2u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"shift\\+space\"/i"
+      },
+      {
+        "key": "ctrl+tab",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[9;5u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+tab\"/i"
+      },
+      {
+        "key": "ctrl+shift+tab",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[9;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+tab\"/i"
+      },
+      {
+        "key": "ctrl+shift+a",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[97;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+a\"/i"
+      },
+      {
+        "key": "ctrl+shift+b",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[98;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+b\"/i"
+      },
+      {
+        "key": "ctrl+shift+c",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[99;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+c\"/i"
+      },
+      {
+        "key": "ctrl+shift+d",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[100;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+d\"/i"
+      },
+      {
+        "key": "ctrl+shift+e",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[101;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+e\"/i"
+      },
+      {
+        "key": "ctrl+shift+f",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[102;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+f\"/i"
+      },
+      {
+        "key": "ctrl+shift+g",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[103;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+g\"/i"
+      },
+      {
+        "key": "ctrl+shift+h",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[104;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+h\"/i"
+      },
+      {
+        "key": "ctrl+shift+i",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[105;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+i\"/i"
+      },
+      {
+        "key": "ctrl+shift+j",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[106;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+j\"/i"
+      },
+      {
+        "key": "ctrl+shift+k",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[107;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+k\"/i"
+      },
+      {
+        "key": "ctrl+shift+l",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[108;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+l\"/i"
+      },
+      {
+        "key": "ctrl+shift+m",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[109;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+m\"/i"
+      },
+      {
+        "key": "ctrl+shift+n",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[110;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+n\"/i"
+      },
+      {
+        "key": "ctrl+shift+o",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[111;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+o\"/i"
+      },
+      {
+        "key": "ctrl+shift+p",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[112;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+p\"/i"
+      },
+      {
+        "key": "ctrl+shift+q",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[113;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+q\"/i"
+      },
+      {
+        "key": "ctrl+shift+r",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[114;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+r\"/i"
+      },
+      {
+        "key": "ctrl+shift+s",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[115;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+s\"/i"
+      },
+      {
+        "key": "ctrl+shift+t",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[116;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+t\"/i"
+      },
+      {
+        "key": "ctrl+shift+u",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[117;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+u\"/i"
+      },
+      {
+        "key": "ctrl+shift+v",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[118;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+v\"/i"
+      },
+      {
+        "key": "ctrl+shift+w",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[119;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+w\"/i"
+      },
+      {
+        "key": "ctrl+shift+x",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[120;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+x\"/i"
+      },
+      {
+        "key": "ctrl+shift+y",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[121;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+y\"/i"
+      },
+      {
+        "key": "ctrl+shift+z",
+        "command": "workbench.action.terminal.sendSequence",
+        "args": {
+          "text": "\u001b[122;6u"
+        },
+        "when": "terminalEditorFocus && codehydra.terminalForward =~ /\"ctrl\\+shift\\+z\"/i"
       }
     ],
     "configurationDefaults": {
@@ -121,7 +377,8 @@
       "window.autoDetectColorScheme": true,
       "workbench.preferredDarkColorTheme": "Default Dark+",
       "workbench.preferredLightColorTheme": "Default Light+",
-      "remote.autoForwardPorts": false
+      "remote.autoForwardPorts": false,
+      "terminal.integrated.enableKittyKeyboardProtocol": false
     }
   }
 }

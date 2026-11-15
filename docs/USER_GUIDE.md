@@ -1683,6 +1683,30 @@ Each workspace runs one coding agent — Claude Code or OpenCode, chosen by the
 editor. The agent is recorded in the workspace when it first opens, so changing
 the `agent` setting applies to new workspaces only.
 
+### Keys in the agent terminal
+
+The editor's shortcuts work while the agent terminal has focus — <kbd>Ctrl+Shift+E</kbd>
+opens the Explorer, <kbd>Ctrl+Shift+G</kbd> Source Control, and so on. Keys the
+editor has no shortcut for go to the agent as usual.
+
+A few keys an agent may want would otherwise reach the editor or arrive
+without their modifiers. The `terminal.forward` setting lists the ones the
+agent terminal sends to the agent instead. It defaults to the agents' keys that
+no editor shortcut needs: <kbd>Shift+Enter</kbd> and <kbd>Ctrl+Enter</kbd> (a
+new line in the prompt, or Claude Code's "send now"), <kbd>Ctrl+Shift+A</kbd>
+(OpenCode: select to the start of the line) and <kbd>Shift+Space</kbd> (Claude
+Code: page up in the diff view). Add a key to hand it to the agent — for
+example <kbd>Ctrl+Shift+D</kbd>, OpenCode's "delete line" — and that key stops
+running its editor shortcut while the agent terminal has focus. It applies to
+terminals in the editor area, where the agent terminal opens; terminals in the
+panel are never affected.
+
+The keys that can be listed are <kbd>Shift+Enter</kbd>, <kbd>Ctrl+Enter</kbd>,
+<kbd>Ctrl+Shift+Enter</kbd>, <kbd>Shift+Space</kbd>, <kbd>Ctrl+Tab</kbd>,
+<kbd>Ctrl+Shift+Tab</kbd> and <kbd>Ctrl+Shift+A</kbd> to <kbd>Z</kbd>; the
+settings dialog offers them as a list. A change applies to a workspace the next
+time it opens: restart CodeHydra, or hibernate and wake the workspace.
+
 ### Which agent binary runs
 
 Both agents follow the same rules, decided once at startup:
