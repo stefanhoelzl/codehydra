@@ -27,12 +27,11 @@ vi.mock("$lib/api");
 
 import { emitEvent, sendNotificationEvent } from "$lib/api";
 import Sidebar from "./Sidebar.svelte";
-import { rowGroup } from "$lib/utils/sidebar-model.js";
 
 type Props = {
   projects: readonly UiProjectRow[];
   notifications?: readonly UiNotification[];
-  find?: { hibernatedView: "hidden" | "manual" | "all" } | null;
+  find?: { hibernatedView: "hidden" | "all" } | null;
   sidebarMode?: "overlay" | "docked";
   mode?: "workspace" | "hover" | "shortcut" | "dialog";
   shortcutModeActive?: boolean;
@@ -300,79 +299,43 @@ describe("Sidebar", () => {
               status: "deleting",
             }),
           ],
-          hibernatedView: "manual",
+          hibernatedView: "all",
         }),
       });
       const site = card(container, "website");
       expect(site.querySelector(".sleepers .hib")?.textContent).toBe("1");
       expect(site.querySelector(".sleepers .auto")?.textContent).toBe("1");
-      expect(site.querySelector(".auto-menu")?.textContent).toContain(
-        "Show automated workspaces (1)"
-      );
 
       rerender({
         projects: withProject(sampleProjects(), "website", {
           workspaces: rows("deleting"),
-          hibernatedView: "manual",
+          hibernatedView: "all",
         }),
       });
       const button = site.querySelector(".sleepers")!;
       expect(button.querySelector(":scope > .sb-icon")).not.toBeNull();
       expect(button.querySelector(".auto")).toBeNull();
       expect(button.textContent?.trim()).toBe("");
-      expect(site.querySelector(".auto-menu")?.textContent?.trim()).toBe(
-        "Show automated workspaces"
-      );
     });
 
-    it("the moon asks to show the list, and to hide it again", async () => {
+    it("the moon shows the whole list, automated ones in their own color, and hides it", async () => {
       const projects = sampleProjects();
       const { container, rerender } = setup({ projects });
       await fireEvent.click(card(container, "codehydra").querySelector(".sleepers")!);
-      expect(events()).toContainEqual({
-        kind: "set-hibernated-view",
-        projectId: "codehydra",
-        view: "manual",
-      });
-      rerender({ projects: withProject(projects, "codehydra", { hibernatedView: "manual" }) });
+      expect(events()).toEqual([
+        { kind: "set-hibernated-view", projectId: "codehydra", view: "all" },
+      ]);
+      rerender({ projects: withProject(projects, "codehydra", { hibernatedView: "all" }) });
       expect(hibGroupOpen(container, "codehydra")).toBe(true);
-      expect(rowOpen(container, "codehydra/ci-watch")).toBe(false);
+      expect(rowOpen(container, "codehydra/atomic-state-writes")).toBe(true);
+      expect(rowOpen(container, "codehydra/ci-watch")).toBe(true);
+      expect(row(container, "codehydra/ci-watch").classList.contains("auto")).toBe(true);
+      expect(card(container, "codehydra").querySelector(".auto-menu")).toBeNull();
       vi.mocked(emitEvent).mockClear();
       await fireEvent.click(card(container, "codehydra").querySelector(".sleepers")!);
       expect(events()).toEqual([
         { kind: "set-hibernated-view", projectId: "codehydra", view: "hidden" },
       ]);
-    });
-
-    it("with only automated ones asleep, the moon shows them at once", async () => {
-      const base = sampleProjects();
-      const codehydra = base.find((p) => p.id === "codehydra")!;
-      const projects = withProject(base, "codehydra", {
-        workspaces: codehydra.workspaces.filter((ws) => rowGroup(ws) !== "hibernated"),
-      });
-      const { container } = setup({ projects });
-      await fireEvent.click(card(container, "codehydra").querySelector(".sleepers")!);
-      expect(events()).toEqual([
-        { kind: "set-hibernated-view", projectId: "codehydra", view: "all" },
-      ]);
-    });
-
-    it("offers “Show automated workspaces” in their own color, which shows them", async () => {
-      const projects = withProject(sampleProjects(), "codehydra", { hibernatedView: "manual" });
-      const { container, rerender } = setup({ projects });
-      const menu = card(container, "codehydra").querySelector(".auto-menu")!;
-      expect(menu.textContent).toContain("Show automated workspaces (2)");
-      expect(menu.closest(".cl")?.classList.contains("open")).toBe(true);
-      await fireEvent.click(menu);
-      expect(events()).toContainEqual({
-        kind: "set-hibernated-view",
-        projectId: "codehydra",
-        view: "all",
-      });
-      rerender({ projects: withProject(projects, "codehydra", { hibernatedView: "all" }) });
-      expect(menu.closest(".cl")?.classList.contains("open")).toBe(false);
-      expect(rowOpen(container, "codehydra/ci-watch")).toBe(true);
-      expect(row(container, "codehydra/ci-watch").classList.contains("auto")).toBe(true);
     });
 
     it("lists hibernated, then automated, then awake rows, each in main's order", () => {
@@ -389,7 +352,7 @@ describe("Sidebar", () => {
     });
 
     it("folds away when the pointer leaves the card, or on a click elsewhere in it", async () => {
-      const projects = withProject(sampleProjects(), "codehydra", { hibernatedView: "manual" });
+      const projects = withProject(sampleProjects(), "codehydra", { hibernatedView: "all" });
       const { container } = setup({ projects });
       await fireEvent.mouseLeave(card(container, "codehydra"));
       expect(events()).toContainEqual({
@@ -560,7 +523,7 @@ describe("Sidebar", () => {
       host.remove();
     });
 
-    it("opens every project and shows hibernated (not automated) rows", async () => {
+    it("opens every project and shows its hibernated rows, automated ones included", async () => {
       const { container } = setup({ projects: sampleProjects() });
       const infra = card(container, "infra");
       await fireEvent.focus(container.querySelector("input")!);
@@ -568,7 +531,7 @@ describe("Sidebar", () => {
       expect(container.querySelectorAll(".proj.closed").length).toBe(0);
       expect(card(container, "infra")).toBe(infra);
       expect(hibGroupOpen(container, "codehydra")).toBe(true);
-      expect(rowOpen(container, "codehydra/ci-watch")).toBe(false);
+      expect(rowOpen(container, "codehydra/ci-watch")).toBe(true);
       expect(rowOpen(container, "codehydra/atomic-state-writes")).toBe(true);
     });
 
@@ -664,7 +627,7 @@ describe("Sidebar", () => {
 
     it("Alt+X, F (main opening Find) focuses the field", () => {
       const { container, rerender } = setup({ projects: sampleProjects(), find: null });
-      rerender({ find: { hibernatedView: "manual" } });
+      rerender({ find: { hibernatedView: "all" } });
       expect(document.activeElement).toBe(container.querySelector("input"));
     });
   });
@@ -1297,26 +1260,22 @@ describe("Sidebar", () => {
       const { container, rerender } = setup({ projects });
       await fireEvent.click(entry(container).querySelector(".inact-h")!);
       await fireEvent.click(line(container, "docs").querySelector(".sleepers")!);
-      // Only automated ones: straight to them, not to a list holding just the menu item.
       await fireEvent.click(line(container, "scripts").querySelector(".sleepers")!);
       expect(events()).toEqual([
-        { kind: "set-hibernated-view", projectId: "docs", view: "manual" },
+        { kind: "set-hibernated-view", projectId: "docs", view: "all" },
         { kind: "set-hibernated-view", projectId: "scripts", view: "all" },
       ]);
 
       rerender({
-        projects: withProject(
-          withProject(projects, "docs", { hibernatedView: "manual" }),
-          "scripts",
-          { hibernatedView: "all" }
-        ),
+        projects: withProject(withProject(projects, "docs", { hibernatedView: "all" }), "scripts", {
+          hibernatedView: "all",
+        }),
       });
       expect(lineListOpen(container, "docs")).toBe(true);
+      // The hibernated one, then the automated one: one list, no second step.
       expect(rowOpen(container, "docs/old-guide")).toBe(true);
-      expect(rowOpen(container, "docs/nightly-check")).toBe(false);
-      expect(line(container, "docs").querySelector(".auto-menu")?.textContent).toContain(
-        "Show automated workspaces (1)"
-      );
+      expect(rowOpen(container, "docs/nightly-check")).toBe(true);
+      expect(line(container, "docs").querySelector(".auto-menu")).toBeNull();
       // A collapsed card does not keep its rows folded in the entry.
       expect(lineListOpen(container, "scripts")).toBe(true);
       expect(rowOpen(container, "scripts/cron")).toBe(true);
@@ -1334,7 +1293,7 @@ describe("Sidebar", () => {
       const projects = withInactive();
       const { container, rerender } = setup({ projects });
       await fireEvent.click(entry(container).querySelector(".inact-h")!);
-      rerender({ projects: withProject(projects, "docs", { hibernatedView: "manual" }) });
+      rerender({ projects: withProject(projects, "docs", { hibernatedView: "all" }) });
       vi.mocked(emitEvent).mockClear();
 
       // A brief slip out and back in changes nothing.
@@ -1356,7 +1315,7 @@ describe("Sidebar", () => {
     });
 
     it("a line's hibernated list folds as the pointer leaves the line", async () => {
-      const projects = withProject(withInactive(), "docs", { hibernatedView: "manual" });
+      const projects = withProject(withInactive(), "docs", { hibernatedView: "all" });
       const { container } = setup({ projects });
       await fireEvent.mouseLeave(line(container, "docs"));
       expect(events()).toEqual([
@@ -1397,7 +1356,7 @@ describe("Sidebar", () => {
       const projects = withInactive();
       const { container, rerender } = setup({ projects });
       rerender({
-        projects: withProject(projects, "docs", { hibernatedView: "manual" }),
+        projects: withProject(projects, "docs", { hibernatedView: "all" }),
         notifications: [question("q1", "docs/old-guide", "Go on?", ["Yes", "No"])],
       });
       expect(entryOpen(container)).toBe(true);

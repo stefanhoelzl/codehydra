@@ -605,9 +605,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /** The sidebar's Find field has the focus (null: it has not). */
   let find: UiSidebarFind | null = null;
 
-  /** hidden → manual → all → hidden: what Alt+X, T steps through. */
+  /** hidden ↔ all: what Alt+X, T toggles. */
   function nextHibernatedView(view: HibernatedView): HibernatedView {
-    return view === "hidden" ? "manual" : view === "manual" ? "all" : "hidden";
+    return view === "hidden" ? "all" : "hidden";
   }
 
   // The presenter privately owns the dialog/notification registries. They hold
@@ -1505,14 +1505,14 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   /**
-   * Open or close the Find state. Opening starts at the manual hibernated view
-   * (automated ones hidden); reopening while open keeps the current view. The
+   * Open or close the Find state. Opening starts with the hibernated workspaces
+   * shown (automated ones too); reopening while open keeps the current view. The
    * renderer focuses the field when it sees `sidebar.find` appear (Alt+X, F)
    * and reports focus changes back through `set-find`.
    */
   function setFind(active: boolean): void {
     if (active === (find !== null)) return;
-    find = active ? { hibernatedView: "manual" } : null;
+    find = active ? { hibernatedView: "all" } : null;
     scheduleUpdate();
   }
 

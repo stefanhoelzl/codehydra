@@ -24,7 +24,7 @@ import {
 } from "./sidebar-model";
 
 const REST: SidebarView = { find: null, query: "" };
-const find = (query = "", hibernatedView: "hidden" | "manual" | "all" = "manual"): SidebarView => ({
+const find = (query = "", hibernatedView: "hidden" | "all" = "all"): SidebarView => ({
   find: { hibernatedView },
   query,
 });
@@ -75,15 +75,16 @@ describe("sidebar-model", () => {
     expect(rowGlyph(rowOf(p, "ci-watch"))).toBe("hibernated");
   });
 
-  it("at rest: automated rows only once shown, hibernated list only when opened", () => {
+  it("at rest: the hibernated list, automated rows included, only when opened", () => {
     const p = project("codehydra");
-    expect(rowOn(p, rowOf(p, "ci-watch"), REST)).toBe(false);
-    expect(rowOn(p, rowOf(p, "atomic-state-writes"), REST)).toBe(true);
-    expect(rowHidden(p, rowOf(p, "atomic-state-writes"), REST)).toBe(true);
-    const open = { ...p, hibernatedView: "manual" as const };
-    expect(rowHidden(open, rowOf(open, "atomic-state-writes"), REST)).toBe(false);
-    const all = { ...p, hibernatedView: "all" as const };
-    expect(rowOn(all, rowOf(all, "ci-watch"), REST)).toBe(true);
+    for (const name of ["atomic-state-writes", "ci-watch"]) {
+      expect(rowOn(p, rowOf(p, name), REST)).toBe(true);
+      expect(rowHidden(p, rowOf(p, name), REST)).toBe(true);
+    }
+    const open = { ...p, hibernatedView: "all" as const };
+    for (const name of ["atomic-state-writes", "ci-watch"]) {
+      expect(rowHidden(open, rowOf(open, name), REST)).toBe(false);
+    }
   });
 
   it("Find expands everything and its view decides the hibernated rows", () => {
@@ -91,8 +92,9 @@ describe("sidebar-model", () => {
     expect(projectFolds(p, REST).expanded).toBe(false);
     expect(projectFolds(p, find()).expanded).toBe(true);
     const c = project("codehydra");
-    expect(rowOn(c, rowOf(c, "ci-watch"), find())).toBe(false);
-    expect(rowOn(c, rowOf(c, "ci-watch"), find("", "all"))).toBe(true);
+    expect(rowOn(c, rowOf(c, "ci-watch"), find())).toBe(true);
+    expect(rowOn(c, rowOf(c, "atomic-state-writes"), find())).toBe(true);
+    expect(rowOn(c, rowOf(c, "ci-watch"), find("", "hidden"))).toBe(false);
     expect(rowOn(c, rowOf(c, "atomic-state-writes"), find("", "hidden"))).toBe(false);
   });
 
@@ -123,7 +125,9 @@ describe("sidebar-model", () => {
 
   it("the marker walks visible rows only", () => {
     const keys = markerRows(sampleProjects(), find("ci")).map((row) => row.key);
-    expect(keys).toEqual(["infra/ci-cache"]);
+    expect(keys).toEqual(["codehydra/ci-watch", "infra/ci-cache"]);
+    const awake = markerRows(sampleProjects(), find("ci", "hidden")).map((row) => row.key);
+    expect(awake).toEqual(["infra/ci-cache"]);
   });
 
   it("words a row's status for its accessible name", () => {
@@ -138,16 +142,9 @@ describe("sidebar-model", () => {
     expect(rowStatusText(none, "Hibernated")).toBe("No agents running");
   });
 
-  it("toggles the moon, straight to the automated ones when there are no others", () => {
-    const p = project("codehydra");
-    expect(moonToggle(p)).toBe("manual");
-    expect(moonToggle({ ...p, hibernatedView: "manual" })).toBe("hidden");
-    expect(moonToggle({ ...p, hibernatedView: "all" })).toBe("hidden");
-    const onlyAutomated = {
-      ...p,
-      workspaces: p.workspaces.filter((row) => rowGroup(row) !== "hibernated"),
-    };
-    expect(moonToggle(onlyAutomated)).toBe("all");
+  it("toggles the moon between hidden and the whole list", () => {
+    expect(moonToggle("hidden")).toBe("all");
+    expect(moonToggle("all")).toBe("hidden");
   });
 
   it("has a distinct color for every index main assigns", () => {

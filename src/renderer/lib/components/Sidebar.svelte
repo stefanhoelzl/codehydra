@@ -40,7 +40,6 @@
     projectShown,
     rowCounts,
     rowGlyph,
-    rowGroup,
     rowHidden,
     rowQuestions,
     splitInactive,
@@ -139,8 +138,8 @@
   let instant = $state(false);
   let scrollSelection = false;
 
-  /** Until main echoes the focus, Find shows what main will report: hibernated, not automated. */
-  const FIND_DEFAULT: UiSidebarFind = { hibernatedView: "manual" };
+  /** Until main echoes the focus, Find shows what main will report: the hibernated list. */
+  const FIND_DEFAULT: UiSidebarFind = { hibernatedView: "all" };
   const view = $derived<SidebarView>({
     find: findFocused ? (find ?? FIND_DEFAULT) : null,
     query,
@@ -605,11 +604,7 @@
     const inactive = split.inactive.some((candidate) => candidate.id === project.id);
     if (inactive) inactiveOpen = true;
     else if (project.collapsed) toggleCollapsed(project);
-    const group = rowGroup(row);
-    if (group === "automated") setHibernatedView(project, "all");
-    else if (group === "hibernated" && project.hibernatedView === "hidden") {
-      setHibernatedView(project, "manual");
-    }
+    if (row.hibernated && project.hibernatedView === "hidden") setHibernatedView(project, "all");
     setTimeout(
       () => {
         const el = listEl?.querySelector(`.ws[data-key="${CSS.escape(row.key)}"]`);
@@ -712,10 +707,7 @@
       bind:this={listEl}
       onmousedown={(event) => {
         // Keep the focus in Find while clicking a row, a header or a card.
-        if (
-          findFocused &&
-          (event.target as Element).closest(".ws, .proj-h, .auto-menu, .note") !== null
-        ) {
+        if (findFocused && (event.target as Element).closest(".ws, .proj-h, .note") !== null) {
           event.preventDefault();
         }
       }}

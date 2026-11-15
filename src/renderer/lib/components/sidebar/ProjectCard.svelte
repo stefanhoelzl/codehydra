@@ -7,13 +7,11 @@
   or entering Find animates.
 
   Clicks anywhere in the card are handled here, in one place: a click that is
-  not on the hibernated button or the "Show automated workspaces" item folds
-  the hibernated list away again.
+  not on the hibernated button folds the hibernated list away again.
 -->
 <script lang="ts">
   import type { UiNotification, UiProjectRow, UiWorkspaceRow } from "@shared/ui-state";
   import {
-    automatedShown,
     describeRowCounts,
     moonToggle,
     projectColor,
@@ -86,11 +84,7 @@
   const automated = $derived(project.workspaces.filter((row) => rowGroup(row) === "automated"));
   const awake = $derived(project.workspaces.filter((row) => rowGroup(row) === "awake"));
   const on = (row: UiWorkspaceRow): boolean => rowOn(project, row, view);
-  const menuOn = $derived(
-    !finding && folds.expanded && automated.length > 0 && !automatedShown(project)
-  );
-  // The dashed line between the hibernated list and the awake rows.
-  const delimOn = $derived(([...hibernated, ...automated].some(on) || menuOn) && awake.some(on));
+  const delimOn = $derived([...hibernated, ...automated].some(on) && awake.some(on));
   const counts = $derived(rowCounts(project.workspaces));
   // Split so an expanded header's hibernated button can hold the sleeping counts,
   // which stay where a collapsed header has them. The button has its own tooltip.
@@ -104,15 +98,12 @@
     // Buttons inside a card (answers, cancel, dismiss) are the card's own.
     if (target.closest(".note") !== null) return;
     const act = target.closest("[data-act]")?.getAttribute("data-act") ?? null;
-    if (act !== "hibtoggle" && act !== "autoshow" && hibernatedOpen) {
+    if (act !== "hibtoggle" && hibernatedOpen) {
       onSetHibernatedView(project, "hidden");
     }
     switch (act) {
       case "hibtoggle":
-        onSetHibernatedView(project, moonToggle(project));
-        return;
-      case "autoshow":
-        onSetHibernatedView(project, "all");
+        onSetHibernatedView(project, moonToggle(project.hibernatedView));
         return;
       case "closeproj":
         onCloseProject(project);
@@ -223,7 +214,6 @@
         <HibernatedList
           {project}
           open={folds.hibernatedOpen}
-          menuAllowed={!finding && folds.expanded}
           delimiter={awake.length > 0 ? delimOn : undefined}
           row={rowFold}
         />

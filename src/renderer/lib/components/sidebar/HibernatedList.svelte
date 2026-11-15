@@ -3,26 +3,21 @@
 
   A project's folded list of sleeping workspaces, shared by its card and its
   line in the "Inactive projects" entry: the hibernated rows (most recently
-  hibernated first), a "Show automated workspaces" item in the automated color,
-  then the automated rows. It folds open and shut as one, its rows fade in, and
-  folded it is out of reach (inert).
+  hibernated first), then the automated ones (in their own color). It folds
+  open and shut as one, its rows fade in, and folded it is out of reach (inert).
 
   The rows are the parent's (`row`), so each keeps its own fold, transitions and
-  Find state. The parent also handles the clicks: the item carries
-  `data-act="autoshow"`, as the rest of the sidebar's click dispatch expects.
+  Find state.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { UiProjectRow, UiWorkspaceRow } from "@shared/ui-state";
-  import { automatedShown, rowCounts, rowGroup } from "$lib/utils/sidebar-model.js";
-  import SidebarIcon from "./SidebarIcon.svelte";
+  import { rowGroup } from "$lib/utils/sidebar-model.js";
 
   interface Props {
     project: UiProjectRow;
     /** The list is unfolded. */
     open: boolean;
-    /** The "Show automated workspaces" item may show (not in Find, not in a collapsed card). */
-    menuAllowed: boolean;
     /**
      * Awake rows follow the list: a dashed delimiter closes it, shown while
      * this is true. Leave it out where nothing follows.
@@ -34,35 +29,15 @@
     row: Snippet<[UiWorkspaceRow]>;
   }
 
-  const {
-    project,
-    open,
-    menuAllowed,
-    delimiter = undefined,
-    indented = false,
-    row,
-  }: Props = $props();
+  const { project, open, delimiter = undefined, indented = false, row }: Props = $props();
 
   const hibernated = $derived(project.workspaces.filter((ws) => rowGroup(ws) === "hibernated"));
   const automated = $derived(project.workspaces.filter((ws) => rowGroup(ws) === "automated"));
-  const automatedCount = $derived(rowCounts(project.workspaces).automated);
-  const menuOn = $derived(menuAllowed && automated.length > 0 && !automatedShown(project));
 </script>
 
 <div class="hib-group" class:open class:indented inert={!open}>
   <div class="hib-inner">
     {#each hibernated as ws (ws.key)}{@render row(ws)}{/each}
-    {#if automated.length > 0}
-      <div class="cl" class:open={menuOn}>
-        <div class="clin">
-          <button type="button" class="auto-menu" data-act="autoshow"
-            ><SidebarIcon name="moon" />Show automated workspaces{automatedCount > 0
-              ? ` (${automatedCount})`
-              : ""}</button
-          >
-        </div>
-      </div>
-    {/if}
     {#each automated as ws (ws.key)}{@render row(ws)}{/each}
     {#if delimiter !== undefined}
       <div class="cl" class:open={delimiter}>
@@ -123,31 +98,6 @@
   }
   .cl:not(.open) {
     pointer-events: none;
-  }
-  .auto-menu {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    border: 0;
-    background: transparent;
-    color: var(--ch-sb-auto);
-    font: inherit;
-    font-size: 12px;
-    font-weight: 500;
-    padding: 6px 10px;
-    margin: 1px 0;
-    border-radius: 8px;
-    cursor: pointer;
-    text-align: left;
-  }
-  .auto-menu :global(.sb-icon) {
-    width: 14px;
-    height: 14px;
-    margin: 0 1px;
-  }
-  .auto-menu:hover {
-    background: color-mix(in srgb, var(--ch-sb-auto) 12%, transparent);
   }
   .hib-delim {
     display: flex;

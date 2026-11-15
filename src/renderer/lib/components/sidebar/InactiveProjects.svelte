@@ -123,13 +123,10 @@
   function handleLineClick(project: UiProjectRow, event: MouseEvent): void {
     const target = event.target as Element;
     const act = target.closest("[data-act]")?.getAttribute("data-act") ?? null;
-    if (act !== "hibtoggle" && act !== "autoshow") hideHibernated(project);
+    if (act !== "hibtoggle") hideHibernated(project);
     switch (act) {
       case "hibtoggle":
-        onSetHibernatedView(project, moonToggle(project));
-        return;
-      case "autoshow":
-        onSetHibernatedView(project, "all");
+        onSetHibernatedView(project, moonToggle(project.hibernatedView));
         return;
       case "closeproj":
         onCloseProject(project);
@@ -195,7 +192,7 @@
     </div>
     {#if sleepers}
       {#snippet row(ws: UiWorkspaceRow)}{@render rowFold(shown, ws)}{/snippet}
-      <HibernatedList project={shown} open={listOpen} menuAllowed indented {row} />
+      <HibernatedList project={shown} open={listOpen} indented {row} />
     {/if}
   </div>
 {/snippet}

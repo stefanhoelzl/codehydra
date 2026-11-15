@@ -2236,7 +2236,7 @@ describe("PresentationModule - sidebar resize", () => {
 
     emitUiEvent(deps, { kind: "set-find", active: true });
     await flush();
-    expect(lastSnapshot(deps).sidebar.find).toEqual({ hibernatedView: "manual" });
+    expect(lastSnapshot(deps).sidebar.find).toEqual({ hibernatedView: "all" });
     expect(lastSnapshot(deps).mode).toBe("hover");
 
     emitUiEvent(deps, { kind: "set-find", active: false });
@@ -3511,7 +3511,7 @@ describe("PresentationModule - shortcut navigation", () => {
     expect(lastSnapshot(deps).silent).toBe(false);
   });
 
-  it("t cycles the active project's hibernated view: hidden, manual, all, hidden", async () => {
+  it("t toggles the active project's hibernated view: hidden, all, hidden", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const awake = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
@@ -3521,13 +3521,12 @@ describe("PresentationModule - shortcut navigation", () => {
     const views = (): string[] => lastSnapshot(deps).sidebar.projects.map((p) => p.hibernatedView);
 
     const seen: string[][] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       await key(module, "t");
       await flush();
       seen.push(views());
     }
     expect(seen).toEqual([
-      ["manual", "hidden"],
       ["all", "hidden"],
       ["hidden", "hidden"],
     ]);
@@ -3566,20 +3565,20 @@ describe("PresentationModule - shortcut navigation", () => {
     expect(lastSnapshot(deps).sidebar.projects[0]!.collapsed).toBe(false);
   });
 
-  it("t in Find cycles Find's view for every project: manual, all, hidden", async () => {
+  it("t in Find toggles Find's view for every project: all, hidden", async () => {
     const deps = createDeps();
     const module = await withWorkspaces(deps, ["a"], "a");
     await key(module, "f");
     await flush();
-    expect(lastSnapshot(deps).sidebar.find).toEqual({ hibernatedView: "manual" });
+    expect(lastSnapshot(deps).sidebar.find).toEqual({ hibernatedView: "all" });
 
     const seen: unknown[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       await key(module, "t");
       await flush();
       seen.push(lastSnapshot(deps).sidebar.find?.hibernatedView);
     }
-    expect(seen).toEqual(["all", "hidden", "manual"]);
+    expect(seen).toEqual(["hidden", "all"]);
     // The projects' own views are untouched.
     expect(lastSnapshot(deps).sidebar.projects[0]!.hibernatedView).toBe("hidden");
   });
@@ -3737,7 +3736,7 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "f");
     await flush();
 
-    expect(lastSnapshot(deps).sidebar.find).toEqual({ hibernatedView: "manual" });
+    expect(lastSnapshot(deps).sidebar.find).toEqual({ hibernatedView: "all" });
   });
 
   it("enter deselects (switch to null) so the creation panel shows", async () => {
