@@ -89,6 +89,44 @@ export function rowCounts(rows: readonly UiWorkspaceRow[]): RowCounts {
   };
 }
 
+/** Only the sleeping part of some counts: hibernated and automated. */
+export function sleepingCounts(counts: RowCounts): RowCounts {
+  return {
+    busy: 0,
+    loading: 0,
+    idle: 0,
+    freshIdle: 0,
+    noAgent: 0,
+    hibernated: counts.hibernated,
+    automated: counts.automated,
+  };
+}
+
+/**
+ * A project with no awake workspace — none at all, or only hibernated ones —
+ * folds into the sidebar's "Inactive projects" entry. Not while one of its
+ * hibernated workspaces is the active one: what you are looking at stays in
+ * the list. A row being created, opened or removed is awake.
+ */
+export function isInactive(project: UiProjectRow): boolean {
+  return project.workspaces.every((row) => row.hibernated && !row.active);
+}
+
+/**
+ * The projects in the "Inactive projects" entry and the ones shown as cards,
+ * each in main's order. Find shows every project as a card.
+ */
+export function splitInactive(
+  projects: readonly UiProjectRow[],
+  view: SidebarView
+): { readonly inactive: readonly UiProjectRow[]; readonly active: readonly UiProjectRow[] } {
+  if (view.find !== null) return { inactive: [], active: projects };
+  return {
+    inactive: projects.filter(isInactive),
+    active: projects.filter((project) => !isInactive(project)),
+  };
+}
+
 /** Names the counts that are shown, the non-zero ones; empty when there are none. */
 export function describeRowCounts(counts: RowCounts): string {
   const named: readonly (readonly [number, string])[] = [

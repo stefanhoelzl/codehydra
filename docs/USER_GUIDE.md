@@ -108,12 +108,14 @@ Linux).
 
 ### The sidebar
 
-The sidebar is a card at the left of the window: the **Find** field on top, a
-card per project with its workspaces, notifications below them, and a footer.
-Projects are sorted by name.
+The sidebar is a card at the left of the window: the **Find** field on top, the
+[Inactive projects](#inactive-projects) entry below it, a card per project with
+its workspaces, notifications below them, and a footer. Projects are sorted by
+name.
 
 - **Collapsed**, it is a rail: each project's letter with the
-  [status glyphs](#status-indicators) of its awake workspaces. It expands when you point at the rail, in shortcut
+  [status glyphs](#status-indicators) of its awake workspaces, below one moon
+  that stands for all the inactive projects. It expands when you point at the rail, in shortcut
   mode, while Find, a dialog or the New workspace form is open, and whenever
   there are no workspaces. While the pointer is on it, it stays expanded, also
   when Find or the New workspace form closes under it.
@@ -203,8 +205,30 @@ projects open, colors repeat.
   ([status](#status-indicators)). A
   `ch ws ask --sidebar` question is a card in the row instead, with its answers
   as buttons and a × to cancel. When one arrives for a row out of sight, the
-  sidebar brings it into view: it expands a collapsed project and opens a
-  folded hibernated list (not while Find is open).
+  sidebar brings it into view: it expands a collapsed project, unfolds the
+  Inactive projects entry and opens a folded hibernated list (not while Find is
+  open).
+
+#### Inactive projects
+
+A project without an awake workspace — it has none, or only hibernated and
+automated ones — gets no card of its own. All such projects share one slim
+entry at the top of the list, **Inactive projects**: their letters stacked
+(three, then `+N`) and the number of their hibernated and automated workspaces.
+A project whose hibernated workspace you are on keeps its card.
+
+- Click the entry to unfold a line per project: its letter, name, the moon/alarm
+  counts and, on hover, a trash icon (close the project) and a lit **+**.
+- Click a line (or its **+**) to open the New workspace form for that project.
+- Click its moon/alarm counts to show the project's hibernated workspaces below
+  the line (with only automated ones, those directly); click one to wake it.
+- The entry folds shut shortly after the pointer leaves it, and a line's
+  hibernated list as the pointer leaves the line.
+- As soon as a project has an awake workspace — a new one, or one you woke — it
+  moves back to a card of its own, and the card is highlighted; when its last
+  awake workspace hibernates, it moves into the entry. A collapsed project's
+  setting applies again once it has a card.
+- While Find is open, every project is a card, so Find searches them all.
 
 A workspace row shows its title (or its name if it has none); with a title, the
 second line shows the workspace's subtitle — for a git project the branch it

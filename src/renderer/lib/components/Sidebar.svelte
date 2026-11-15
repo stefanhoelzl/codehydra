@@ -31,6 +31,7 @@
   import { createLogger } from "$lib/logging";
   import {
     describeRowCounts,
+    isInactive,
     isQuestion,
     markerRows,
     normalizedQuery,
@@ -42,10 +43,12 @@
     rowGroup,
     rowHidden,
     rowQuestions,
+    splitInactive,
     type RowAction,
     type SidebarView,
   } from "$lib/utils/sidebar-model.js";
   import ProjectCard from "./sidebar/ProjectCard.svelte";
+  import InactiveProjects from "./sidebar/InactiveProjects.svelte";
   import NoteCard from "./sidebar/NoteCard.svelte";
   import SidebarIcon from "./sidebar/SidebarIcon.svelte";
   import RowCountItems from "./sidebar/RowCountItems.svelte";
@@ -143,6 +146,13 @@
     query,
   });
   const ql = $derived(normalizedQuery(view));
+  /** Projects without an awake workspace fold into one entry on top (not in Find). */
+  const split = $derived(splitInactive(projects, view));
+  /** The "Inactive projects" entry is unfolded (local, never persisted). */
+  let inactiveOpen = $state(false);
+  $effect(() => {
+    if (split.inactive.length === 0) untrack(() => (inactiveOpen = false));
+  });
   const marker = $derived(markerRows(projects, view));
 
   function selectFirst(preferActive: boolean): void {
@@ -484,6 +494,33 @@
     motion.settle(keys);
   });
 
+  // A project moving between the "Inactive projects" entry and the cards
+  // (woken / given a workspace, or its last awake workspace hibernated) is
+  // pointed at where it lands: its card, or the entry. Not in Find, whose
+  // cards are all of them.
+  /** The inactive projects of the last update (not reactive: only this effect reads it). */
+  let lastInactive: ReadonlySet<string> | null = null;
+  $effect(() => {
+    const now = new Set(projects.filter(isInactive).map((project) => project.id));
+    const before = lastInactive;
+    lastInactive = now;
+    if (before === null || !animate || untrack(() => view.find) !== null) return;
+    const known = new Set(projects.map((project) => project.id));
+    const woke = [...before].filter((id) => !now.has(id) && known.has(id));
+    const slept = [...now].some((id) => !before.has(id));
+    if (woke.length === 0 && !slept) return;
+    void tick().then(() => {
+      for (const id of woke) {
+        const card = listEl?.querySelector(`.proj[data-project-id="${CSS.escape(id)}"]`);
+        if (!card) continue;
+        card.scrollIntoView({ block: "nearest" });
+        highlight(card);
+      }
+      const entry = slept ? listEl?.querySelector(".inact-h") : null;
+      if (entry) highlight(entry);
+    });
+  });
+
   // Keep the active row in view (keyboard navigation, a collapse moving you on).
   $effect(() => {
     void activeKey;
@@ -514,7 +551,13 @@
       );
       if (project === undefined) continue;
       const row = project.workspaces.find((candidate) => candidate.key === note.workspace?.key);
-      if (row === undefined || !untrack(() => rowHidden(project, row, view))) continue;
+      if (row === undefined) continue;
+      const outOfSight = untrack(
+        () =>
+          rowHidden(project, row, view) ||
+          (split.inactive.some((candidate) => candidate.id === project.id) && !inactiveOpen)
+      );
+      if (!outOfSight) continue;
       untrack(() => revealRow(project, row));
     }
   });
@@ -559,7 +602,9 @@
 
   /** Bring a row and its question card into view: expand, open the hibernated list. */
   function revealRow(project: UiProjectRow, row: UiWorkspaceRow): void {
-    if (project.collapsed) toggleCollapsed(project);
+    const inactive = split.inactive.some((candidate) => candidate.id === project.id);
+    if (inactive) inactiveOpen = true;
+    else if (project.collapsed) toggleCollapsed(project);
     const group = rowGroup(row);
     if (group === "automated") setHibernatedView(project, "all");
     else if (group === "hibernated" && project.hibernatedView === "hidden") {
@@ -595,7 +640,7 @@
 
   /** The rail: per expanded project its awake rows (and the active one); a dot per question. */
   const railGroups = $derived(
-    projects.map((project) => {
+    split.active.map((project) => {
       const shown = project.collapsed
         ? []
         : project.workspaces.filter((row) => !row.hibernated || row.active);
@@ -607,6 +652,17 @@
       );
       return { project, shown, offRail: offRail.length > 0 };
     })
+  );
+
+  /** The inactive projects have a question waiting (marks their rail glyph). */
+  const inactiveAsks = $derived(
+    notifications.some(
+      (note) =>
+        isQuestion(note) &&
+        split.inactive.some((project) =>
+          project.workspaces.some((row) => row.key === note.workspace?.key)
+        )
+    )
   );
 
   const NOTE_RAIL_ICON = { info: "info", warning: "warn", error: "xcircle" } as const;
@@ -664,7 +720,21 @@
         }
       }}
     >
-      {#each projects as project (project.id)}
+      {#if split.inactive.length > 0}
+        <InactiveProjects
+          projects={split.inactive}
+          {notifications}
+          open={inactiveOpen}
+          {animate}
+          onSetOpen={(open) => (inactiveOpen = open)}
+          onSetHibernatedView={setHibernatedView}
+          onCloseProject={(p) => api.emitEvent({ kind: "close-project", projectId: p.id })}
+          onNewWorkspace={(p) => api.emitEvent({ kind: "open-new-workspace", projectId: p.id })}
+          onRowClick={activateRow}
+          onRowAction={handleRowAction}
+        />
+      {/if}
+      {#each split.active as project (project.id)}
         <div class="cl projf" class:open={projectShown(project, view)}>
           <div class="clin">
             <ProjectCard
@@ -785,6 +855,14 @@
     </div>
 
     <div class="rail" aria-hidden="true">
+      {#if split.inactive.length > 0}
+        <div class="rgrp inactive" title={`${split.inactive.length} inactive projects`}>
+          <span class="r-ws"
+            ><span class="moon"><SidebarIcon name="moon" /></span>{#if inactiveAsks}<span class="rn"
+              ></span>{/if}</span
+          >
+        </div>
+      {/if}
       {#each railGroups as group (group.project.id)}
         <div class="rgrp">
           <span class="r-ws"
@@ -1088,6 +1166,12 @@
     padding: 6px 0;
     gap: 2px;
     overflow: hidden;
+  }
+  /* The inactive projects: one glyph, flatter than a project's group. */
+  .rgrp.inactive {
+    background: transparent;
+    border-style: dashed;
+    border-color: var(--ch-sb-line-2);
   }
   .rgrp {
     display: flex;

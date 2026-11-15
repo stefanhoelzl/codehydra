@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { PROJECT_COLOR_COUNT, type UiProjectRow } from "@shared/ui-state";
-import { sampleProjects } from "../components/sidebar-fixture";
+import { inactiveProjects, sampleProjects } from "../components/sidebar-fixture";
+import { makeUiWorkspaceRow } from "../test-utils";
 import {
   describeRowCounts,
   highlightParts,
+  isInactive,
   markerRows,
   matches,
   moonToggle,
@@ -16,6 +18,8 @@ import {
   rowHidden,
   rowOn,
   rowStatusText,
+  sleepingCounts,
+  splitInactive,
   type SidebarView,
 } from "./sidebar-model";
 
@@ -177,5 +181,51 @@ describe("sidebar-model", () => {
   it("marks nothing without a match", () => {
     expect(highlightParts("abc", "")).toEqual([{ text: "abc", marked: false }]);
     expect(highlightParts("abc", "x")).toEqual([{ text: "abc", marked: false }]);
+  });
+
+  describe("inactive projects", () => {
+    const hibernated = (key: string, change = {}) =>
+      makeUiWorkspaceRow(key, { key, hibernated: true, ...change });
+    const withRows = (workspaces: UiProjectRow["workspaces"]): UiProjectRow =>
+      project("website", { workspaces });
+
+    it("a project is inactive with no awake workspace", () => {
+      expect(isInactive(withRows([]))).toBe(true);
+      expect(isInactive(withRows([hibernated("a")]))).toBe(true);
+      expect(isInactive(withRows([hibernated("a", { wakeupScript: "cron" })]))).toBe(true);
+      expect(isInactive(withRows([hibernated("a", { status: "deleting" })]))).toBe(true);
+    });
+
+    it("a project is active with a workspace being created, or awake at all", () => {
+      expect(isInactive(withRows([makeUiWorkspaceRow("n", { status: "creating" })]))).toBe(false);
+      expect(isInactive(withRows([hibernated("a"), makeUiWorkspaceRow("b")]))).toBe(false);
+      expect(isInactive(project("codehydra"))).toBe(false);
+    });
+
+    it("a project whose active workspace is hibernated stays active", () => {
+      expect(isInactive(withRows([hibernated("a", { active: true })]))).toBe(false);
+    });
+
+    it("splits projects in main's order, and not at all in Find", () => {
+      const projects = [...sampleProjects(), ...inactiveProjects()];
+      const rest = splitInactive(projects, REST);
+      expect(rest.inactive.map((p) => p.id)).toEqual(["empty-repo", "docs", "scripts"]);
+      expect(rest.active.map((p) => p.id)).toEqual(["codehydra", "acme-api", "website", "infra"]);
+      const finding = splitInactive(projects, find("doc"));
+      expect(finding.inactive).toEqual([]);
+      expect(finding.active).toBe(projects);
+    });
+
+    it("keeps only the sleeping counts", () => {
+      expect(sleepingCounts(rowCounts(project("codehydra").workspaces))).toEqual({
+        busy: 0,
+        loading: 0,
+        idle: 0,
+        freshIdle: 0,
+        noAgent: 0,
+        hibernated: 2,
+        automated: 2,
+      });
+    });
   });
 });
