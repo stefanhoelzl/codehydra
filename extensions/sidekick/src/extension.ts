@@ -29,6 +29,12 @@ import { registerWorkspaceCommands } from "./workspace-commands";
 import type { ApiConfig, CommandRequest, TypedSocket } from "./types";
 
 /**
+ * Context key: the keys the agent terminal forwards to the agent, as a JSON
+ * array string. The manifest's forwarding keybindings test it.
+ */
+const TERMINAL_FORWARD_CONTEXT = "codehydra.terminalForward";
+
+/**
  * Factory functions for reconstructing VS Code objects from JSON wrappers.
  * Maps $vscode type markers to actual VS Code constructors.
  */
@@ -156,7 +162,8 @@ function registerDebugCommands(context: vscode.ExtensionContext): void {
 /**
  * The server's config: on the first one, lay out a new workspace, apply the
  * workspace env, open the agent terminal and (in development) register the
- * debug commands. A reconnect only refreshes the development flag.
+ * debug commands. A reconnect only refreshes the development flag and the
+ * forwarded keys.
  */
 async function handleConfig(config: ApiConfig, isReconnect: boolean): Promise<void> {
   state.isDevelopment = config.isDevelopment;
@@ -171,6 +178,13 @@ async function handleConfig(config: ApiConfig, isReconnect: boolean): Promise<vo
     "setContext",
     "codehydra.isDevelopment",
     state.isDevelopment
+  );
+  // The keys the agent terminal forwards (config `terminal.forward`). Each
+  // forwarding keybinding matches its key, quoted, in this JSON string.
+  await vscode.commands.executeCommand(
+    "setContext",
+    TERMINAL_FORWARD_CONTEXT,
+    JSON.stringify(config.terminalForward)
   );
 
   // Skip setup on reconnect — the sidekick is already configured
@@ -361,6 +375,7 @@ export function deactivate(): void {
   }
 
   void vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", false);
+  void vscode.commands.executeCommand("setContext", TERMINAL_FORWARD_CONTEXT, "[]");
 
   state.context = null;
   state.isDevelopment = false;

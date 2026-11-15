@@ -77,6 +77,8 @@ import { Path } from "../utils/path/path";
 import type { LogScopeStore } from "../boundaries/platform/logging-types";
 import type { Intent } from "../intents/lib/types";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
+import type { Config } from "../boundaries/platform/config";
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 
 // ============================================================================
 // Mock Socket Types
@@ -354,7 +356,7 @@ function createMinimalShowMessageOperation(): Operation<OperationSchemas> {
  */
 export async function createApiServerEnv(
   options?: ApiServerOptions & { readonly logScope?: LogScopeStore },
-  extra?: { registry?: OperationRegistry; cliToken?: string | null }
+  extra?: { registry?: OperationRegistry; cliToken?: string | null; config?: Config }
 ) {
   const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
   const mockDispatch = createMockDispatch();
@@ -428,6 +430,7 @@ export async function createApiServerEnv(
     logger: SILENT_LOGGER,
     registry: extra?.registry ?? new OperationRegistry([]),
     cliToken: () => extra?.cliToken ?? null,
+    configService: extra?.config ?? createMockConfig(),
     options: withoutLogScope(options),
   };
 

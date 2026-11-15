@@ -41,6 +41,7 @@ import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
 import type { WorkspacePath } from "../intents/contract";
 import { gitProjectRef } from "./git/ref";
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { AsyncLogScopeStore, ScopedLogger } from "../boundaries/platform/log-scope";
 import type { LogContext, Logger, LogScope } from "../boundaries/platform/logging-types";
 
@@ -1050,6 +1051,29 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const config = await configPromise;
 
       expect(config.isDevelopment).toBe(false);
+    });
+
+    // The sidekick's forwarding keybindings test the list (`terminal.forward`).
+    it.each([
+      [undefined, ["ctrl+enter", "ctrl+shift+a", "shift+enter", "shift+space"]],
+      ["ctrl+shift+d,shift+enter", ["ctrl+shift+d", "shift+enter"]],
+    ])("sends terminal.forward %s as the keys to forward", async (configured, expected) => {
+      await env.cleanup();
+      env = await createApiServerEnv(undefined, {
+        config: createMockConfig({
+          defaults: configured !== undefined ? { "terminal.forward": configured } : {},
+        }),
+      });
+
+      const client = createClient(wsPath("/test/workspace"));
+      const configPromise = new Promise<ApiConfig>((resolve) => {
+        client.on("config", (config) => resolve(config));
+      });
+
+      await waitForConnect(client);
+      const config = await configPromise;
+
+      expect(config.terminalForward).toEqual(expected);
     });
 
     it("sends config event on reconnection", async () => {

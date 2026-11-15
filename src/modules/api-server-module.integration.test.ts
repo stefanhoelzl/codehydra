@@ -39,6 +39,7 @@ import { createMinimalStartOperation } from "./api-server.test-utils";
 import type { WorkspaceName } from "../intents/contract";
 import { makeWorkspaceRef } from "../utils/ref";
 import { gitProjectRef } from "./git/ref";
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 
 const PROJECT_REF = gitProjectRef(projPath("/test/project"));
 const FEATURE_REF = makeWorkspaceRef(PROJECT_REF, "feature-1");
@@ -102,6 +103,7 @@ function createMockDeps(overrides?: Partial<ApiServerModuleDeps>): ApiServerModu
     registry: new OperationRegistry([]),
     // No token yet: the pre-app:start posture, refusing every CLI client.
     cliToken: () => null,
+    configService: createMockConfig(),
     ...overrides,
   };
 }

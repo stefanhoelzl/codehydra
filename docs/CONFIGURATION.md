@@ -108,6 +108,10 @@ Default `VSCODIUM_VERSION` (`ide-server-module/vscodium.ts`) · `ide-server-modu
 
 Default 25448 packaged, else derived from the git branch (30000–65000) · `ide-server-module.ts`. Embedded IDE server (VSCodium reh-web) port, 1024–65535.
 
+#### `terminal.forward`
+
+Default `ctrl+enter,ctrl+shift+a,shift+enter,shift+space` · `api-server-module.ts`, keys in `terminal-forward.ts`. Comma-separated keys the agent terminal sends to the agent instead of the editor: Shift/Ctrl/Ctrl+Shift+Enter, Shift+Space, Ctrl(+Shift)+Tab, Ctrl+Shift+A–Z. The sidekick turns the terminal's kitty keyboard protocol off so editor shortcuts reach the editor, and its manifest has one `sendSequence` keybinding per key, sending the key's kitty encoding while a terminal in the editor area has focus (`terminalEditorFocus`; CodeHydra opens only the agent terminal there) and the key is listed. The list reaches the sidekick in its `config` message (`ApiConfig.terminalForward`), which it publishes as the `codehydra.terminalForward` context key (a JSON array string the bindings' `=~` regexes match), so a change applies when a workspace's editor next connects (open, wake, restart). Cannot be empty (`storeEnumList`).
+
 #### `terminal.priority-boost`
 
 Default `true` · `input-priority/input-priority-module.ts`. Windows only. Runs every process a keystroke in a workspace terminal passes through at above-normal priority: the UI renderer, the IDE server, its ptyHost, every ConPTY `OpenConsole`, the terminals' shells and the agent TUIs (`input-path.ts`). Under heavy load (agents running builds on every core) each of them otherwise waits behind that load on every key, and typing lags by seconds. What a shell or agent starts stays at normal priority (Windows does not pass a raised priority on). A process snapshot every 5 s (`ProcessRunner.listProcesses`) finds new terminals; raising is one way (`ProcessRunner.increasePriority`), so turning it off applies after a restart.

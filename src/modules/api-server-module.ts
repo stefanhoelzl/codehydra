@@ -36,6 +36,13 @@ import { LogLevel } from "../boundaries/platform/logging-types";
 import type { PortManager } from "../boundaries/platform/network";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import { Path } from "../utils/path/path";
+import type { Config } from "../boundaries/platform/config";
+import { storeEnumList } from "../boundaries/platform/store-definition";
+import {
+  TERMINAL_FORWARD_DEFAULT,
+  TERMINAL_FORWARD_KEYS,
+  terminalForwardKeys,
+} from "./terminal-forward";
 import type { WorkspaceStatus } from "../shared/api/types";
 import type {
   AppendOutputRequest,
@@ -169,6 +176,8 @@ export interface ApiServerModuleDeps {
    * the correct posture before a token exists.
    */
   readonly cliToken: () => string | null;
+  /** Registers `terminal.forward`, the keys the sidekick forwards to the agent. */
+  readonly configService: Config;
   readonly options?: ApiServerOptions;
 }
 
@@ -274,6 +283,15 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   const { portManager, dispatcher, appLayer, fileSystem, logger } = deps;
   const isDevelopment = deps.options?.isDevelopment ?? false;
   const extensionLogger: Logger = deps.options?.extensionLogger ?? SILENT_LOGGER;
+
+  // Sent to each sidekick in its config, so a change reaches a workspace when
+  // its editor next connects (open, wake, restart). See terminal-forward.ts.
+  const terminalForwardConfig = deps.configService.register("terminal.forward", {
+    default: TERMINAL_FORWARD_DEFAULT,
+    description:
+      "Keys the agent terminal sends to the agent instead of the editor; a listed key stops running its editor shortcut there",
+    ...storeEnumList(TERMINAL_FORWARD_KEYS),
+  });
 
   // ---------------------------------------------------------------------------
   // Closure state (replaces ApiServer class fields)
@@ -1100,6 +1118,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         workspaceEnv,
         agentType: agentTypeValue,
         resetWorkspace,
+        terminalForward: terminalForwardKeys(terminalForwardConfig.get()),
       };
       socket.emit("config", config);
       // A new workspace's layout is reset once, by the first sidekick. A later
