@@ -3,8 +3,8 @@
  * Integration tests for the CLI module.
  *
  * Runs the module through a real dispatcher so the assertions cover the seam
- * `ch` actually depends on: what ends up in state.json after app:start, and what
- * the API server sees when it asks for the token.
+ * `ch` actually depends on: what `session.json` holds after app:start and
+ * app:shutdown, and what the API server sees when it asks for the token.
  */
 
 import { AsyncLogScopeStore } from "../boundaries/platform/log-scope";
@@ -12,104 +12,98 @@ import { describe, it, expect } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { createMockState, type MockStateService } from "../boundaries/platform/state.test-utils";
-import type { StateService } from "../boundaries/platform/state-service";
-import type { PersistedAccessor } from "../boundaries/platform/store-definition";
+import {
+  createFileSystemMock,
+  directory,
+  file,
+  type MockFileSystemBoundary,
+} from "../boundaries/platform/filesystem.state-mock";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { createCliModule, CLI_SCRIPTS } from "./cli-module";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
+import type { Operation } from "../intents/lib/operation";
+import { z } from "zod/v4";
+import { testPath } from "../shared/test-fixtures";
+import { Path } from "../utils/path/path";
+import type { SessionFile } from "../cli/discovery";
 
 const INTENT_APP_START = "app:start";
+const DATA_ROOT = testPath("app-data");
+const SESSION_PATH = new Path(DATA_ROOT.toString(), "session.json");
+const PID = 4242;
+
+interface SetupOptions {
+  readonly state?: MockStateService;
+  readonly fileSystem?: MockFileSystemBoundary;
+  /** Wraps the filesystem the module sees, e.g. to observe its writes. */
+  readonly wrapFs?: (fs: FileSystemBoundary) => FileSystemBoundary;
+}
 
 /**
- * Drive the module's start hook with a given API server port.
- *
- * The port arrives as a capability the API server provides, so the test
- * seeds it the same way the real operation would.
+ * The module wired to a dispatcher that runs app:start (migrations + start)
+ * and app:shutdown (stop), with the API server's port supplied as the
+ * capability the real operation provides.
  */
-async function startWith(apiPort: number | null) {
-  const state = createMockState();
-  const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
+function setup(apiPort: number | null, options: SetupOptions = {}) {
+  const state = options.state ?? createMockState();
+  const fileSystem =
+    options.fileSystem ??
+    createFileSystemMock({ entries: { [DATA_ROOT.toString()]: directory() } });
+  const handle = createCliModule({
+    stateService: state,
+    fileSystem: options.wrapFs ? options.wrapFs(fileSystem) : fileSystem,
+    sessionPath: SESSION_PATH,
+    pid: PID,
+    logger: SILENT_LOGGER,
+  });
 
   const dispatcher = new Dispatcher({
     logger: createMockLogger(),
     logScope: new AsyncLogScopeStore(),
   });
   dispatcher.registerModule(handle.module);
-  dispatcher.registerOperation(
-    createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
-      // The port reaches the hook as a capability the API server provides,
-      // and as hook context; the module reads it from the context.
-      // Capabilities only. Supplying the port on the context as well let a
-      // handler that read it from the wrong place pass here and still fail
-      // against the real dispatcher — which is exactly what happened once.
-      hookContext: (ctx) => ({
-        intent: ctx.intent,
-        capabilities: { apiPort },
-      }),
-    })
-  );
-
-  await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} });
-  return { state, handle };
-}
-
-/**
- * A state service that records the store after each individual write.
- *
- * Every `set()` persists state.json on its own, so each of these snapshots is a
- * state a concurrent reader — `ch`, or the e2e fixture — can actually observe.
- * Asserting on them is what pins the publish order down; asserting only on the
- * final state cannot tell a safe order from an unsafe one.
- */
-function createObservingState(): {
-  state: MockStateService;
-  snapshots: Record<string, unknown>[];
-} {
-  const state = createMockState();
-  const snapshots: Record<string, unknown>[] = [];
-  const register = state.register.bind(state) as StateService["register"];
-  const observing: MockStateService = {
-    ...state,
-    register: ((key: string, definition: never) => {
-      const accessor = register(key, definition) as PersistedAccessor<unknown>;
-      return {
-        ...accessor,
-        set: async (value: unknown) => {
-          await accessor.set(value);
-          snapshots.push(state.getEffective());
-        },
-      };
-    }) as StateService["register"],
+  // The two app:start hook points the module uses, in the real order.
+  // Capabilities only for the port: supplying it on the context as well let a
+  // handler that read it from the wrong place pass here and still fail
+  // against the real dispatcher — which is exactly what happened once.
+  const appStart: Operation<{
+    readonly type: string;
+    readonly payload: z.ZodUnknown;
+    readonly result: z.ZodUnknown;
+  }> = {
+    id: APP_START_OPERATION_ID,
+    schemas: { type: INTENT_APP_START, payload: z.unknown(), result: z.unknown() },
+    async execute(ctx) {
+      for (const hookPoint of ["migrations", "start"]) {
+        const { errors } = await ctx.hooks.collect(hookPoint, {
+          intent: ctx.intent,
+          capabilities: { apiPort },
+        });
+        if (errors.length > 0) throw errors[0]!;
+      }
+    },
   };
-  return { state: observing, snapshots };
-}
-
-/** Drive app:start then app:shutdown against one module instance. */
-async function startThenStop(apiPort: number) {
-  const state = createMockState();
-  const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
-
-  const dispatcher = new Dispatcher({
-    logger: createMockLogger(),
-    logScope: new AsyncLogScopeStore(),
-  });
-  dispatcher.registerModule(handle.module);
-  dispatcher.registerOperation(
-    createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
-      hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { apiPort } }),
-    })
-  );
+  dispatcher.registerOperation(appStart);
   dispatcher.registerOperation(
     createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
       throwOnError: false,
     })
   );
 
-  await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} });
-  await dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} });
-  return { state, handle };
+  return {
+    state,
+    fileSystem,
+    handle,
+    start: () => dispatcher.dispatch({ type: INTENT_APP_START, payload: {} }),
+    stop: () => dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} }),
+  };
+}
+
+async function readSession(fileSystem: FileSystemBoundary): Promise<SessionFile> {
+  return JSON.parse(await fileSystem.readFile(SESSION_PATH)) as SessionFile;
 }
 
 describe("CliModule", () => {
@@ -126,103 +120,120 @@ describe("CliModule", () => {
   });
 
   describe("publishing connection details", () => {
-    it("writes the bound port so ch can find the instance", async () => {
-      const { state } = await startWith(45123);
+    it("writes the bound port, a token and its pid to session.json", async () => {
+      const { fileSystem, handle, start } = setup(45123);
 
-      expect(state.getEffective()["api.port"]).toBe(45123);
+      await start();
+
+      const session = await readSession(fileSystem);
+      expect(session.port).toBe(45123);
+      expect(session.pid).toBe(PID);
+      expect(session.token.length).toBeGreaterThan(32);
+      expect(handle.token()).toBe(session.token);
     });
 
-    it("writes a token the CLI must present", async () => {
-      const { state, handle } = await startWith(45123);
-
-      const token = state.getEffective()["api.token"];
-      expect(typeof token).toBe("string");
-      expect((token as string).length).toBeGreaterThan(32);
-      expect(handle.token()).toBe(token);
-    });
-
-    it("has no token before app:start has run", async () => {
+    it("has no token before app:start has run", () => {
       // The API server is constructed first and reads this lazily; a null
       // must refuse CLI connections rather than admit unauthenticated ones.
-      const handle = createCliModule({
-        stateService: createMockState(),
-        logger: SILENT_LOGGER,
-      });
+      const { handle } = setup(45123);
 
       expect(handle.token()).toBeNull();
     });
 
-    it("never leaves a port published without its token", async () => {
-      // `ch` reads state.json once and requires both fields, reporting
-      // "CodeHydra does not appear to be running" if either is missing — so a
-      // moment where the port is live and the token is not is a moment a
-      // healthy app looks dead. The port is therefore written last, and every
-      // observable intermediate state has to respect that.
-      const { state, snapshots } = createObservingState();
-      const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
-      const dispatcher = new Dispatcher({
-        logger: createMockLogger(),
-        logScope: new AsyncLogScopeStore(),
+    it("never writes session.json in place, so a reader sees all of it or none", async () => {
+      // `ch` reads the file once and requires port and token both; a
+      // half-written file would make a healthy app look dead.
+      const written: string[] = [];
+      const { fileSystem, start } = setup(45123, {
+        wrapFs: (fs) => ({
+          ...fs,
+          writeFile: (path, content, options) => {
+            written.push(path.toString());
+            return fs.writeFile(path, content, options);
+          },
+        }),
       });
-      dispatcher.registerModule(handle.module);
-      dispatcher.registerOperation(
-        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
-          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { apiPort: 45123 } }),
-        })
-      );
 
-      await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} });
+      await start();
 
-      expect(snapshots.length).toBeGreaterThan(1);
-      for (const snapshot of snapshots) {
-        const port = snapshot["api.port"];
-        const token = snapshot["api.token"];
-        if (typeof port === "number" && port > 0) {
-          expect(typeof token === "string" && token.length > 0).toBe(true);
-        }
-      }
+      expect(written).not.toContain(SESSION_PATH.toString());
+      expect(fileSystem).toHaveFile(SESSION_PATH);
+    });
+
+    it("replaces a session file a crashed launch left behind", async () => {
+      const fileSystem = createFileSystemMock({
+        entries: {
+          [DATA_ROOT.toString()]: directory(),
+          [SESSION_PATH.toString()]: file(JSON.stringify({ port: 1, token: "old", pid: 1 })),
+        },
+      });
+      const { start } = setup(45123, { fileSystem });
+
+      await start();
+
+      expect((await readSession(fileSystem)).port).toBe(45123);
     });
 
     it("mints a different token each launch", async () => {
       // A token outliving its process would authorize a connection to whatever
       // bound the port next.
-      const first = await startWith(1);
-      const second = await startWith(1);
+      const first = setup(1);
+      const second = setup(1);
+      await first.start();
+      await second.start();
 
       expect(first.handle.token()).not.toBe(second.handle.token());
+    });
+
+    it("keeps the connection out of state.json", async () => {
+      const { state, start } = setup(45123);
+
+      await start();
+
+      expect(state.getEffective()["api.port"]).toBe(0);
+      expect(state.getEffective()["api.token"]).toBeNull();
+    });
+  });
+
+  describe("an earlier release's state.json", () => {
+    it("is stripped of the connection it used to hold there", async () => {
+      const state = createMockState({ values: { "api.port": 41000, "api.token": "stale" } });
+      const { start } = setup(45123, { state });
+
+      await start();
+
+      expect(state.getEffective()["api.port"]).toBe(0);
+      expect(state.getEffective()["api.token"]).toBeNull();
     });
   });
 
   describe("shutdown", () => {
-    it("withdraws the published port", async () => {
+    it("removes session.json, so ch reports the app as not running", async () => {
       // A port outlives the process that bound it. Leaving it behind would have
-      // `ch` report a connection error rather than the truth — that CodeHydra
-      // is not running — and would point it at whatever binds that port next.
-      const { state } = await startThenStop(45123);
+      // `ch` present this instance's token to whatever binds that port next.
+      const { fileSystem, handle, start, stop } = setup(45123);
+      await start();
 
-      expect(state.getEffective()["api.port"]).toBe(0);
-    });
+      await stop();
 
-    it("withdraws the token, so it is never presented to a stranger", async () => {
-      const { state, handle } = await startThenStop(45123);
-
-      expect(state.getEffective()["api.token"]).toBeNull();
+      expect(fileSystem).not.toHaveFile(SESSION_PATH);
       expect(handle.token()).toBeNull();
     });
   });
 
   describe("when the API server did not start", () => {
-    it("publishes no port, so ch reports the app as not running", async () => {
-      const { state } = await startWith(null);
+    it("publishes nothing, and removes a stale session file", async () => {
+      const fileSystem = createFileSystemMock({
+        entries: {
+          [DATA_ROOT.toString()]: directory(),
+          [SESSION_PATH.toString()]: file(JSON.stringify({ port: 1, token: "old", pid: 1 })),
+        },
+      });
+      const { handle, start } = setup(null, { fileSystem });
 
-      // 0 is the sentinel discovery treats as absent.
-      expect(state.getEffective()["api.port"]).toBe(0);
-    });
+      await start();
 
-    it("publishes no token", async () => {
-      const { state, handle } = await startWith(null);
-
-      expect(state.getEffective()["api.token"]).toBeNull();
+      expect(fileSystem).not.toHaveFile(SESSION_PATH);
       expect(handle.token()).toBeNull();
     });
   });

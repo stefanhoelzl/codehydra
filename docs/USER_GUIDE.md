@@ -728,7 +728,8 @@ platform, so it can live in your dotfiles.
 
 What the app writes lives in the data directory: `state.json` (what the app
 itself remembers: which plugins are enabled (`plugins.state`), which projects hide hibernated workspaces, tracked
-automations, a dismissed update, the workspaces folder in use) and
+automations, a dismissed update, the workspaces folder in use),
+`session.json` (while the app runs: how `ch` finds it, deleted when it quits) and
 the `logs/` folder (plugin run logs are in `logs/plugins/`, wakeup script run
 logs in `logs/wakeup/`):
 

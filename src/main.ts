@@ -181,6 +181,7 @@ import { createOsNotificationModule } from "./modules/os-notification-module";
 import { createPowerModule } from "./modules/power-module";
 import { createFrameWatchdogModule } from "./modules/frame-watchdog-module";
 import { createCliModule } from "./modules/cli-module";
+import { SESSION_FILE } from "./cli/discovery";
 import { createRegistry } from "./api/entries";
 import { createDeletionWaiter } from "./api/deletion-waiter";
 import { createElectronLifecycleModule } from "./modules/electron-lifecycle-module";
@@ -639,6 +640,9 @@ const ideServerModule = createIdeServerModule({
 // the API server so its token can be read lazily from the handshake.
 const cliModule = createCliModule({
   stateService,
+  fileSystem: fileSystemLayer,
+  sessionPath: pathProvider.dataPath(SESSION_FILE),
+  pid: process.pid,
   logger: loggingService.createLogger("cli"),
 });
 

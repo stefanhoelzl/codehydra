@@ -13,7 +13,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { runClaudeWrapper } from "../modules/agent-module/claude/wrapper";
 import { runOpencodeWrapper } from "../modules/agent-module/opencode/wrapper";
 import { connect } from "./client";
-import { chooseConnection, DiscoveryError, type DiscoveryFs } from "./discovery";
+import {
+  chooseConnection,
+  DiscoveryError,
+  type DiscoveryFs,
+  type IsProcessAlive,
+} from "./discovery";
 import { childExitCode } from "./child-exit";
 import { lockRun } from "./lock-run";
 import { connectMcp, reconnecting, serveMcp } from "./mcp";
@@ -23,6 +28,16 @@ import { run } from "./run";
 const VERSION = "1.0.0";
 
 const fs: DiscoveryFs = { readFileSync, realpathSync };
+
+/** Signal 0 probes without signalling; EPERM means it exists but is not ours. */
+const isProcessAlive: IsProcessAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
 
 /**
  * Run a command transparently: same stdio, same exit code.
@@ -102,8 +117,9 @@ async function main(): Promise<number> {
     return passthrough(command, rest);
   }
 
-  /** See chooseConnection: `_CH_DATA_DIR`, then port + token, then state.json. */
-  const connection = () => chooseConnection(process.argv[1] ?? __filename, process.env, fs);
+  /** See chooseConnection: `_CH_DATA_DIR`, then port + token, then session.json. */
+  const connection = () =>
+    chooseConnection(process.argv[1] ?? __filename, process.env, fs, isProcessAlive);
 
   /**
    * Open a connection. It says only where `ch` was run — the app resolves that

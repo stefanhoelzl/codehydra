@@ -162,7 +162,7 @@ Default `false` · `src/main.ts`. Download VSCodium and both agents (configured 
 
 ## Persisted State (state.json)
 
-Values the **app writes at runtime** (not user-authored settings) live in `state.json` in the data dir. `StateService` (`src/boundaries/platform/state-service.ts`) is the Config sibling: same `register()`/accessor API, but a minimal async single-file load — no env/CLI overrides, no precedence, no computed defaults; a missing file yields defaults, an unreadable or unknown entry is logged and skipped. Both services compose `PersistedStore` (`persisted-store.ts`: registry, accessors, read-modify-write persistence), which **serializes its writes** (per-instance promise chain), so several owners sharing one file can't lose an update to interleaved read-modify-writes. Each write goes to `<file>.tmp` beside it and is renamed over the file, so another process (`ch` reads the API port and token from `state.json`) and a start after a crash mid-write never see a truncated file. On Windows that rename fails with EPERM while another process has the file open, even just to read it; `FileSystemBoundary.rename` retries EPERM/EACCES/EBUSY for about 300 ms before giving up.
+Values the **app writes at runtime** (not user-authored settings) live in `state.json` in the data dir. `StateService` (`src/boundaries/platform/state-service.ts`) is the Config sibling: same `register()`/accessor API, but a minimal async single-file load — no env/CLI overrides, no precedence, no computed defaults; a missing file yields defaults, an unreadable or unknown entry is logged and skipped. Both services compose `PersistedStore` (`persisted-store.ts`: registry, accessors, read-modify-write persistence), which **serializes its writes** (per-instance promise chain), so several owners sharing one file can't lose an update to interleaved read-modify-writes. Each write goes to `<file>.tmp` beside it and is renamed over the file, so another process and a start after a crash mid-write never see a truncated file. On Windows that rename fails with EPERM while another process has the file open, even just to read it; `FileSystemBoundary.rename` retries EPERM/EACCES/EBUSY for about 300 ms before giving up.
 
 The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `app:start` `init` hook, before modules consume their values in `start`.
 
@@ -200,13 +200,9 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 
 `presentation/process-bar.ts`. The process tree's height as a fraction of the sidebar's, `0.1`–`0.7`, default `0.25`. Written on release of a drag on the tree's top edge (`resize-process-tree` ui:event, clamped); a double-click there resets it.
 
-#### `api.port`
+#### `api.port`, `api.token` (deprecated)
 
-`cli-module.ts`. Port the API server bound, published so `ch` can find this instance. `0` = not running (`storeNumber` has no nullable form and the server never binds port 0).
-
-#### `api.token`
-
-`cli-module.ts`. Shared secret `ch` and `ch mcp` present when connecting. `redact: true`. Minted fresh each launch (one that outlived its process would authorize a connection to whatever bound the port next); cleared with `api.port` on stop.
+`cli-module.ts`. Where `ch` found the running instance before `session.json` (see Session file). Registered `deprecated: true` only so the `app:start` `migrations` hook can strip them from an earlier release's `state.json`; `api.token` keeps `redact: true`.
 
 #### `paths.workspaces`
 
@@ -227,6 +223,10 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 #### `paths.workspaces-current` (deprecated)
 
 `workspaces-root/module.ts`. The root in use before it moved to `paths.workspaces`; read once by the `migrations` hook, then reset.
+
+## Session file (session.json)
+
+`<dataRoot>/session.json` is how `ch` finds the running instance from outside CodeHydra (inside, `_CH_API_PORT` + `_CH_API_TOKEN` come from the environment): `{ "port", "token", "pid" }`. `cli-module.ts` writes it once in `app:start` `start` (to `session.json.tmp`, renamed over the file), and deletes it in `app:shutdown` `stop`, or at start when the API server did not bind. Never rewritten while the app runs, so a `ch` reading it cannot make a write fail (see the Windows rename note under Persisted State). `token` is minted fresh each launch, so one that outlived its process cannot authorize a connection to whatever binds the port next. A crash leaves the file behind; `ch` checks `pid` and reports such a file as not running. Not a `StateService` key: `SESSION_FILE` and `SessionFile` live in `src/cli/discovery.ts`, shared by the writer and `ch`.
 
 ## Redaction
 

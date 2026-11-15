@@ -469,8 +469,8 @@ acts on the caller's own workspace), and `ch` spells them `--workspace` /
 
 Two further differences matter for anyone writing a client:
 
-- **Token.** `cli` and `mcp` clients must present the token from `api.token`
-  in `state.json`. An extension's handshake carries none and is unaffected.
+- **Token.** `cli` and `mcp` clients must present the token from `token`
+  in `session.json`. An extension's handshake carries none and is unaffected.
 - **Non-exclusive.** A `cli`/`mcp` connection never becomes the workspace's
   registered socket, so it cannot displace an extension or strand a teardown
   waiting on one — which is also why it may connect during teardown, and with no
@@ -845,7 +845,7 @@ operations that instance actually has.
 | **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <name\|path>` overrides on every command that acts on a workspace (a name: your own project first, then unique elsewhere), and `--project <name\|path>` scopes that name to one project; an unknown name fails the command with exit `6`, an ambiguous one with exit `2`. `--project` without `--workspace` is exit `2`, except where the command has its own `--project` (`ws create`). On a command that acts on no workspace, `--workspace` is exit `2`. |
 | **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. A flag that is neither global nor a field of the operation is a usage error.                                                                                                                                                                                                                |
 | **Output**    | `--format json\|text\|auto`. `auto`, the default, is JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. Errors follow the format: JSON mode writes `{"error","exitCode"}` to stderr.                                                                                                                                                                                                                                                                                                                 |
-| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `api.port` and `api.token` from `state.json`. `_CH_API_PORT` + `_CH_API_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview.                                                                                                                                               |
+| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `port` and `token` from `session.json`, which the app writes at start and deletes at shutdown; a file whose `pid` has exited (left by a crash) reads as not running. `_CH_API_PORT` + `_CH_API_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview.                        |
 
 ### Exit codes
 
