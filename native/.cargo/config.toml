@@ -1,0 +1,7 @@
+# Link with the system linker (bfd via cc), not rust-lld, the default on this
+# target since Rust 1.90. LLVM names a temporary output file from a `%%%%`
+# pattern and replaces every `%` in the path, including ones in directory names.
+# CodeHydra turns `/` in a branch into `%` in the worktree's directory
+# (`feat/x` -> `feat%x`), so rust-lld fails with "cannot open output file".
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-self-contained=-linker", "-C", "link-arg=-fuse-ld=bfd"]
