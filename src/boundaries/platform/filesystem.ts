@@ -246,6 +246,11 @@ export interface FileSystemBoundary {
    * 1. Write to a temp file
    * 2. Rename temp file to target (atomic on most filesystems)
    *
+   * On Windows, renaming over a file that another process holds open — even
+   * a reader — fails with EPERM until the handle closes. A failure with
+   * EPERM, EACCES or EBUSY is therefore retried for a few hundred
+   * milliseconds before it is thrown.
+   *
    * @param oldPath - Current path of the file/directory (Path object or string)
    * @param newPath - New path for the file/directory (Path object or string)
    * @throws FileSystemError with code ENOENT if oldPath doesn't exist
@@ -323,6 +328,20 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<string>(KNOWN_FILESYSTEM_
 function isKnownErrorCode(code: string): code is KnownFileSystemErrorCode {
   return KNOWN_ERROR_CODES.has(code);
 }
+
+/**
+ * Rename codes a lingering handle produces on Windows: another process (`ch`
+ * reading state.json, a virus scanner) holding the target open makes a rename
+ * over it fail until that handle closes, typically within milliseconds.
+ */
+const TRANSIENT_RENAME_CODES: ReadonlySet<string> = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+/**
+ * Waits before each rename retry: ~300ms in all. Long enough to outlast a
+ * reader's open-read-close; short enough that a genuine permission error
+ * still surfaces promptly.
+ */
+const RENAME_RETRY_DELAYS_MS: readonly number[] = [5, 10, 20, 40, 80, 150];
 
 /**
  * SystemError info structure for fs.rm() errors.
@@ -554,10 +573,19 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
     const nativeOldPath = toNativePath(oldPath);
     const nativeNewPath = toNativePath(newPath);
     this.logger.debug("Rename", { oldPath: nativeOldPath, newPath: nativeNewPath });
-    try {
-      await fs.rename(nativeOldPath, nativeNewPath);
-    } catch (error) {
-      throw mapError(error, nativeOldPath);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fs.rename(nativeOldPath, nativeNewPath);
+        return;
+      } catch (error) {
+        const code = error instanceof Error ? extractErrorCode(error) : undefined;
+        const delay = RENAME_RETRY_DELAYS_MS[attempt];
+        if (delay === undefined || code === undefined || !TRANSIENT_RENAME_CODES.has(code)) {
+          throw mapError(error, nativeOldPath);
+        }
+        this.logger.debug("Rename retry", { newPath: nativeNewPath, code, attempt: attempt + 1 });
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
   }
 

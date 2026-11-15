@@ -9,16 +9,18 @@ import { join } from "node:path";
 import type * as NodeFs from "node:fs/promises";
 
 /**
- * Hoisted mock control for node:fs/promises rm.
- * When rmOverride is non-null, the mocked rm delegates to it instead of the real implementation.
- * This allows the ETIMEDOUT test to inject a never-resolving promise while keeping all
- * other tests using real filesystem operations.
+ * Hoisted mock control for node:fs/promises rm and rename.
+ * When an override is non-null, the mocked function delegates to it instead of the real
+ * implementation. This lets the ETIMEDOUT test inject a never-resolving rm, and the rename
+ * tests inject the EPERM Windows raises for a target held open, while keeping all other
+ * tests on real filesystem operations.
  *
  * Outside the Electron runtime (Vitest), the boundary's original-fs require throws and
  * falls back to node:fs/promises, so mocking node:fs/promises intercepts the boundary's rm.
  */
-const { rmControl } = vi.hoisted(() => ({
+const { rmControl, renameControl } = vi.hoisted(() => ({
   rmControl: { override: null as (() => Promise<void>) | null },
+  renameControl: { override: null as (() => Promise<void> | undefined) | null },
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -28,6 +30,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     rm: (...args: Parameters<typeof actual.rm>) => {
       if (rmControl.override) return rmControl.override();
       return actual.rm(...args);
+    },
+    rename: (...args: Parameters<typeof actual.rename>) => {
+      return renameControl.override?.() ?? actual.rename(...args);
     },
   };
 });
@@ -40,6 +45,7 @@ import {
   chmod,
   stat,
   lstat,
+  open,
 } from "node:fs/promises";
 import { DefaultFileSystemBoundary } from "./filesystem";
 import { SILENT_LOGGER } from "./logging";
@@ -789,6 +795,93 @@ describe("DefaultFileSystemBoundary", () => {
       await expect(fs.realpath(join(tempDir.path, "missing"))).rejects.toMatchObject({
         fsCode: "ENOENT",
       });
+    });
+  });
+
+  describe("rename", () => {
+    /** The error Node raises on Windows for a rename over a target held open. */
+    function eperm(): NodeJS.ErrnoException {
+      return Object.assign(new Error("EPERM: operation not permitted, rename"), {
+        code: "EPERM",
+      });
+    }
+
+    afterEach(() => {
+      renameControl.override = null;
+    });
+
+    it("replaces the target with the source", async () => {
+      const source = join(tempDir.path, "state.json.tmp");
+      const target = join(tempDir.path, "state.json");
+      await nodeWriteFile(source, "new", "utf-8");
+      await nodeWriteFile(target, "old", "utf-8");
+
+      await fs.rename(source, target);
+
+      expect(await nodeReadFile(target, "utf-8")).toBe("new");
+    });
+
+    it("replaces a target another handle holds open", async () => {
+      // On Windows the rename fails with EPERM while the handle is open, and
+      // succeeds on a retry once it closes; elsewhere it succeeds at once.
+      const source = join(tempDir.path, "state.json.tmp");
+      const target = join(tempDir.path, "state.json");
+      await nodeWriteFile(source, "new", "utf-8");
+      await nodeWriteFile(target, "old", "utf-8");
+      const reader = await open(target, "r");
+      const closed = new Promise<void>((resolve) => {
+        setTimeout(() => void reader.close().then(resolve), 20);
+      });
+
+      try {
+        await fs.rename(source, target);
+      } finally {
+        await closed;
+      }
+
+      expect(await nodeReadFile(target, "utf-8")).toBe("new");
+    });
+
+    it("retries a transient EPERM until the rename goes through", async () => {
+      const source = join(tempDir.path, "state.json.tmp");
+      const target = join(tempDir.path, "state.json");
+      await nodeWriteFile(source, "new", "utf-8");
+      let failures = 2;
+      renameControl.override = () => (failures-- > 0 ? Promise.reject(eperm()) : undefined);
+
+      await fs.rename(source, target);
+
+      expect(failures).toBe(-1);
+      expect(await nodeReadFile(target, "utf-8")).toBe("new");
+    });
+
+    it("throws EPERM once the retries are exhausted", async () => {
+      vi.useFakeTimers();
+      let attempts = 0;
+      renameControl.override = () => {
+        attempts++;
+        return Promise.reject(eperm());
+      };
+
+      try {
+        const result = fs
+          .rename(join(tempDir.path, "a"), join(tempDir.path, "b"))
+          .catch((error: unknown) => error);
+        await vi.runAllTimersAsync();
+
+        const error = await result;
+        expect(error).toBeInstanceOf(FileSystemError);
+        expect((error as FileSystemError).fsCode).toBe("EPERM");
+        expect(attempts).toBe(7);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("throws ENOENT at once, without retrying", async () => {
+      await expect(
+        fs.rename(join(tempDir.path, "missing"), join(tempDir.path, "b"))
+      ).rejects.toMatchObject({ fsCode: "ENOENT" });
     });
   });
 
