@@ -808,8 +808,11 @@ This is used by CodeHydra to send startup commands (close sidebars, open termina
 ## `ch` CLI
 
 `ch` is the same operations from a shell. It ships in `<dataRoot>/bin` and is on
-the PATH of every CodeHydra terminal; add that directory to your own PATH to use
-it from an ordinary shell.
+the PATH of every CodeHydra terminal; the `cli.install-global` setting makes it
+available in every other shell (see the user guide). When the instance is not
+running, every command that talks to it starts it first and waits until it has
+reopened its projects (`api.ready`); `ch running` reports the state without
+ever starting it.
 
 ```console
 $ ch ws status                       # the workspace containing the current directory
@@ -840,24 +843,24 @@ operations that instance actually has.
 
 ### Conventions
 
-|               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <name\|path>` overrides on every command that acts on a workspace (a name: your own project first, then unique elsewhere), and `--project <name\|path>` scopes that name to one project; an unknown name fails the command with exit `6`, an ambiguous one with exit `2`. `--project` without `--workspace` is exit `2`, except where the command has its own `--project` (`ws create`). On a command that acts on no workspace, `--workspace` is exit `2`. |
-| **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. A flag that is neither global nor a field of the operation is a usage error.                                                                                                                                                                                                                |
-| **Output**    | `--format json\|text\|auto`. `auto`, the default, is JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. Errors follow the format: JSON mode writes `{"error","exitCode"}` to stderr.                                                                                                                                                                                                                                                                                                                 |
-| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `api.port` and `api.token` from `state.json`. `_CH_API_PORT` + `_CH_API_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview.                                                                                                                                               |
+|               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <name\|path>` overrides on every command that acts on a workspace (a name: your own project first, then unique elsewhere), and `--project <name\|path>` scopes that name to one project; an unknown name fails the command with exit `6`, an ambiguous one with exit `2`. `--project` without `--workspace` is exit `2`, except where the command has its own `--project` (`ws create`). On a command that acts on no workspace, `--workspace` is exit `2`.                                                                                     |
+| **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. A flag that is neither global nor a field of the operation is a usage error.                                                                                                                                                                                                                                                                                                    |
+| **Output**    | `--format json\|text\|auto`. `auto`, the default, is JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. Errors follow the format: JSON mode writes `{"error","exitCode"}` to stderr.                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `api.port` and `api.token` from `state.json`. `_CH_API_PORT` + `_CH_API_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview. Not running → started from `app.executable` (with `_CHDEV_ROOT_DIR` set to `app.root-override`), unless the connection came from an inherited `_CH_API_PORT` + `_CH_API_TOKEN` or no executable was published (unpackaged build). |
 
 ### Exit codes
 
-| Code | Meaning                                                               |
-| ---- | --------------------------------------------------------------------- |
-| `0`  | Success                                                               |
-| `1`  | The operation ran and failed                                          |
-| `2`  | Usage error — unknown command, bad arguments                          |
-| `3`  | CodeHydra could not be reached                                        |
-| `4`  | The operation needs a workspace and none was found                    |
-| `5`  | Refused: someone else holds it (`ch lock take --no-wait`)             |
-| `6`  | Not there, or not yours (`ch lock release` of a lock you do not hold) |
+| Code | Meaning                                                                    |
+| ---- | -------------------------------------------------------------------------- |
+| `0`  | Success                                                                    |
+| `1`  | The operation ran and failed                                               |
+| `2`  | Usage error — unknown command, bad arguments                               |
+| `3`  | CodeHydra could not be reached (nor started), or `ch running`: not running |
+| `4`  | The operation needs a workspace and none was found                         |
+| `5`  | Refused: someone else holds it (`ch lock take --no-wait`)                  |
+| `6`  | Not there, or not yours (`ch lock release` of a lock you do not hold)      |
 
 `3` and `4` are separate from `1` on purpose: a script that cannot tell "the app
 is not running" and "you are in the wrong directory" from "the operation was

@@ -13,11 +13,21 @@ import { spawn, spawnSync } from "node:child_process";
 import { runClaudeWrapper } from "../modules/agent-module/claude/wrapper";
 import { runOpencodeWrapper } from "../modules/agent-module/opencode/wrapper";
 import { connect } from "./client";
-import { chooseConnection, DiscoveryError, type DiscoveryFs } from "./discovery";
+import { homedir } from "node:os";
+import {
+  chooseConnection,
+  DiscoveryError,
+  inheritsConnection,
+  readStartupInfo,
+  resolveDataDir,
+  type DiscoveryFs,
+} from "./discovery";
+import { connectOrStart, probeRunning, renderRunningText } from "./autostart";
 import { childExitCode } from "./child-exit";
 import { lockRun } from "./lock-run";
 import { connectMcp, reconnecting, serveMcp } from "./mcp";
 import { EXIT, renderError, useJson } from "./output";
+import { readFormat } from "./args";
 import { run } from "./run";
 
 const VERSION = "1.0.0";
@@ -70,6 +80,34 @@ function runCommand(command: string, args: readonly string[]): Promise<number> {
   });
 }
 
+/**
+ * Start CodeHydra detached from this process: it outlives `ch`, and closing the
+ * shell `ch` ran in does not take it down. Resolves once the process exists,
+ * rejects when it cannot be spawned at all (uninstalled, moved).
+ *
+ * The app clears every inherited `_CH_*` at startup, so the caller's
+ * environment is passed on as it is — except `_CHDEV_ROOT_DIR`, which picks the
+ * instance and so must be exactly the one the instance ran under.
+ */
+function launchApp(executable: string, rootOverride: string | null): Promise<void> {
+  const env = { ...process.env };
+  delete env["_CHDEV_ROOT_DIR"];
+  if (rootOverride !== null) env["_CHDEV_ROOT_DIR"] = rootOverride;
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, [], {
+      detached: true,
+      stdio: "ignore",
+      cwd: homedir(),
+      env,
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
 /** All of standard input, as text — for a field given as `-`. */
 async function readAllStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -117,7 +155,45 @@ async function main(): Promise<number> {
    * the right answer for `ch mcp` (see connectMcp), whose agent config passes
    * it explicitly and which has no meaningful working directory.
    */
-  const openConnection = () => connect({ connection: connection(), cwd: process.cwd() });
+  const selfPath = process.argv[1] ?? __filename;
+  const autostart = {
+    connection,
+    connect: (target: Parameters<typeof connect>[0]["connection"]) =>
+      connect({ connection: target, cwd: process.cwd() }),
+    startupInfo: () =>
+      readStartupInfo(resolveDataDir(selfPath, fs, process.env._CH_DATA_DIR || undefined), fs),
+  };
+
+  /**
+   * Connect, starting CodeHydra first when it is not running (see autostart.ts).
+   * Only a person at a terminal is told; a script reads stdout and the exit code.
+   */
+  const openConnection = () =>
+    connectOrStart({
+      ...autostart,
+      canStart: !inheritsConnection(process.env),
+      launch: launchApp,
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: () => Date.now(),
+      ...(process.stderr.isTTY === true && {
+        onStarting: () => process.stderr.write("Starting CodeHydra…\n"),
+      }),
+    });
+
+  // `running` is the one command that must never start the app: it is how a
+  // script asks whether it is up.
+  if (argv[0] === "running") {
+    let json: boolean;
+    try {
+      json = useJson(readFormat(argv), process.stdout.isTTY === true);
+    } catch (error) {
+      process.stderr.write(`${getErrorMessage(error)}\n`);
+      return EXIT.USAGE;
+    }
+    const status = await probeRunning(autostart);
+    process.stdout.write(`${json ? JSON.stringify(status) : renderRunningText(status)}\n`);
+    return status.running ? EXIT.OK : EXIT.UNREACHABLE;
+  }
 
   if (argv[0] === "lock" && argv[1] === "run") {
     return lockRun({

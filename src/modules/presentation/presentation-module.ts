@@ -185,6 +185,8 @@ export interface PresentationModuleDeps {
    * region and written when the renderer emits a `resize-sidebar` drag result.
    */
   readonly sidebarWidthConfig: Pick<PersistedAccessor<number>, "get" | "set">;
+  /** `cli.install-global`, which the first-run question can turn on. */
+  readonly installGlobalCli: Pick<PersistedAccessor<boolean>, "set">;
   readonly configService: Pick<Config, "register">;
   /**
    * Runtime state store (state.json). The presenter registers
@@ -733,6 +735,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     collapsed: isCollapsed,
     retryOpen,
     deleteWorkspace: dispatchInteractiveDelete,
+    installGlobalCli: deps.installGlobalCli,
   });
 
   const runShortcutKey = createShortcutNavigation({

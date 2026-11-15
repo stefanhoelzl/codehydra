@@ -15,12 +15,17 @@ import { createMockState, type MockStateService } from "../boundaries/platform/s
 import type { StateService } from "../boundaries/platform/state-service";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
-import { createCliModule, CLI_SCRIPTS } from "./cli-module";
+import { createCliModule, CLI_SCRIPTS, type CliLaunch } from "./cli-module";
+import { EVENT_APP_STARTED } from "../intents/app-ready";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 
 const INTENT_APP_START = "app:start";
+
+/** An unpackaged build: `ch` may not start it. */
+const NO_LAUNCH: CliLaunch = { executable: null, rootOverride: null };
+const PACKAGED: CliLaunch = { executable: "/opt/CodeHydra/codehydra", rootOverride: "/tmp/root" };
 
 /**
  * Drive the module's start hook with a given API server port.
@@ -28,9 +33,12 @@ const INTENT_APP_START = "app:start";
  * The port arrives as a capability the API server provides, so the test
  * seeds it the same way the real operation would.
  */
-async function startWith(apiPort: number | null) {
-  const state = createMockState();
-  const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
+async function startWith(
+  apiPort: number | null,
+  launch: CliLaunch = NO_LAUNCH,
+  state: MockStateService = createMockState()
+) {
+  const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER, launch });
 
   const dispatcher = new Dispatcher({
     logger: createMockLogger(),
@@ -63,11 +71,11 @@ async function startWith(apiPort: number | null) {
  * Asserting on them is what pins the publish order down; asserting only on the
  * final state cannot tell a safe order from an unsafe one.
  */
-function createObservingState(): {
+function createObservingState(values?: Record<string, unknown>): {
   state: MockStateService;
   snapshots: Record<string, unknown>[];
 } {
-  const state = createMockState();
+  const state = createMockState(values === undefined ? undefined : { values });
   const snapshots: Record<string, unknown>[] = [];
   const register = state.register.bind(state) as StateService["register"];
   const observing: MockStateService = {
@@ -89,7 +97,7 @@ function createObservingState(): {
 /** Drive app:start then app:shutdown against one module instance. */
 async function startThenStop(apiPort: number) {
   const state = createMockState();
-  const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
+  const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER, launch: NO_LAUNCH });
 
   const dispatcher = new Dispatcher({
     logger: createMockLogger(),
@@ -147,6 +155,7 @@ describe("CliModule", () => {
       const handle = createCliModule({
         stateService: createMockState(),
         logger: SILENT_LOGGER,
+        launch: NO_LAUNCH,
       });
 
       expect(handle.token()).toBeNull();
@@ -159,7 +168,11 @@ describe("CliModule", () => {
       // healthy app looks dead. The port is therefore written last, and every
       // observable intermediate state has to respect that.
       const { state, snapshots } = createObservingState();
-      const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
+      const handle = createCliModule({
+        stateService: state,
+        logger: SILENT_LOGGER,
+        launch: NO_LAUNCH,
+      });
       const dispatcher = new Dispatcher({
         logger: createMockLogger(),
         logScope: new AsyncLogScopeStore(),
@@ -224,6 +237,85 @@ describe("CliModule", () => {
 
       expect(state.getEffective()["api.token"]).toBeNull();
       expect(handle.token()).toBeNull();
+    });
+  });
+
+  describe("autostart details", () => {
+    it("publishes what starts this instance", async () => {
+      const { state } = await startWith(45123, PACKAGED);
+
+      expect(state.getEffective()["app.executable"]).toBe("/opt/CodeHydra/codehydra");
+      expect(state.getEffective()["app.root-override"]).toBe("/tmp/root");
+    });
+
+    it("publishes no executable for a build ch must not start", async () => {
+      const { state } = await startWith(45123, NO_LAUNCH);
+
+      expect(state.getEffective()["app.executable"]).toBeNull();
+    });
+
+    it("keeps the executable after shutdown, when ch needs it", async () => {
+      const state = createMockState();
+      const { handle } = await startWith(45123, PACKAGED, state);
+      await handle.module.hooks![APP_SHUTDOWN_OPERATION_ID]!["stop"]!.handler({} as never);
+
+      expect(state.getEffective()["app.executable"]).toBe("/opt/CodeHydra/codehydra");
+    });
+  });
+
+  describe("readiness", () => {
+    it("is not ready while starting, even when a crashed run left ready behind", async () => {
+      const state = createMockState({ values: { "api.ready": true } });
+      await startWith(45123, PACKAGED, state);
+
+      expect(state.getEffective()["api.ready"]).toBe(false);
+    });
+
+    it("withdraws a stale ready before publishing the port", async () => {
+      // A `ch` that sees this start's port must not also see the last run's
+      // ready, or it would treat a starting app as one done starting.
+      const { state, snapshots } = createObservingState({ "api.ready": true });
+      const handle = createCliModule({
+        stateService: state,
+        logger: SILENT_LOGGER,
+        launch: PACKAGED,
+      });
+      const dispatcher = new Dispatcher({
+        logger: createMockLogger(),
+        logScope: new AsyncLogScopeStore(),
+      });
+      dispatcher.registerModule(handle.module);
+      dispatcher.registerOperation(
+        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
+          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { apiPort: 45123 } }),
+        })
+      );
+
+      await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} });
+
+      const firstWithPort = snapshots.find((snapshot) => snapshot["api.port"] === 45123);
+      expect(firstWithPort?.["api.ready"]).toBe(false);
+    });
+
+    it("is ready once startup is over", async () => {
+      const { state, handle } = await startWith(45123, PACKAGED);
+      await handle.module.events![EVENT_APP_STARTED]!.handler({
+        type: EVENT_APP_STARTED,
+        payload: {},
+      });
+
+      expect(state.getEffective()["api.ready"]).toBe(true);
+    });
+
+    it("is no longer ready after shutdown", async () => {
+      const { state, handle } = await startWith(45123, PACKAGED);
+      await handle.module.events![EVENT_APP_STARTED]!.handler({
+        type: EVENT_APP_STARTED,
+        payload: {},
+      });
+      await handle.module.hooks![APP_SHUTDOWN_OPERATION_ID]!["stop"]!.handler({} as never);
+
+      expect(state.getEffective()["api.ready"]).toBe(false);
     });
   });
 });

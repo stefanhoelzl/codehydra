@@ -181,6 +181,8 @@ import { createOsNotificationModule } from "./modules/os-notification-module";
 import { createPowerModule } from "./modules/power-module";
 import { createFrameWatchdogModule } from "./modules/frame-watchdog-module";
 import { createCliModule } from "./modules/cli-module";
+import { createCliGlobalModule } from "./modules/cli-global/module";
+import { GlobalCliInstaller } from "./modules/cli-global/installer";
 import { createRegistry } from "./api/entries";
 import { createDeletionWaiter } from "./api/deletion-waiter";
 import { createElectronLifecycleModule } from "./modules/electron-lifecycle-module";
@@ -556,6 +558,25 @@ const inputPriorityModule = createInputPriorityModule({
   platform: platformInfo.platform,
   appPid: process.pid,
 });
+// `ch` in every shell (the cli.install-global setting). Built before the
+// presentation module, whose first-run question can turn it on.
+const cliGlobalModule = createCliGlobalModule({
+  config: configService,
+  installer: new GlobalCliInstaller({
+    platform: platformInfo.platform,
+    homeDir: platformInfo.homeDir,
+    binDir: pathProvider.dataPath("bin"),
+    windowsDir: pathProvider.dataPath("cli-global"),
+    pathEnv: process.env.PATH ?? "",
+    fileSystem: fileSystemLayer,
+    processRunner,
+  }),
+  // A dev build or a relocated root would point every shell at a throwaway
+  // instance.
+  allowed: buildInfo.isPackaged && !process.env._CHDEV_ROOT_DIR,
+  dispatcher,
+  logger: loggingService.createLogger("cli"),
+});
 const presentationModule = createPresentationModule({
   processMonitor: processMonitorModule,
   loggingService,
@@ -565,6 +586,7 @@ const presentationModule = createPresentationModule({
   pathProvider,
   dispatcher,
   sidebarWidthConfig,
+  installGlobalCli: cliGlobalModule.installGlobal,
   configService,
   stateService,
   // Built further down; read only once a project is open.
@@ -640,6 +662,13 @@ const ideServerModule = createIdeServerModule({
 const cliModule = createCliModule({
   stateService,
   logger: loggingService.createLogger("cli"),
+  // What `ch` starts when this instance is not running. Only a packaged build
+  // is one executable; an AppImage's own executable lives in a mount that is
+  // gone once it exits, so the AppImage file itself is what starts it again.
+  launch: {
+    executable: buildInfo.isPackaged ? (process.env.APPIMAGE ?? process.execPath) : null,
+    rootOverride: process.env._CHDEV_ROOT_DIR || null,
+  },
 });
 
 /** Where `ch.cjs` lands once script-module has synced the bin directory. */
@@ -1176,6 +1205,7 @@ dispatcher.registerModule(errorNotificationModule);
 dispatcher.registerModule(hibernationScreenshotModule);
 dispatcher.registerModule(presentationModule);
 dispatcher.registerModule(cliModule.module);
+dispatcher.registerModule(cliGlobalModule.module);
 
 // Load config (sync — reads config.json, env vars, CLI args)
 try {

@@ -112,6 +112,10 @@ Default 25448 packaged, else derived from the git branch (30000–65000) · `ide
 
 Default `true` · `input-priority/input-priority-module.ts`. Windows only. Runs every process a keystroke in a workspace terminal passes through at above-normal priority: the UI renderer, the IDE server, its ptyHost, every ConPTY `OpenConsole`, the terminals' shells and the agent TUIs (`input-path.ts`). Under heavy load (agents running builds on every core) each of them otherwise waits behind that load on every key, and typing lags by seconds. What a shell or agent starts stays at normal priority (Windows does not pass a raised priority on). A process snapshot every 5 s (`ProcessRunner.listProcesses`) finds new terminals; raising is one way (`ProcessRunner.increasePriority`), so turning it off applies after a restart.
 
+#### `cli.install-global`
+
+Default `false` · `cli-global/module.ts`. Makes `ch` available in every shell (`cli-global/installer.ts`): Windows adds `<dataRoot>/cli-global` (only `ch.cmd` + `ch`, forwarding to `<dataRoot>/bin`) to the user PATH via PowerShell (raw `HKCU\Environment` value, then a dummy user variable to broadcast the change); Linux writes a forwarding script to `~/.local/bin/ch` (notification hint when that folder is not on PATH); macOS to `/usr/local/bin/ch`, through `osascript … with administrator privileges` when not writable. Forwarding scripts, not symlinks: the `ch` wrapper finds `ch.cjs` beside itself. Only files carrying the installer's marker are replaced or removed. Applied on change through `PersistedAccessor.onChange` (settings dialog, `ch config`, the first-run checkbox in the agent picker); a failure reverts the value and shows an error notification. At app:start `start` an enabled key is repaired without the admin prompt; a failed repair keeps the value and shows a warning notification (the checkbox shows the setting, not the disk). Does nothing (warning notification) unless packaged and without `_CHDEV_ROOT_DIR`. Live.
+
 #### `telemetry.enabled`
 
 Default `true`, computed `false` in dev/unpackaged · `src/main.ts`. Enable telemetry; read by `telemetry-module` (passive events) and `error-report-module` (crash reports). Live.
@@ -164,6 +168,8 @@ Default `false` · `src/main.ts`. Download VSCodium and both agents (configured 
 
 Values the **app writes at runtime** (not user-authored settings) live in `state.json` in the data dir. `StateService` (`src/boundaries/platform/state-service.ts`) is the Config sibling: same `register()`/accessor API, but a minimal async single-file load — no env/CLI overrides, no precedence, no computed defaults; a missing file yields defaults, an unreadable or unknown entry is logged and skipped. Both services compose `PersistedStore` (`persisted-store.ts`: registry, accessors, read-modify-write persistence), which **serializes its writes** (per-instance promise chain), so several owners sharing one file can't lose an update to interleaved read-modify-writes. Each write goes to `<file>.tmp` beside it and is renamed over the file, so another process (`ch` reads the API port and token from `state.json`) and a start after a crash mid-write never see a truncated file.
 
+An accessor's `onChange(listener)` reports runtime changes of the effective value (`set`/`reset` through the accessor, or the string-keyed writes of the settings dialog and `ch config`) — not the load, not a write that leaves the value as it was — once the new value is in effect, before it is persisted.
+
 The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `app:start` `init` hook, before modules consume their values in `start`.
 
 ### State keys
@@ -207,6 +213,18 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 #### `api.token`
 
 `cli-module.ts`. Shared secret `ch` and `ch mcp` present when connecting. `redact: true`. Minted fresh each launch (one that outlived its process would authorize a connection to whatever bound the port next); cleared with `api.port` on stop.
+
+#### `api.ready`
+
+`cli-module.ts`. `true` once app:started (every saved project opened); set `false` in app:start `start` before the port is published (so a crashed run's value never reads as ready) and on stop. A `ch` that started the app waits for it (`src/cli/autostart.ts`); `ch running` reports it as `ready`. A `ch` meeting an app that is up but not ready does not wait: that app's own startup (a plugin hook) may be the caller.
+
+#### `app.executable`
+
+`cli-module.ts`. What `ch` launches when the instance is not running: `process.execPath`, or `$APPIMAGE` for an AppImage (its own executable sits in a mount that is gone after exit). `null` for an unpackaged build, which `ch` never starts. Rewritten every start and kept after stop — that is when `ch` needs it.
+
+#### `app.root-override`
+
+`cli-module.ts`. The `_CHDEV_ROOT_DIR` the instance ran under (`null` = default root); `ch` launches with exactly that value, so it starts the instance it belongs to.
 
 #### `paths.workspaces`
 

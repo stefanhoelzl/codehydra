@@ -18,6 +18,12 @@ import { dirname, join } from "node:path";
 /** State keys the CLI needs. Written by cli-module at app:start. */
 export const STATE_PORT_KEY = "api.port";
 export const STATE_TOKEN_KEY = "api.token";
+/** True once the instance has restored its projects (startup is over). */
+export const STATE_READY_KEY = "api.ready";
+/** What starts this instance, for autostart; null when `ch` must not start it. */
+export const STATE_EXECUTABLE_KEY = "app.executable";
+/** The `_CHDEV_ROOT_DIR` the instance ran under, which a launch must repeat. */
+export const STATE_ROOT_OVERRIDE_KEY = "app.root-override";
 
 export interface DiscoveryFs {
   readFileSync(path: string, encoding: "utf-8"): string;
@@ -66,6 +72,16 @@ export interface ConnectionEnv {
 }
 
 /**
+ * Whether the connection comes from an inherited port and token rather than a
+ * data directory — the case `chooseConnection` takes them in.
+ */
+export function inheritsConnection(env: ConnectionEnv): boolean {
+  if (env._CH_DATA_DIR) return false;
+  const port = Number(env._CH_API_PORT);
+  return Number.isInteger(port) && port > 0 && Boolean(env._CH_API_TOKEN);
+}
+
+/**
  * Pick the connection: `_CH_DATA_DIR`, then `_CH_API_PORT` +
  * `_CH_API_TOKEN`, then the data directory this copy of `ch` belongs to.
  *
@@ -81,16 +97,42 @@ export function chooseConnection(
   env: ConnectionEnv,
   fs: DiscoveryFs
 ): Connection {
-  const override = env._CH_DATA_DIR || undefined;
-  const dataDir = resolveDataDir(selfPath, fs, override);
-  if (override === undefined) {
-    const port = Number(env._CH_API_PORT);
-    const token = env._CH_API_TOKEN;
-    if (Number.isInteger(port) && port > 0 && token) {
-      return { port, token, dataDir };
-    }
+  const dataDir = resolveDataDir(selfPath, fs, env._CH_DATA_DIR || undefined);
+  if (inheritsConnection(env)) {
+    return { port: Number(env._CH_API_PORT), token: env._CH_API_TOKEN ?? "", dataDir };
   }
   return readConnection(dataDir, fs);
+}
+
+/**
+ * What the instance left in state.json about starting it, and whether it has
+ * finished starting. Never throws: a missing or unreadable file is an instance
+ * that cannot be started from here and is not ready.
+ */
+export interface StartupInfo {
+  /** The executable to launch; null when the instance did not publish one. */
+  readonly executable: string | null;
+  /** `_CHDEV_ROOT_DIR` to launch it with; null for the default data root. */
+  readonly rootOverride: string | null;
+  /** Whether the instance has finished starting (restored its projects). */
+  readonly ready: boolean;
+}
+
+export function readStartupInfo(dataDir: string, fs: DiscoveryFs): StartupInfo {
+  let state: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(join(dataDir, "state.json"), "utf-8"));
+    if (parsed !== null && typeof parsed === "object") state = parsed as Record<string, unknown>;
+  } catch {
+    // Missing or mid-rename: nothing to start, not ready.
+  }
+  const text = (value: unknown): string | null =>
+    typeof value === "string" && value.length > 0 ? value : null;
+  return {
+    executable: text(state[STATE_EXECUTABLE_KEY]),
+    rootOverride: text(state[STATE_ROOT_OVERRIDE_KEY]),
+    ready: state[STATE_READY_KEY] === true,
+  };
 }
 
 /**

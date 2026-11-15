@@ -24,6 +24,7 @@ function group(
 }
 
 const BUILTIN = [
+  ["running", "Whether CodeHydra is running (never starts it; exit 0 / 3)"],
   ["mcp", "Run as an MCP server over stdio (used by agent configs)"],
   ["bg <cmd…>", "Run a command without keeping the workspace busy"],
   ["lock run <name>[,<name>…] [-- <cmd…>]", "Take locks; run a command, or hold until killed"],

@@ -24,6 +24,11 @@ export interface MockPersistedStore {
     key: string,
     definition: { default?: unknown; deprecated?: true }
   ): PersistedAccessor<unknown> | DeprecatedPersistedAccessor;
+  /**
+   * Write a value as a string-keyed setter would (the settings dialog), telling
+   * the key's onChange listeners when it changed.
+   */
+  write(key: string, value: unknown): void;
 }
 
 export interface MockPersistedStoreOptions {
@@ -46,6 +51,14 @@ export function createMockPersistedStore(
   const store = new Map<string, unknown>(Object.entries(seed ?? {}));
   const defaultsByKey = new Map<string, unknown>();
   const definitionsByKey = new Map<string, PersistedKeyDefinition<unknown>>();
+  const listeners = new Map<string, Set<(value: unknown) => void>>();
+
+  function write(key: string, value: unknown): void {
+    const previous = store.get(key);
+    store.set(key, value);
+    if (previous === value) return;
+    for (const listener of [...(listeners.get(key) ?? [])]) listener(value);
+  }
 
   function makeAccessor(key: string): PersistedAccessor<unknown> {
     return {
@@ -55,12 +68,23 @@ export function createMockPersistedStore(
       },
       get: () => store.get(key),
       set: async (value: unknown) => {
-        store.set(key, value);
+        write(key, value);
       },
       reset: async () => {
-        store.set(key, defaultsByKey.get(key));
+        write(key, defaultsByKey.get(key));
       },
       isDefault: () => store.get(key) === defaultsByKey.get(key),
+      onChange: (listener) => {
+        let set = listeners.get(key);
+        if (set === undefined) {
+          set = new Set();
+          listeners.set(key, set);
+        }
+        set.add(listener);
+        return () => {
+          set.delete(listener);
+        };
+      },
     };
   }
 
@@ -88,5 +112,5 @@ export function createMockPersistedStore(
     return makeAccessor(key);
   }
 
-  return { store, defaultsByKey, definitionsByKey, register };
+  return { store, defaultsByKey, definitionsByKey, register, write };
 }

@@ -152,6 +152,7 @@ function createDeps() {
     } as unknown as PathProvider,
     dispatcher: createMockDispatcher(),
     sidebarWidthConfig: createMockAccessor<number>("sidebar.width", SIDEBAR_DEFAULT_WIDTH),
+    installGlobalCli: createMockAccessor<boolean>("cli.install-global", false),
     configService: createMockConfig(),
     stateService: createMockStateService(),
     /** Badge colors by project ref, as the local-project module would hand them out. */
@@ -256,6 +257,7 @@ function createMockStateService(): Pick<StateService, "register"> & {
         store.set(key, definition.default);
       },
       isDefault: () => store.get(key) === definition.default,
+      onChange: () => () => {},
     };
   }) as unknown as StateService["register"];
   return { register, values: store };
@@ -2729,17 +2731,43 @@ describe("PresentationModule - startup flow", () => {
         ],
       },
       {
+        type: "checkbox",
+        id: "install-cli",
+        label: "Install the ch command for every shell, not only CodeHydra's terminals",
+      },
+      {
         type: "group",
         items: [{ type: "button", id: "continue", label: "Continue", variant: "primary" }],
       },
     ]);
 
     // The user picks opencode and clicks Continue (a dialog action).
-    action(deps, "continue", { agent: "opencode" });
+    action(deps, "continue", { agent: "opencode", "install-cli": "false" });
     const output = await pending;
 
     // The handler returns the chosen agent as the agent-selection hook result.
     expect(output).toEqual({ result: "opencode" });
+    // Left unchecked, the PATH is not touched.
+    expect(deps.installGlobalCli.get()).toBe(false);
+  });
+
+  it("the first-run question turns on the global ch command when checked", async () => {
+    const deps = createDeps();
+    const module = createPresentationModule(deps);
+    connect(deps);
+    const ctx: AgentSelectionHookContext = {
+      intent: { type: "app:start", payload: {} },
+      availableAgents: [{ agent: "claude", label: "Claude", icon: "sparkle" }],
+    };
+    const pending = module.hooks![APP_START_OPERATION_ID]!["agent-selection"]!.handler(
+      ctx as never
+    );
+    await flush();
+
+    action(deps, "continue", { agent: "claude", "install-cli": "true" });
+    await pending;
+
+    expect(deps.installGlobalCli.get()).toBe(true);
   });
 
   it("app:setup hide-ui returns to the boot-splash dialog", async () => {

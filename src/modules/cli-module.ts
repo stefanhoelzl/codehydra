@@ -11,6 +11,10 @@
  * 3. Publish the port and that secret into state.json, which is how `ch` finds
  *    its instance — it resolves its own path to the data directory and reads
  *    them there, needing no environment variables at all.
+ * 4. Publish what autostart needs: the executable that starts this instance
+ *    (kept after shutdown — that is when `ch` needs it) and whether startup is
+ *    over (`api.ready`, set on app:started), so a `ch` that started the app
+ *    waits until the caller's workspace is there to be found.
  *
  * `ch` is agent-agnostic, so hanging it off an agent provider would be wrong,
  * and ide-server-module owns the bin directory but has nothing to do with the
@@ -26,10 +30,11 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { ConfigureResult, RequiredScript } from "../intents/app-start";
 import type { StateService } from "../boundaries/platform/state-service";
-import { storeNumber, storeString } from "../boundaries/platform/store-definition";
+import { storeBoolean, storeNumber, storeString } from "../boundaries/platform/store-definition";
+import { EVENT_APP_STARTED } from "../intents/app-ready";
 import type { Logger } from "../boundaries/platform/logging-types";
 import { getErrorMessage } from "../shared/error-utils";
-import { defineHooks } from "../intents/declarations";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 /**
  * Capability announcing that the CLI's port and token have been published.
@@ -56,9 +61,21 @@ export const CLI_SCRIPTS = [
   "ch.cjs",
 ] as const;
 
+/** How `ch` starts this instance when it is not running. */
+export interface CliLaunch {
+  /**
+   * The executable to start; null when `ch` must not start this instance (an
+   * unpackaged build, which needs more than one executable to start).
+   */
+  readonly executable: string | null;
+  /** The `_CHDEV_ROOT_DIR` this instance runs under, repeated on launch. */
+  readonly rootOverride: string | null;
+}
+
 export interface CliModuleDeps {
   readonly stateService: StateService;
   readonly logger: Logger;
+  readonly launch: CliLaunch;
 }
 
 export interface CliModuleHandle {
@@ -94,6 +111,24 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
     ...storeString({ nullable: true }),
   });
 
+  const readyState = stateService.register("api.ready", {
+    default: false,
+    description: "Whether startup is over (projects restored), for a ch that started the app",
+    ...storeBoolean(),
+  });
+
+  const executableState = stateService.register("app.executable", {
+    default: null,
+    description: "Executable ch starts when CodeHydra is not running (null = never start it)",
+    ...storeString({ nullable: true }),
+  });
+
+  const rootOverrideState = stateService.register("app.root-override", {
+    default: null,
+    description: "The _CHDEV_ROOT_DIR ch starts CodeHydra with (null = the default root)",
+    ...storeString({ nullable: true }),
+  });
+
   let token: string | null = null;
 
   return {
@@ -116,6 +151,20 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
               // itself — the API server provides this one from its own start
               // hook, and `requires` above is what orders us after it.
               const apiPort = (ctx.capabilities?.apiPort as number | null | undefined) ?? null;
+
+              // Before the port: a reader that sees this start's port must not
+              // still see the previous run's "ready" (one that crashed never
+              // cleared it). The launch details are refreshed every start, so an
+              // update or a move is picked up by the next autostart.
+              try {
+                await readyState.set(false);
+                await executableState.set(deps.launch.executable);
+                await rootOverrideState.set(deps.launch.rootOverride);
+              } catch (error) {
+                logger.warn("Could not publish CLI launch details", {
+                  error: getErrorMessage(error),
+                });
+              }
 
               if (apiPort === null) {
                 // The API server failed to start. Clearing the published
@@ -174,7 +223,21 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
               // barrier before the token it guards.
               await portState.set(0);
               await tokenState.set(null);
+              await readyState.set(false);
             },
+          },
+        },
+      }),
+      events: defineEvents({
+        [EVENT_APP_STARTED]: {
+          handler: async (): Promise<void> => {
+            // Startup is over: every saved project is open, so a `ch` waiting
+            // on a start it caused finds the caller's workspace.
+            try {
+              await readyState.set(true);
+            } catch (error) {
+              logger.warn("Could not publish CLI readiness", { error: getErrorMessage(error) });
+            }
           },
         },
       }),

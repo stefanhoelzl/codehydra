@@ -95,6 +95,8 @@ export class PersistedStore {
   // the settings UI to show a source badge (e.g. env/CLI-overridden keys).
   private readonly sources: Record<string, string> = {};
   private loaded = false;
+  // Runtime change listeners per key (PersistedAccessor.onChange).
+  private readonly listeners = new Map<string, Set<(value: unknown) => void>>();
   // Tail of the write queue. Every persistMutation() chains off this so writes
   // to the backing file run strictly one-at-a-time, even across owners that
   // share one file (e.g. state.json's telemetry/update/auto-workspace keys).
@@ -153,7 +155,35 @@ export class PersistedStore {
         this.writeValue(key, value, options),
       reset: (options?: { persist?: boolean }): Promise<void> => this.resetValue(key, options),
       isDefault: (): boolean => this.isDefaultValue(key),
+      onChange: (listener: (value: unknown) => void): (() => void) => {
+        let set = this.listeners.get(key);
+        if (set === undefined) {
+          set = new Set();
+          this.listeners.set(key, set);
+        }
+        set.add(listener);
+        return () => {
+          set.delete(listener);
+        };
+      },
     };
+  }
+
+  /** Tell a key's listeners about a runtime change, if the value did change. */
+  private notifyChange(key: string, previous: unknown): void {
+    const value = this.effective[key];
+    if (overrideEquals(previous, value)) return;
+    for (const listener of [...(this.listeners.get(key) ?? [])]) {
+      try {
+        listener(value);
+      } catch (error) {
+        // A listener's failure is its own; the write itself succeeded.
+        this.deps.logger.warn("Config change listener failed", {
+          key,
+          error: getErrorMessage(error),
+        });
+      }
+    }
   }
 
   private createDeprecatedAccessor(key: string): DeprecatedPersistedAccessor {
@@ -293,7 +323,9 @@ export class PersistedStore {
         ...(def.validValues !== undefined && { validValues: def.validValues }),
       });
     }
+    const previous = this.effective[key];
     this.effective[key] = validated;
+    this.notifyChange(key, previous);
     // A persisted write lands in config.json, i.e. becomes user-sourced — except
     // env/CLI overrides, which still win on the next load, so we keep that source
     // sticky so the settings UI keeps warning about the active override.
@@ -318,7 +350,9 @@ export class PersistedStore {
         source: "reset",
       });
     }
+    const previous = this.effective[key];
     this.effective[key] = this.defaults[key];
+    this.notifyChange(key, previous);
     // Deleting the key from config.json reverts it to the default source (env/CLI
     // overrides would re-apply on next load, but the in-memory value is now the
     // default, so report it as such).

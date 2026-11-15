@@ -11,6 +11,11 @@ Full reference: [docs/API.md](../../docs/API.md) (`ch` CLI, MCP, WebSocket hands
   - `ch claude` / `ch opencode` — the agent launchers (`agent-module/*/wrapper.ts`), which the sidekick types into the agent terminal. Never touch the app.
   - `ch bg <cmd…>` — passthrough (`spawnSync`, child's exit code via `child-exit.ts`); never touches the app. See `src/modules/agent-module/claude/AGENTS.md`.
   - `ch lock run <name>[,<name>…] [-- <cmd…>]` (`lock-run.ts`) — over the hidden `lock.hold`.
+  - `ch running` (`autostart.ts`, `probeRunning`) — `running` / `starting` / `not running` (JSON `{running, ready}`), exit 0 / 3. Never starts the app.
+
+## Autostart (`autostart.ts`, `connectOrStart`)
+
+Every connection `run.ts` and `ch lock run` open goes through it (not `ch mcp`, `bg`, the launchers, `running`). Unreachable → launch `app.executable` from state.json detached (`launchApp` in `main.ts`, `_CHDEV_ROOT_DIR` = `app.root-override`), then poll until `api.ready` and a connect succeeds (120 s). Skipped for an inherited port + token (`inheritsConnection`) and when no executable is published (unpackaged). An app that is up but not ready is used as is — its own startup may be the caller.
 
 ## Finding the instance (`discovery.ts`, `chooseConnection`)
 

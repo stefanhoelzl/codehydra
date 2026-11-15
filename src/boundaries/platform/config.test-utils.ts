@@ -35,7 +35,7 @@ export interface CreateMockConfigOptions {
  * expect(agent.get()).toBe("opencode");
  */
 export function createMockConfig(options?: CreateMockConfigOptions): Config {
-  const { store, defaultsByKey, definitionsByKey, register } = createMockPersistedStore(
+  const { store, defaultsByKey, definitionsByKey, register, write } = createMockPersistedStore(
     options?.defaults,
     { deprecatedReadOnly: true }
   );
@@ -47,10 +47,10 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
     getEffective: () => Object.fromEntries(store),
     getDefinitions: () => definitionsByKey,
     set: async (key: string, value: unknown) => {
-      store.set(key, value);
+      write(key, value);
     },
     reset: async (key: string) => {
-      store.set(key, defaultsByKey.get(key));
+      write(key, defaultsByKey.get(key));
     },
     getSource: (key: string): ConfigSource =>
       store.get(key) === defaultsByKey.get(key) ? "default" : "user",
@@ -75,16 +75,28 @@ export function createMockAccessor<T>(
   defaultValue: T = initial
 ): PersistedAccessor<T> {
   let value = initial;
+  const listeners = new Set<(value: T) => void>();
+  const write = (next: T): void => {
+    const changed = next !== value;
+    value = next;
+    if (changed) for (const listener of [...listeners]) listener(next);
+  };
   return {
     name,
     default: defaultValue,
     get: () => value,
     set: async (next: T) => {
-      value = next;
+      write(next);
     },
     reset: async () => {
-      value = defaultValue;
+      write(defaultValue);
     },
     isDefault: () => value === defaultValue,
+    onChange: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
   };
 }

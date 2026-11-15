@@ -48,7 +48,9 @@ Or download it from
 
 On first launch, unless an agent is already set (in `config.json`, as
 `--agent`, or as `CH_AGENT`), CodeHydra asks which coding agent to
-use — **Claude Code** or **OpenCode** — then downloads what it needs: the
+use — **Claude Code** or **OpenCode** — and whether to make the
+[`ch` command](#the-ch-command) available in every shell (unchecked by
+default; it is the `cli.install-global` setting). Then it downloads what it needs: the
 embedded editor, and the agent unless it is already installed (see
 [Which agent binary runs](#which-agent-binary-runs)). Then open a project
 and create your first workspace. Want to run multiple agents? Just create more
@@ -1854,11 +1856,38 @@ alongside any entries in your own `opencode.json`.
 ### The `ch` command
 
 `ch` lives in the `bin` folder of the data directory. It is on the `PATH` of
-every editor terminal, the agent, and plugin scripts; to use it from any
-other shell, add that folder to your `PATH` or symlink `ch`. It finds the
-running CodeHydra by itself; if none is running, it exits 3.
+every editor terminal, the agent, and plugin scripts. To use it from any other
+shell, turn on **cli › install-global** in the settings (or answer yes on first
+start, or run `ch config set cli.install-global true`). Turning it on installs
+`ch` right away, turning it off removes it again:
 
-`ch --help` lists the commands (it needs the running app), and
+| OS      | What is installed                                                                                                                                                                   |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows | A folder `cli-global` in the data directory, holding only `ch.cmd` and `ch` (for Git Bash), is added to your user `PATH` — no admin rights. Terminals started afterwards find `ch`. |
+| Linux   | A small `ch` script in `~/.local/bin`. If that folder is not on your `PATH`, the notification says so and you add it in your shell's startup file.                                  |
+| macOS   | A small `ch` script in `/usr/local/bin`. When that folder is not writable for you, macOS asks for an administrator password.                                                        |
+
+Only `ch` is exposed — not the editor's `code`, which would shadow VS Code's.
+A `ch` already there that CodeHydra did not install is left alone (the install
+fails and says so). While the setting is on, every start puts a missing or
+outdated `ch` back, never with a password prompt; when that fails, a notification
+says so (turn the setting off and on again to repair it). Only an
+installed CodeHydra installs it; a development build shows a warning instead.
+
+`ch` finds CodeHydra by itself. **If CodeHydra is not running, `ch` starts it**
+(its window comes to the front), prints `Starting CodeHydra…` on a terminal,
+and waits until it has reopened your projects, so a command run from inside a
+workspace finds it — up to two minutes, then it exits 3. This needs a CodeHydra
+that has run once since this version (that is when it records how to start
+itself); a development build is never started this way, nor is CodeHydra
+started from a CodeHydra terminal whose instance went away.
+
+`ch running` says whether CodeHydra is running, and never starts it: it prints
+`running`, `starting` (up, but still reopening projects) or `not running` —
+JSON `{"running": …, "ready": …}` when piped or with `--format json` — and
+exits 0 when it is running (or starting) and 3 when it is not.
+
+`ch --help` lists the commands (it needs the running app, and starts it), and
 `ch <command> --help` shows one command's arguments:
 
 | Command                                                            | Purpose                                                                                                                                                                                                                |

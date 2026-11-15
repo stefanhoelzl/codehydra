@@ -191,4 +191,37 @@ describe("StateService", () => {
 
     await expect(svc.load()).rejects.toThrow("StateService.load() has already been called");
   });
+
+  describe("onChange", () => {
+    it("tells listeners about a runtime change, once the new value is in effect", async () => {
+      const { svc } = createService({ "/app": directory() });
+      const key = svc.register("telemetry.distinct-id", stringKeyDef());
+      await svc.load();
+      const seen: Array<{ value: string | null; current: string | null }> = [];
+      key.onChange((value) => seen.push({ value, current: key.get() }));
+
+      await key.set("a");
+      await key.set("a");
+      await key.reset();
+
+      // The repeated "a" changed nothing and is not reported.
+      expect(seen).toEqual([
+        { value: "a", current: "a" },
+        { value: null, current: null },
+      ]);
+    });
+
+    it("stops telling a listener that unsubscribed", async () => {
+      const { svc } = createService({ "/app": directory() });
+      const key = svc.register("telemetry.distinct-id", stringKeyDef());
+      await svc.load();
+      const seen: Array<string | null> = [];
+      const unsubscribe = key.onChange((value) => seen.push(value));
+
+      unsubscribe();
+      await key.set("a");
+
+      expect(seen).toEqual([]);
+    });
+  });
 });

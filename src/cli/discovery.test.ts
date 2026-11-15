@@ -7,7 +7,9 @@ import { join } from "node:path";
 import {
   chooseConnection,
   DiscoveryError,
+  inheritsConnection,
   readConnection,
+  readStartupInfo,
   resolveDataDir,
   STATE_PORT_KEY,
   STATE_TOKEN_KEY,
@@ -151,5 +153,44 @@ describe("chooseConnection", () => {
       token: "token-43000",
       dataDir: "/self",
     });
+  });
+});
+
+describe("readStartupInfo", () => {
+  it("reads the executable, root override and readiness the instance published", () => {
+    const fs = fakeFs({
+      [join("/data", "state.json")]: JSON.stringify({
+        "app.executable": "/opt/CodeHydra/codehydra",
+        "app.root-override": "/tmp/root",
+        "api.ready": true,
+      }),
+    });
+
+    expect(readStartupInfo("/data", fs)).toEqual({
+      executable: "/opt/CodeHydra/codehydra",
+      rootOverride: "/tmp/root",
+      ready: true,
+    });
+  });
+
+  it("is nothing to start and not ready without a state file", () => {
+    expect(readStartupInfo("/data", fakeFs({}))).toEqual({
+      executable: null,
+      rootOverride: null,
+      ready: false,
+    });
+  });
+});
+
+describe("inheritsConnection", () => {
+  it("is true for an inherited port and token", () => {
+    expect(inheritsConnection({ _CH_API_PORT: "43000", _CH_API_TOKEN: "t" })).toBe(true);
+  });
+
+  it("is false when a data directory is named, or nothing is inherited", () => {
+    expect(
+      inheritsConnection({ _CH_API_PORT: "43000", _CH_API_TOKEN: "t", _CH_DATA_DIR: "/d" })
+    ).toBe(false);
+    expect(inheritsConnection({})).toBe(false);
   });
 });

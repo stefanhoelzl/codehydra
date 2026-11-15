@@ -19,6 +19,7 @@ import type { Intent } from "../../intents/lib/types";
 import type { HookOutput } from "../../intents/lib/operation";
 import { ANY_VALUE } from "../../intents/lib/operation";
 import type { Logger } from "../../boundaries/platform/logging";
+import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import { INTENT_APP_SHUTDOWN, type AppShutdownIntent } from "../../intents/app-shutdown";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import type { ShowUIHookResult, AgentSelectionHookContext } from "../../intents/app-start";
@@ -189,11 +190,15 @@ function setupConfig(
   return { sections };
 }
 
+/** The first-run checkbox that turns on `cli.install-global`. */
+export const INSTALL_CLI_FIELD = "install-cli";
+
 /**
  * The agent picker: a radio group (defaulting to the first option, focused on
- * mount by the form) + a primary Continue button. Arrow keys move the
- * selection, Enter / Ctrl+Enter activate Continue; no cancel button, so
- * Escape is a no-op (selection is mandatory on first run).
+ * mount by the form), the question whether to install `ch` for every shell
+ * (unchecked: it changes the user's PATH), and a primary Continue button.
+ * Arrow keys move the selection, Enter / Ctrl+Enter activate Continue; no
+ * cancel button, so Escape is a no-op (selection is mandatory on first run).
  */
 function agentConfig(options: AgentSelectionHookContext["availableAgents"]): DialogConfig {
   return {
@@ -207,6 +212,11 @@ function agentConfig(options: AgentSelectionHookContext["availableAgents"]): Dia
         // onto the selected radio card when this config replaces the spinner.
         autofocus: true,
         options: options.map((a) => ({ id: a.agent, label: a.label, icon: a.icon })),
+      },
+      {
+        type: "checkbox",
+        id: INSTALL_CLI_FIELD,
+        label: "Install the ch command for every shell, not only CodeHydra's terminals",
       },
       {
         type: "group",
@@ -227,6 +237,8 @@ export interface StartupSurfaceDeps {
   readonly rows: () => readonly RowEntry[];
   /** Whether a project's card is collapsed (the landing skips those). */
   readonly collapsed: (project: RowEntry["project"]) => boolean;
+  /** The `cli.install-global` setting the first-run question answers. */
+  readonly installGlobalCli: Pick<PersistedAccessor<boolean>, "set">;
   /** Run a failed open again (the failed-open panel's Retry). */
   readonly retryOpen: (workspaceRef: WorkspaceRef) => void;
   /** The interactive remove flow (the failed-open panel's Delete). */
@@ -375,6 +387,13 @@ export function createStartupSurface(deps: StartupSurfaceDeps): StartupSurface {
         const agent = event.data?.["agent"];
         if (agentSelection && agent) {
           logger.info("Agent selected", { agent });
+          if (event.data?.[INSTALL_CLI_FIELD] === "true") {
+            void deps.installGlobalCli.set(true).catch((error: unknown) => {
+              logger.warn("Could not save cli.install-global", {
+                error: getErrorMessage(error),
+              });
+            });
+          }
           agentSelection.resolve(agent as LifecycleAgentType);
           agentSelection = null;
         }

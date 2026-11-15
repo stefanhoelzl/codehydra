@@ -188,6 +188,15 @@ export interface PersistedAccessor<T> {
   reset(options?: { persist?: boolean }): Promise<void>;
   /** True when the effective value equals the resolved default. */
   isDefault(): boolean;
+  /**
+   * Be told when the effective value changes at runtime — through this
+   * accessor, the settings dialog or `ch config`. Not called for the value
+   * loaded at startup, nor for a write that leaves the value as it was. Called
+   * once the new value is in effect (`get()` returns it), before it is persisted.
+   *
+   * @returns Unsubscribe function
+   */
+  onChange(listener: (value: T) => void): () => void;
 }
 
 /**
