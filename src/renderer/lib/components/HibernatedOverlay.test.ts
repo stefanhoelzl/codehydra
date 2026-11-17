@@ -18,6 +18,9 @@ window.api = mockApi;
 // Import after mock setup
 import HibernatedOverlay from "./HibernatedOverlay.svelte";
 
+/** A hibernation time for tests that do not look at it. */
+const AT = "2026-10-27T13:02:00.000Z";
+
 describe("HibernatedOverlay", () => {
   const onWake = vi.fn();
 
@@ -27,7 +30,9 @@ describe("HibernatedOverlay", () => {
   });
 
   it("renders both pause and play icons inside the wake button", () => {
-    const { container } = render(HibernatedOverlay, { props: { screenshot: null, onWake } });
+    const { container } = render(HibernatedOverlay, {
+      props: { screenshot: null, hibernatedAt: AT, onWake },
+    });
 
     const indicator = container.querySelector(".indicator");
     expect(indicator).toBeInTheDocument();
@@ -36,7 +41,7 @@ describe("HibernatedOverlay", () => {
   });
 
   it("shows the hibernated label and wake hint", () => {
-    render(HibernatedOverlay, { props: { screenshot: null, onWake } });
+    render(HibernatedOverlay, { props: { screenshot: null, hibernatedAt: AT, onWake } });
 
     expect(screen.getByText("Hibernated")).toBeInTheDocument();
     expect(screen.getByText(/Alt\+X H/)).toBeInTheDocument();
@@ -56,17 +61,11 @@ describe("HibernatedOverlay", () => {
     }
   });
 
-  it("omits the age when the time is unrecorded", () => {
-    const { container } = render(HibernatedOverlay, {
-      props: { screenshot: null, hibernatedAt: null, onWake },
-    });
-
-    expect(container.querySelector(".age")).not.toBeInTheDocument();
-  });
-
   it("renders the inline screenshot when provided", () => {
     const dataUrl = "data:image/png;base64,UE5H";
-    const { container } = render(HibernatedOverlay, { props: { screenshot: dataUrl, onWake } });
+    const { container } = render(HibernatedOverlay, {
+      props: { screenshot: dataUrl, hibernatedAt: AT, onWake },
+    });
 
     const img = container.querySelector<HTMLImageElement>("img.screenshot");
     expect(img).toBeInTheDocument();
@@ -74,13 +73,15 @@ describe("HibernatedOverlay", () => {
   });
 
   it("renders no screenshot image when null", () => {
-    const { container } = render(HibernatedOverlay, { props: { screenshot: null, onWake } });
+    const { container } = render(HibernatedOverlay, {
+      props: { screenshot: null, hibernatedAt: AT, onWake },
+    });
 
     expect(container.querySelector("img.screenshot")).not.toBeInTheDocument();
   });
 
   it("clicking the indicator calls onWake", async () => {
-    render(HibernatedOverlay, { props: { screenshot: null, onWake } });
+    render(HibernatedOverlay, { props: { screenshot: null, hibernatedAt: AT, onWake } });
 
     const button = screen.getByRole("button", { name: /wake workspace/i });
     await fireEvent.click(button);

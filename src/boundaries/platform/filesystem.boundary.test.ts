@@ -46,6 +46,7 @@ import {
   stat,
   lstat,
   open,
+  utimes,
 } from "node:fs/promises";
 import { DefaultFileSystemBoundary } from "./filesystem";
 import { SILENT_LOGGER } from "./logging";
@@ -793,6 +794,25 @@ describe("DefaultFileSystemBoundary", () => {
 
     it("throws ENOENT for a path that does not exist", async () => {
       await expect(fs.realpath(join(tempDir.path, "missing"))).rejects.toMatchObject({
+        fsCode: "ENOENT",
+      });
+    });
+  });
+
+  describe("stat", () => {
+    it("reports a file's modification time", async () => {
+      const target = join(tempDir.path, "shot.png");
+      await nodeWriteFile(target, "png", "utf-8");
+      const mtime = new Date("2026-10-01T12:00:00Z");
+      await utimes(target, mtime, mtime);
+
+      const result = await fs.stat(target);
+
+      expect(result.mtime.getTime()).toBe(mtime.getTime());
+    });
+
+    it("throws ENOENT for a path that does not exist", async () => {
+      await expect(fs.stat(join(tempDir.path, "missing"))).rejects.toMatchObject({
         fsCode: "ENOENT",
       });
     });

@@ -44,6 +44,14 @@ export interface DirEntry {
 }
 
 /**
+ * What `stat` reports about a file or directory.
+ */
+export interface FileStat {
+  /** When its content last changed. */
+  readonly mtime: Date;
+}
+
+/**
  * Options for rm operation.
  */
 export interface RmOptions {
@@ -288,6 +296,18 @@ export interface FileSystemBoundary {
    * await fs.realpath('/var/folders/x'); // macOS: /private/var/folders/x
    */
   realpath(path: PathLike): Promise<Path>;
+
+  /**
+   * Read a file's or directory's metadata, following symlinks.
+   *
+   * @param path - Absolute path (Path object or string)
+   * @returns Its metadata
+   * @throws FileSystemError with code ENOENT if the path does not exist
+   *
+   * @example
+   * const { mtime } = await fs.stat('/path/to/file.png');
+   */
+  stat(path: PathLike): Promise<FileStat>;
 }
 
 // ============================================================================
@@ -593,6 +613,16 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
     const nativePath = toNativePath(target);
     try {
       return new Path(await fs.realpath(nativePath));
+    } catch (error) {
+      throw mapError(error, nativePath);
+    }
+  }
+
+  async stat(target: PathLike): Promise<FileStat> {
+    const nativePath = toNativePath(target);
+    try {
+      const stats = await fs.stat(nativePath);
+      return { mtime: stats.mtime };
     } catch (error) {
       throw mapError(error, nativePath);
     }

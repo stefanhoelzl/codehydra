@@ -4,8 +4,9 @@
  * Steps:
  * 1. Dispatch workspace:resolve — workspacePath → projectPath + workspaceName + description
  * 2. Dispatch project:resolve — projectPath → projectId
- * 3. Dispatch workspace:set-metadata — clear `hibernated` metadata (emits
- *    workspace:metadata-changed, which clears the renderer overlay)
+ * 3. "unmark" hook — the hibernation module clears `hibernated`, then
+ *    `hibernated-at` (emits workspace:metadata-changed, which clears the
+ *    renderer overlay). A failure here fails the operation.
  * 4. "cleanup" hook — delete the on-disk screenshot file (best-effort)
  * 5. Dispatch workspace:get-metadata — read back the now-clean metadata
  * 6. Dispatch workspace:open (existingWorkspace branch) — re-run the canonical
@@ -36,10 +37,9 @@ import {
   workspaceSchema,
   workspaceTargetShape,
 } from "./contract";
-import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
+import { throwHookErrors } from "./lib/hook-helpers";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "./get-metadata";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "./open-workspace";
-import { HIBERNATED_AT_METADATA_KEY, HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { resolveWorkspaceIdentity, workspaceFailurePayload } from "./lib/workspace-identity";
 import { descriptionOf } from "../utils/workspace-conversion";
 
@@ -116,6 +116,7 @@ export const schemas = {
   payload: wakeWorkspacePayloadSchema,
   result: workspaceSchema,
   hooks: {
+    unmark: { input: wakePipelineHookInputSchema, result: z.object({}).readonly() },
     cleanup: { input: wakePipelineHookInputSchema, result: z.object({}).readonly() },
   },
   events: {
@@ -148,6 +149,12 @@ export interface WorkspaceWakeFailedEvent extends DomainEvent {
 /** Input context for the "cleanup" hook point. */
 export type WakePipelineHookInput = HookContext & z.infer<typeof wakePipelineEnrichmentSchema>;
 
+/**
+ * Per-handler result for the "unmark" hook point, where the workspace's
+ * metadata turns awake. Errors fail the operation.
+ */
+export type UnmarkHookResult = Record<string, never>;
+
 export type CleanupHookResult = Record<string, never>;
 
 // =============================================================================
@@ -167,16 +174,6 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
       const identity = await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
       const { workspacePath, projectRef, projectPath, workspaceName, projectId } = identity;
 
-      // Clear the hibernated metadata flag (then its time) before re-init so
-      // any consumers observing the metadata-changed event see the workspace
-      // as awake.
-      for (const key of [HIBERNATED_METADATA_KEY, HIBERNATED_AT_METADATA_KEY]) {
-        await ctx.dispatch<SetMetadataIntent>({
-          type: INTENT_SET_METADATA,
-          payload: { workspaceRef: payload.workspaceRef, key, value: null },
-        });
-      }
-
       const hookCtx: WakePipelineHookInput = {
         intent: ctx.intent,
         workspaceRef: payload.workspaceRef,
@@ -186,6 +183,11 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
         projectId,
         workspaceName,
       };
+
+      // Clear the hibernated metadata before re-init so any consumers
+      // observing the metadata-changed event see the workspace as awake.
+      const { errors: unmarkErrors } = await ctx.hooks.collect("unmark", hookCtx);
+      throwHookErrors(unmarkErrors, "workspace:wake unmark hooks failed");
 
       // Best-effort screenshot file cleanup.
       await ctx.hooks.collect("cleanup", hookCtx);

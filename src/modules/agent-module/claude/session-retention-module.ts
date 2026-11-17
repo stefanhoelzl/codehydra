@@ -13,9 +13,10 @@
  * workspace in the open projects. It recomputes whenever that set can change:
  * a project opens or closes, a workspace hibernates, wakes or is deleted.
  *
- * Not covered: workspaces hibernated before `hibernated-at` was recorded (their
- * age is unknown), hibernated workspaces of closed projects, and sweeps run by
- * a `claude` started outside CodeHydra, which still use the user's setting.
+ * A workspace hibernated before `hibernated-at` existed counts from the time
+ * the hibernation module backfills when its project opens. Not covered:
+ * hibernated workspaces of closed projects, and sweeps run by a `claude`
+ * started outside CodeHydra, which still use the user's setting.
  */
 
 import type { Dispatcher } from "../../../intents/lib/dispatcher";

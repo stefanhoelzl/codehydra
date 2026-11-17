@@ -16,6 +16,7 @@ import type { Config } from "../../boundaries/platform/config";
 import type { StateService } from "../../boundaries/platform/state-service";
 import { storeEnum, storeNumber } from "../../boundaries/platform/store-definition";
 import type { WorkspaceRef } from "../../intents/contract";
+import type { Hibernation } from "./view-model";
 import { getErrorMessage } from "../../shared/error-utils";
 import {
   PROCESS_BAR_LEVELS,
@@ -39,7 +40,7 @@ export interface ProcessBarProject {
   readonly workspaces: readonly {
     readonly ref: WorkspaceRef;
     readonly name: string;
-    readonly hibernated: boolean;
+    readonly hibernation: Hibernation | undefined;
   }[];
 }
 
@@ -138,7 +139,7 @@ export function createProcessBar(deps: ProcessBarDeps): ProcessBar {
     const treeProjects: UiProcessTreeProject[] = [];
     for (const project of projects) {
       const workspaces = project.workspaces.flatMap((workspace) => {
-        const processes = workspace.hibernated ? undefined : trees.workspaces.get(workspace.ref);
+        const processes = workspace.hibernation ? undefined : trees.workspaces.get(workspace.ref);
         return processes === undefined || processes.processes.length === 0
           ? []
           : [

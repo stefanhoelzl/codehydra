@@ -464,7 +464,9 @@ export function createStartupSurface(deps: StartupSurfaceDeps): StartupSurface {
   async function endStartup(): Promise<void> {
     if (phase !== "running") return;
     const rows = deps.rows();
-    const top = rows.find((entry) => !entry.workspace.hibernated && !deps.collapsed(entry.project));
+    const top = rows.find(
+      (entry) => entry.workspace.hibernation === undefined && !deps.collapsed(entry.project)
+    );
     const moving =
       top === undefined
         ? rows.some((entry) => entry.row.active)

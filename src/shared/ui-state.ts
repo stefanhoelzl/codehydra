@@ -127,7 +127,30 @@ export interface UiDeletionProgress {
   readonly blockingProcessCount: number;
 }
 
-export interface UiWorkspaceRow {
+/**
+ * A row's hibernation. Orthogonal to `status`: a hibernated workspace is still
+ * `ready` (or even `deleting`) — hibernation is a sleep flag layered on the
+ * lifecycle, not a lifecycle phase. Drives the dimmed sidebar row,
+ * wake-on-click, and shortcut numbering (hibernated rows are unnumbered).
+ */
+export type UiRowHibernation =
+  | { readonly hibernated: false }
+  | {
+      readonly hibernated: true;
+      /** When the workspace was hibernated (ISO-8601). The renderer derives the age it shows. */
+      readonly hibernatedAt: string;
+      /**
+       * The wakeup script of a hibernated workspace that has one (an
+       * "automated" workspace: it wakes by itself). The sidebar lists these
+       * after the other hibernated workspaces, in their own color.
+       */
+      readonly wakeupScript?: string;
+    };
+
+export type UiWorkspaceRow = UiWorkspaceRowFields & UiRowHibernation;
+
+/** Every row field but its hibernation (`UiRowHibernation`). */
+export interface UiWorkspaceRowFields {
   /**
    * The row's identity: the workspace's ref (`ch::<machine>::<project>::<name>`),
    * known from the start and so stable across the creating → ready swap. Also
@@ -156,26 +179,6 @@ export interface UiWorkspaceRow {
    * `openError` says why; Retry echoes the key as `wake-workspace`.
    */
   readonly status: "creating" | "loading" | "ready" | "open-failed" | "deleting" | "delete-failed";
-  /**
-   * Orthogonal to `status`: a hibernated workspace is still `ready` (or even
-   * `deleting`) — hibernation is a sleep flag layered on the lifecycle, not a
-   * lifecycle phase. Drives the dimmed sidebar row, wake-on-click, and
-   * shortcut numbering (hibernated rows are unnumbered).
-   */
-  readonly hibernated: boolean;
-  /**
-   * When the workspace was hibernated (ISO-8601). Present only while
-   * `hibernated` and the time is known — a workspace hibernated before the
-   * time was recorded has none. The renderer derives the age it shows.
-   */
-  readonly hibernatedAt?: string;
-  /**
-   * The wakeup script of a hibernated workspace that has one (an "automated"
-   * workspace: it wakes by itself). Present only while `hibernated`. The
-   * sidebar lists these after the other hibernated workspaces, in their own
-   * color.
-   */
-  readonly wakeupScript?: string;
   readonly agent: AgentStatus;
   /**
    * Something here is new to the user: its agent finished (went from busy to
@@ -320,8 +323,8 @@ export type UiMainView =
   | {
       readonly kind: "hibernated";
       readonly screenshot: string | null;
-      /** When it was hibernated (ISO-8601); null when unrecorded. */
-      readonly hibernatedAt: string | null;
+      /** When it was hibernated (ISO-8601). */
+      readonly hibernatedAt: string;
     }
   | { readonly kind: "creation" };
 

@@ -1,10 +1,14 @@
 /**
  * OpenProjectOperation - Orchestrates project opening.
  *
- * Runs 3 sequential hook points using collect() for isolated contexts:
+ * Runs 4 sequential hook points using collect() for isolated contexts:
  * 1. "resolve": clone if URL, validate git; the project's type, config + identifier → ResolveHookResult
  * 2. "register": generate ID, store state, persist type + config → RegisterHookResult
  * 3. "discover": find existing workspaces → DiscoverHookResult
+ * 4. "backfill": fill in metadata the discovered workspaces lack, persisted by
+ *    the handler → BackfillHookResult (the keys it wrote, merged into the
+ *    workspaces before they are announced). Best-effort; skipped when the
+ *    project was already open.
  *
  * The operation mediates data flow between hook points — only pure data
  * flows through contexts. Providers are module dependencies via closure.
@@ -32,7 +36,7 @@ import {
   discoveredWorkspaceSchema,
   hookCtxSchema,
 } from "./contract";
-import type { WorkspaceRef } from "./contract";
+import type { DiscoveredWorkspace, WorkspaceRef } from "./contract";
 import { INTENT_OPEN_PROJECT } from "./contract";
 import {
   INTENT_OPEN_WORKSPACE,
@@ -145,6 +149,17 @@ export const discoverHookResultSchema = z
   })
   .readonly();
 
+/**
+ * Result returned by handlers on the "backfill" hook point: the metadata each
+ * handler wrote, by workspace name. Two handlers writing the same key of the
+ * same workspace is a wiring bug.
+ */
+export const backfillHookResultSchema = z
+  .object({
+    metadata: z.record(z.string(), z.record(z.string(), z.string()).readonly()).readonly(),
+  })
+  .readonly();
+
 /** Result returned by handlers on the "register" hook point. */
 export const registerHookResultSchema = z
   .object({
@@ -170,6 +185,20 @@ const discoverEnrichmentSchema = z.object({
 export const discoverHookInputSchema = hookCtxSchema(
   openProjectPayloadSchema,
   discoverEnrichmentSchema.shape
+);
+
+/** Operation-added enrichment for the "backfill" hook point. */
+const backfillEnrichmentSchema = z.object({
+  projectPath: projectPathSchema,
+  projectRef: projectRefSchema,
+  projectId: projectIdSchema,
+  workspaces: z.array(discoveredWorkspaceSchema).readonly(),
+});
+
+/** Runtime whole-context validation schema for "backfill". */
+export const backfillHookInputSchema = hookCtxSchema(
+  openProjectPayloadSchema,
+  backfillEnrichmentSchema.shape
 );
 
 /** Operation-added enrichment for the "register" hook point. */
@@ -257,6 +286,7 @@ export const schemas = {
     },
     register: { input: registerHookInputSchema, result: registerHookResultSchema },
     discover: { input: discoverHookInputSchema, result: discoverHookResultSchema },
+    backfill: { input: backfillHookInputSchema, result: backfillHookResultSchema },
   },
   events: {
     [EVENT_PROJECT_OPENED]: projectOpenedPayloadSchema,
@@ -276,10 +306,14 @@ export type SelectFolderHookResult = z.infer<typeof selectFolderHookResultSchema
 export type PrepareHookResult = z.infer<typeof prepareHookResultSchema>;
 export type ResolveHookResult = z.infer<typeof resolveHookResultSchema>;
 export type DiscoverHookResult = z.infer<typeof discoverHookResultSchema>;
+export type BackfillHookResult = z.infer<typeof backfillHookResultSchema>;
 export type RegisterHookResult = z.infer<typeof registerHookResultSchema>;
 
 /** Input context for the "discover" hook point. */
 export type DiscoverHookInput = HookContext & z.infer<typeof discoverEnrichmentSchema>;
+
+/** Input context for the "backfill" hook point. */
+export type BackfillHookInput = HookContext & z.infer<typeof backfillEnrichmentSchema>;
 
 /** Input context for the "register" hook point. */
 export type RegisterHookInput = HookContext & z.infer<typeof registerEnrichmentSchema>;
@@ -447,7 +481,16 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       discoverCtx
     );
     throwHookErrors(discoverErrors, "project:open discover hooks failed");
-    const workspaces = discoverResults.flatMap((r) => r.workspaces);
+    const discovered = discoverResults.flatMap((r) => r.workspaces);
+    const workspaces = alreadyOpen
+      ? discovered
+      : await this.backfill(ctx, {
+          intent: effectiveIntent,
+          projectPath,
+          projectRef,
+          projectId,
+          workspaces: discovered,
+        });
     const defaultBaseBranch = onlyDefined(
       discoverResults,
       "defaultBaseBranch",
@@ -497,6 +540,38 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
     }
 
     return project;
+  }
+
+  /**
+   * Run the "backfill" hook point and merge what its handlers wrote into the
+   * discovered workspaces' metadata, so the announcement carries it.
+   * Best-effort: a failing handler (logged by the dispatcher) leaves its
+   * workspaces as discovered.
+   */
+  private async backfill(
+    ctx: OperationContext<OpenProjectIntent, typeof schemas>,
+    backfillCtx: BackfillHookInput
+  ): Promise<readonly DiscoveredWorkspace[]> {
+    const { results } = await ctx.hooks.collect("backfill", backfillCtx);
+    const written = new Map<string, Record<string, string>>();
+    for (const result of results) {
+      for (const [name, metadata] of Object.entries(result.metadata)) {
+        const merged = written.get(name) ?? {};
+        for (const [key, value] of Object.entries(metadata)) {
+          if (key in merged) {
+            throw new Error(`project:open backfill: two handlers wrote ${key} of ${name}`);
+          }
+          merged[key] = value;
+        }
+        written.set(name, merged);
+      }
+    }
+    return backfillCtx.workspaces.map((workspace) => {
+      const metadata = written.get(workspace.name);
+      return metadata === undefined
+        ? workspace
+        : { ...workspace, metadata: { ...workspace.metadata, ...metadata } };
+    });
   }
 
   /**

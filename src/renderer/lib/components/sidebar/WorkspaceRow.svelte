@@ -51,11 +51,7 @@
     glyph === "pending" ? (row.status === "deleting" ? "deleting" : "creating") : glyph
   );
   const label = $derived(row.title ?? row.name);
-  const age = $derived(
-    row.hibernated && row.hibernatedAt !== undefined
-      ? describeHibernation(row.hibernatedAt, minuteNow())
-      : null
-  );
+  const age = $derived(row.hibernated ? describeHibernation(row.hibernatedAt, minuteNow()) : null);
   // An awake row with the process summary on shows its CPU and memory on the
   // second line; a hibernated row has none.
   const processBadge = $derived(
@@ -108,7 +104,7 @@
   const ACTION_ICON = { hibernate: "moon", remove: "trash", retry: "refresh" } as const;
   // The process summary's spelled-out form is the row's tooltip.
   const tip = $derived(
-    automated && row.wakeupScript !== undefined
+    automated && row.hibernated && row.wakeupScript !== undefined
       ? `Wakes automatically: ${row.wakeupScript}`
       : row.processes !== undefined
         ? describeProcessSummary(row.processes)

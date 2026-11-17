@@ -90,10 +90,11 @@ workspace that sleeps longer still exists when you wake it, the Claude that
 CodeHydra starts sets `cleanupPeriodDays` high enough to cover the oldest
 hibernated workspace in your open projects, plus 60 days. This applies to
 every conversation and overrides your own value from Claude's settings files,
-except a managed (organization) setting. Not covered: workspaces hibernated
-before CodeHydra recorded when they were hibernated (they show no age),
-hibernated workspaces in closed projects, and a `claude` you start outside
-CodeHydra, which deletes old conversations by your own setting.
+except a managed (organization) setting. A workspace hibernated before
+CodeHydra recorded when counts from the time it is given when its project opens
+(see [Switching, hibernating and waking](#switching-hibernating-and-waking)). Not covered: hibernated workspaces
+in closed projects, and a `claude` you start outside CodeHydra, which deletes
+old conversations by your own setting.
 
 ### Agent status
 
@@ -412,8 +413,9 @@ is easy to spot. Turn this off with `auto-tag.new`.
   `5h`, `3d`, `2w`) at the end of the row; hovering the age, and the
   hibernated screen, add the date and time it was hibernated. `ch ws status`
   (MCP `workspace_get_status`) reports it as `hibernated` and `hibernatedAt`.
-  Workspaces hibernated before CodeHydra recorded the time show no age until
-  they are hibernated again.
+  A workspace hibernated before CodeHydra recorded the time gets one when its
+  project opens: when its hibernated screen was captured, or, without one, the
+  moment the project opened (its age then starts at `now`).
 - **A blank editor** — if the process that draws the editors crashes, every
   open workspace goes grey at once; CodeHydra notices within a few seconds
   and reloads them all. If a single workspace's editor shuts down or navigates

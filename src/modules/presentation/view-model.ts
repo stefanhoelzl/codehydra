@@ -20,6 +20,25 @@ import type {
 } from "../../intents/contract";
 import { asWorkspaceRef } from "../../utils/ref";
 import { decodeWakeup, WAKEUP_METADATA_KEY } from "../wakeup-module";
+import {
+  HIBERNATED_AT_METADATA_KEY,
+  HIBERNATED_METADATA_KEY,
+  readHibernatedAt,
+} from "../../intents/hibernate-workspace";
+
+/** A sleeping workspace's hibernation. */
+export interface Hibernation {
+  /** When it went to sleep (ISO-8601). */
+  readonly at: string;
+}
+
+/**
+ * The time to use for a hibernated workspace whose `hibernated-at` is missing
+ * or unparsable — the hibernation module backfills it on project open, so only
+ * a failed backfill or a hand-edited file gets here. The presenter's logs a
+ * warning and answers now.
+ */
+export type MissingHibernationTime = () => string;
 
 /**
  * The tag older versions set beside a wakeup script (an alarm clock). The
@@ -46,12 +65,11 @@ export interface WorkspaceModel {
   readonly subtitle?: string;
   /** The icon before the subtitle; absent for none. */
   readonly subtitleIcon?: SubtitleIcon;
-  hibernated: boolean;
   /**
-   * When it was hibernated (metadata `hibernated-at`, ISO-8601); undefined when
-   * unrecorded or unparsable. Only meaningful while `hibernated`.
+   * Set while hibernated (metadata `hibernated`), with when (`hibernated-at`);
+   * undefined while awake.
    */
-  hibernatedAt: string | undefined;
+  hibernation: Hibernation | undefined;
   /**
    * The wakeup script (metadata `wakeup`, its `script` field); undefined when
    * there is none or it is unreadable. Only shown while `hibernated`.
@@ -102,11 +120,14 @@ export function fromDescription(
 
 /** Interpret a workspace's domain metadata into the semantic model fields. */
 export function fromMetadata(
-  metadata: Readonly<Record<string, string>>
-): Pick<WorkspaceModel, "hibernated" | "hibernatedAt" | "wakeupScript" | "tags" | "title"> {
+  metadata: Readonly<Record<string, string>>,
+  missingTime: MissingHibernationTime
+): Pick<WorkspaceModel, "hibernation" | "wakeupScript" | "tags" | "title"> {
   return {
-    hibernated: metadata["hibernated"] === "true",
-    hibernatedAt: readHibernatedAt(metadata["hibernated-at"]),
+    hibernation:
+      metadata[HIBERNATED_METADATA_KEY] === "true"
+        ? { at: readHibernatedAt(metadata[HIBERNATED_AT_METADATA_KEY]) ?? missingTime() }
+        : undefined,
     wakeupScript: readWakeupScript(metadata[WAKEUP_METADATA_KEY]),
     tags: readTags(metadata),
     title: readTitle(metadata["title"]),
@@ -125,8 +146,8 @@ export function readTags(metadata: Readonly<Record<string, string>>): WorkspaceT
 
 /**
  * Display order of a project's rows: hibernated without a wakeup script, then
- * hibernated with one (each most recently hibernated first; an unrecorded time
- * after the known ones), then the awake ones; ties and awake rows by name.
+ * hibernated with one (each most recently hibernated first), then the awake
+ * ones; ties and awake rows by name.
  */
 export function compareRows(
   a: WorkspaceModel,
@@ -134,22 +155,14 @@ export function compareRows(
   compareNames: (a: string, b: string) => number
 ): number {
   const group = (w: WorkspaceModel): number =>
-    !w.hibernated ? 2 : w.wakeupScript === undefined ? 0 : 1;
+    w.hibernation === undefined ? 2 : w.wakeupScript === undefined ? 0 : 1;
   const byGroup = group(a) - group(b);
   if (byGroup !== 0) return byGroup;
-  if (a.hibernated) {
-    const at = (w: WorkspaceModel): number =>
-      w.hibernatedAt === undefined ? -Infinity : Date.parse(w.hibernatedAt);
-    const byTime = at(b) - at(a);
-    if (byTime !== 0 && !Number.isNaN(byTime)) return byTime;
+  if (a.hibernation !== undefined && b.hibernation !== undefined) {
+    const byTime = Date.parse(b.hibernation.at) - Date.parse(a.hibernation.at);
+    if (byTime !== 0) return byTime;
   }
   return compareNames(a.name, b.name);
-}
-
-/** A `hibernated-at` value as a valid ISO timestamp, or undefined. */
-export function readHibernatedAt(value: string | null | undefined): string | undefined {
-  if (!value) return undefined;
-  return Number.isNaN(Date.parse(value)) ? undefined : value;
 }
 
 export class PresentationModel {

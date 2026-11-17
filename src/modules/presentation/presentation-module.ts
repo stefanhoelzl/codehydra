@@ -98,6 +98,9 @@ import { EVENT_SHORTCUT_KEY_PRESSED } from "../../intents/shortcut-key";
 import {
   INTENT_HIBERNATE_WORKSPACE,
   HIBERNATE_WORKSPACE_OPERATION_ID,
+  HIBERNATED_AT_METADATA_KEY,
+  HIBERNATED_METADATA_KEY,
+  readHibernatedAt,
   type HibernateWorkspaceIntent,
   type PrepareCaptureHookResult,
   type CleanupCaptureHookResult,
@@ -125,12 +128,13 @@ import {
   type UiProjectRow,
   type UiSidebarFind,
   type UiState,
+  type UiRowHibernation,
   type UiWorkspaceRow,
 } from "../../shared/ui-state";
 import type { Config } from "../../boundaries/platform/config";
 import { storeBoolean, storeCustom, storeEnum } from "../../boundaries/platform/store-definition";
 import { createProcessBar } from "./process-bar";
-import { buildScreenshotPath } from "../hibernation-screenshot-module";
+import { buildScreenshotPath } from "../hibernation-module";
 import {
   DialogManager,
   NotificationManager,
@@ -154,7 +158,6 @@ import {
   compareRows,
   fromDescription,
   fromMetadata,
-  readHibernatedAt,
   readTags,
   readWakeupScript,
   type ProjectModel,
@@ -676,6 +679,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /** Hibernation screenshot data URLs keyed by workspace ref (null = missing). */
   const screenshots = new Map<WorkspaceRef, string | null>();
   const screenshotLoads = new Set<WorkspaceRef>();
+  /**
+   * The last valid `hibernated-at` each workspace reported: hibernating writes
+   * it just before the `hibernated` flag, which is what the model reacts to.
+   */
+  const hibernatedAtSeen = new Map<WorkspaceRef, string>();
+
+  /** A hibernated workspace's time when its metadata has none (see MissingHibernationTime). */
+  function missingHibernationTime(workspaceRef: WorkspaceRef): string {
+    logger.warn("Hibernated workspace has no valid hibernated-at; showing it as hibernated now", {
+      workspace: workspaceRef,
+    });
+    return new Date().toISOString();
+  }
   let theme: Theme = "dark";
   /**
    * The snapshot stream gate. Set true on the `ui-connected` handshake (App
@@ -754,7 +770,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /** Whether a workspace's IDE frame is in the snapshot's `frames` region. */
   function isFrameMounted(workspace: WorkspaceModel): boolean {
     const released = framesReleased.has(workspace.ref);
-    return workspace.url !== undefined && !workspace.hibernated && !released;
+    return workspace.url !== undefined && workspace.hibernation === undefined && !released;
   }
 
   function reloadFrame(workspaceRef: WorkspaceRef): boolean {
@@ -807,6 +823,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * the snapshot and shortcut navigation, so they always agree on ordering and
    * status). The row's key is the workspace ref.
    */
+  function rowHibernation(workspace: WorkspaceModel): UiRowHibernation {
+    if (workspace.hibernation === undefined) return { hibernated: false };
+    return {
+      hibernated: true,
+      hibernatedAt: workspace.hibernation.at,
+      ...(workspace.wakeupScript !== undefined && { wakeupScript: workspace.wakeupScript }),
+    };
+  }
+
   function buildRow(workspace: WorkspaceModel): UiWorkspaceRow {
     const progress = deletions.get(workspace.ref);
     const agent = toAgentStatus(agents.statuses.get(workspace.ref));
@@ -815,7 +840,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     // placeholder row too.
     const waitingOnUser = dialogs.needsAttentionFor(workspace.ref);
     // Hibernation killed everything in it, so a sleeping row shows no summary.
-    const processes = workspace.hibernated ? undefined : processBar.rowSummary(workspace.ref);
+    const processes = workspace.hibernation ? undefined : processBar.rowSummary(workspace.ref);
     return {
       key: workspace.ref,
       name: workspace.name,
@@ -823,11 +848,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       ...(workspace.subtitle !== undefined && { subtitle: workspace.subtitle }),
       ...(workspace.subtitleIcon !== undefined && { subtitleIcon: workspace.subtitleIcon }),
       status: rowStatus(workspace),
-      hibernated: workspace.hibernated,
-      ...(workspace.hibernated &&
-        workspace.hibernatedAt !== undefined && { hibernatedAt: workspace.hibernatedAt }),
-      ...(workspace.hibernated &&
-        workspace.wakeupScript !== undefined && { wakeupScript: workspace.wakeupScript }),
+      ...rowHibernation(workspace),
       // A dialog waiting on the user reads as idle for as long as it waits: the
       // green row (and the chime the renderer derives from these counts) is the
       // signal the user already answers to, and a question nobody notices is
@@ -892,11 +913,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     // active (including a stale active ref whose workspace is gone).
     const active = model.active();
     if (active === undefined) return { kind: "creation" };
-    if (active.workspace.hibernated) {
+    if (active.workspace.hibernation !== undefined) {
       return {
         kind: "hibernated",
         screenshot: resolveScreenshot(active),
-        hibernatedAt: active.workspace.hibernatedAt ?? null,
+        hibernatedAt: active.workspace.hibernation.at,
       };
     }
     // A still-creating active workspace has no mounted frame yet (its key is
@@ -1453,7 +1474,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   ): WorkspaceRef | null {
     for (const [project, workspaces] of projects) {
       if (isCollapsed(project)) continue;
-      const target = workspaces.find((w) => !w.hibernated && w.phase !== "creating");
+      const target = workspaces.find((w) => w.hibernation === undefined && w.phase !== "creating");
       if (target !== undefined) return target.ref;
     }
     return null;
@@ -1558,7 +1579,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             ref: workspace.ref,
             name: workspace.name,
             ...fromDescription(workspace),
-            ...fromMetadata(workspace.metadata),
+            ...fromMetadata(workspace.metadata, () => missingHibernationTime(workspace.ref)),
             url: workspace.url,
             // project:open opens every awake workspace after announcing
             // the project; hibernated ones stay as they are.
@@ -1601,7 +1622,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             ref: p.workspaceRef,
             name: p.workspaceName,
             ...fromDescription(p),
-            ...fromMetadata(p.metadata),
+            ...fromMetadata(p.metadata, () => missingHibernationTime(p.workspaceRef)),
             url: p.workspaceUrl,
             phase: "ready",
           });
@@ -1656,8 +1677,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           ref,
           name: p.workspaceName,
           title: undefined,
-          hibernated: false,
-          hibernatedAt: undefined,
+          hibernation: undefined,
           wakeupScript: undefined,
           tags: [],
           url: undefined,
@@ -1767,9 +1787,16 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         if (!workspace) return;
         // Metadata is interpreted, never stored: only the keys the UI cares
         // about mutate the model (and push); everything else is ignored.
-        if (p.key === "hibernated") {
-          const hibernating = p.value === "true" && !workspace.hibernated;
-          workspace.hibernated = p.value === "true";
+        if (p.key === HIBERNATED_METADATA_KEY) {
+          const hibernating = p.value === "true" && workspace.hibernation === undefined;
+          if (p.value !== "true") {
+            workspace.hibernation = undefined;
+          } else if (hibernating) {
+            // The time is written just before the flag (hibernation module).
+            workspace.hibernation = {
+              at: hibernatedAtSeen.get(p.workspaceRef) ?? missingHibernationTime(p.workspaceRef),
+            };
+          }
           // Flag flips invalidate the cached screenshot (deleted on wake).
           screenshots.delete(p.workspaceRef);
           // A workspace going to sleep folds its project's hibernated list away.
@@ -1779,8 +1806,18 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           }
         } else if (p.key === WAKEUP_METADATA_KEY) {
           workspace.wakeupScript = readWakeupScript(p.value);
-        } else if (p.key === "hibernated-at") {
-          workspace.hibernatedAt = readHibernatedAt(p.value);
+        } else if (p.key === HIBERNATED_AT_METADATA_KEY) {
+          // Held until the flag that follows it; a change while asleep (a
+          // backfill) shows at once. A cleared or bad value keeps a sleeping
+          // row's time.
+          const at = readHibernatedAt(p.value);
+          if (at === undefined) {
+            hibernatedAtSeen.delete(p.workspaceRef);
+            return;
+          }
+          hibernatedAtSeen.set(p.workspaceRef, at);
+          if (workspace.hibernation === undefined) return;
+          workspace.hibernation = { at };
         } else if (p.key === "title") {
           // Empty/cleared title reverts the row to the branch name.
           workspace.title = readTitle(p.value);

@@ -1217,7 +1217,11 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     // First push after the flip: screenshot still loading.
     const loading = snapshots(deps).find((s) => s.main.kind === "hibernated");
-    expect(loading?.main).toEqual({ kind: "hibernated", screenshot: null, hibernatedAt: null });
+    expect(loading?.main).toEqual({
+      kind: "hibernated",
+      screenshot: null,
+      hibernatedAt: expect.any(String),
+    });
     expect(loading?.frames).toEqual({});
     expect(loading?.sidebar.projects[0]!.workspaces[0]!.hibernated).toBe(true);
 
@@ -1226,7 +1230,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).main).toEqual({
       kind: "hibernated",
       screenshot: `data:image/png;base64,${Buffer.from("PNG").toString("base64")}`,
-      hibernatedAt: null,
+      hibernatedAt: expect.any(String),
     });
     expect(deps.fileSystem.readFileBuffer).toHaveBeenCalledWith(
       new Path(`/data/screenshots/${PROJECT_ID}/feat.png`)
@@ -1245,7 +1249,10 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
     await flush();
 
-    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.hibernatedAt).toBe(at);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]).toMatchObject({
+      hibernated: true,
+      hibernatedAt: at,
+    });
     expect(lastSnapshot(deps).main).toMatchObject({ kind: "hibernated", hibernatedAt: at });
 
     // Wake clears the flag, then the time: the row drops it with the flag.
@@ -1269,22 +1276,47 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_METADATA_CHANGED, { ...change("hibernated-at"), value: later });
     await emit(module, EVENT_METADATA_CHANGED, { ...change("hibernated"), value: "true" });
     await flush();
-    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.hibernatedAt).toBe(later);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]).toMatchObject({
+      hibernated: true,
+      hibernatedAt: later,
+    });
+
+    // A time written while asleep (the hibernation module's backfill) shows at once.
+    const backfilled = "2026-10-29T08:00:00.000Z";
+    await emit(module, EVENT_METADATA_CHANGED, { ...change("hibernated-at"), value: backfilled });
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]).toMatchObject({
+      hibernatedAt: backfilled,
+    });
   });
 
-  it("omits the hibernation time when it is unrecorded or unparsable", async () => {
-    const deps = createDeps();
-    const module = await startModule(deps);
-    const legacy = makeWorkspace("legacy", { metadata: { hibernated: "true" } });
-    const garbled = makeWorkspace("garbled", {
-      metadata: { hibernated: "true", "hibernated-at": "yesterday-ish" },
-    });
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([legacy, garbled]) });
-    await flush();
+  it("shows a hibernated workspace without a valid time as hibernated now, and warns", async () => {
+    const now = new Date("2026-11-17T10:00:00.000Z");
+    vi.useFakeTimers({ now, toFake: ["Date"] });
+    try {
+      const deps = createDeps();
+      const module = await startModule(deps);
+      const legacy = makeWorkspace("legacy", { metadata: { hibernated: "true" } });
+      const garbled = makeWorkspace("garbled", {
+        metadata: { hibernated: "true", "hibernated-at": "yesterday-ish" },
+      });
+      await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([legacy, garbled]) });
+      await flush();
 
-    for (const row of lastSnapshot(deps).sidebar.projects[0]!.workspaces) {
-      expect(row.hibernated).toBe(true);
-      expect(row).not.toHaveProperty("hibernatedAt");
+      for (const row of lastSnapshot(deps).sidebar.projects[0]!.workspaces) {
+        expect(row).toMatchObject({ hibernated: true, hibernatedAt: now.toISOString() });
+      }
+      const logger = deps.loggingService.getLogger("presenter");
+      expect(logger?.warn).toHaveBeenCalledWith(
+        "Hibernated workspace has no valid hibernated-at; showing it as hibernated now",
+        { workspace: legacy.ref }
+      );
+      expect(logger?.warn).toHaveBeenCalledWith(
+        "Hibernated workspace has no valid hibernated-at; showing it as hibernated now",
+        { workspace: garbled.ref }
+      );
+    } finally {
+      vi.useRealTimers();
     }
   });
 
@@ -1303,7 +1335,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).main).toEqual({
       kind: "hibernated",
       screenshot: null,
-      hibernatedAt: null,
+      hibernatedAt: expect.any(String),
     });
   });
 
@@ -2133,9 +2165,9 @@ describe("PresentationModule - sidebar resize", () => {
   it("orders hibernated (newest first), then automated, then awake by name", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
-    const sleep = (at: string | undefined, wakeup?: string): Record<string, string> => ({
+    const sleep = (at: string, wakeup?: string): Record<string, string> => ({
       hibernated: "true",
-      ...(at !== undefined && { "hibernated-at": at }),
+      "hibernated-at": at,
       ...(wakeup !== undefined && {
         wakeup: JSON.stringify({ script: wakeup, shell: "bash", env: {} }),
       }),
@@ -2146,7 +2178,6 @@ describe("PresentationModule - sidebar resize", () => {
         makeWorkspace("old", { metadata: sleep("2026-01-01T00:00:00.000Z") }),
         makeWorkspace("auto-old", { metadata: sleep("2026-01-01T00:00:00.000Z", "x") }),
         makeWorkspace("alpha"),
-        makeWorkspace("unknown", { metadata: sleep(undefined) }),
         makeWorkspace("auto-new", { metadata: sleep("2026-03-01T00:00:00.000Z", "y") }),
         makeWorkspace("new", { metadata: sleep("2026-03-01T00:00:00.000Z") }),
       ]),
@@ -2156,14 +2187,13 @@ describe("PresentationModule - sidebar resize", () => {
     expect(rows.map((w) => w.name)).toEqual([
       "new",
       "old",
-      "unknown",
       "auto-new",
       "auto-old",
       "alpha",
       "zeta",
     ]);
-    expect(rows.find((w) => w.name === "auto-new")!.wakeupScript).toBe("y");
-    expect(rows.find((w) => w.name === "new")!.wakeupScript).toBeUndefined();
+    expect(rows.find((w) => w.name === "auto-new")).toMatchObject({ wakeupScript: "y" });
+    expect(rows.find((w) => w.name === "new")).not.toHaveProperty("wakeupScript");
   });
 
   it("carries the wakeup script only while hibernated, and never the legacy wakeup tag", async () => {
@@ -2179,7 +2209,7 @@ describe("PresentationModule - sidebar resize", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
     const row = () => lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
     await flush();
-    expect(row().wakeupScript).toBeUndefined();
+    expect(row()).not.toHaveProperty("wakeupScript");
     expect(row().tags.map((t) => t.name)).toEqual(["review"]);
 
     const change = (key: string, value: string | null) =>
@@ -2192,11 +2222,11 @@ describe("PresentationModule - sidebar resize", () => {
       });
     await change("hibernated", "true");
     await flush();
-    expect(row().wakeupScript).toBe("gh pr checks 12");
+    expect(row()).toMatchObject({ wakeupScript: "gh pr checks 12" });
 
     await change("wakeup", null);
     await flush();
-    expect(row().wakeupScript).toBeUndefined();
+    expect(row()).not.toHaveProperty("wakeupScript");
     await change("tags.wakeup", JSON.stringify({ label: "x" }));
     await flush();
     expect(row().tags.map((t) => t.name)).toEqual(["review"]);
@@ -4193,7 +4223,7 @@ describe("PresentationModule - push logging", () => {
     expect(loggedProjection(deps).main).toEqual({
       kind: "hibernated",
       screenshot: main.screenshot.length,
-      hibernatedAt: null,
+      hibernatedAt: expect.any(String),
     });
     expect(JSON.stringify(loggedProjection(deps))).not.toContain("data:image");
   });
@@ -4210,12 +4240,12 @@ describe("PresentationModule - push logging", () => {
     expect(lastSnapshot(deps).main).toEqual({
       kind: "hibernated",
       screenshot: null,
-      hibernatedAt: null,
+      hibernatedAt: expect.any(String),
     });
     expect(loggedProjection(deps).main).toEqual({
       kind: "hibernated",
       screenshot: null,
-      hibernatedAt: null,
+      hibernatedAt: expect.any(String),
     });
   });
 

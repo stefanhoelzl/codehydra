@@ -1337,7 +1337,11 @@ describe("Sidebar", () => {
       const website = projects.find((project) => project.id === "website")!;
       rerender({
         projects: withProject(projects, "website", {
-          workspaces: website.workspaces.map((ws) => ({ ...ws, hibernated: true })),
+          workspaces: website.workspaces.map((ws) => ({
+            ...ws,
+            hibernated: true,
+            hibernatedAt: "2026-11-01T12:00:00.000Z",
+          })),
         }),
       });
       expect(container.querySelector('.proj[data-project-id="website"]')).toBeNull();

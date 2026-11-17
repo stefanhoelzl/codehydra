@@ -21,7 +21,12 @@ const mockApi = vi.mocked(api);
 
 // Import after mock setup
 import App from "../App.svelte";
-import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
+import {
+  makeUiState,
+  makeUiProjectRow,
+  makeUiWorkspaceRow,
+  type UiWorkspaceRowOverrides,
+} from "$lib/test-utils";
 import type { UiDialog } from "@shared/ui-state";
 
 /** The backend creation module's always-alive session, as a snapshot entry. */
@@ -41,7 +46,7 @@ function pushState(state: UiState): void {
   }
 }
 
-function ws(name: string, overrides?: Partial<UiWorkspaceRow>): UiWorkspaceRow {
+function ws(name: string, overrides?: UiWorkspaceRowOverrides): UiWorkspaceRow {
   return makeUiWorkspaceRow(name, {
     key: `test-project-12345678/${name}`,
     ...overrides,
