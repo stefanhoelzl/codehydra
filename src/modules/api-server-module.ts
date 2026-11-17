@@ -43,7 +43,6 @@ import {
   TERMINAL_FORWARD_KEYS,
   terminalForwardKeys,
 } from "./terminal-forward";
-import type { WorkspaceStatus } from "../shared/api/types";
 import type {
   AppendOutputRequest,
   ServerToClientEvents,
@@ -53,9 +52,6 @@ import type {
   ApiResult,
   ApiConfig,
   AgentType,
-  SetMetadataRequest,
-  ExecuteCommandRequest,
-  GetWorkspaceStatusRequest,
   ShowNotificationRequest,
   ShowNotificationResponse,
   StatusBarUpdateRequest,
@@ -69,22 +65,13 @@ import type {
 } from "../shared/api-protocol";
 import {
   COMMAND_TIMEOUT_MS,
-  validateSetMetadataRequest,
-  validateExecuteCommandRequest,
   validateOpenSystemPathRequest,
-  validateGetWorkspaceStatusRequest,
   validateLogRequest,
   validateAgentLifecycleRequest,
 } from "../shared/api-protocol";
 import type { OpenSystemPathRequest } from "../shared/api-protocol";
 import type { DeleteHookResult, ShutdownHookResult } from "../intents/delete-workspace";
-import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
-import type { GetAgentSessionIntent } from "../intents/get-agent-session";
-import type { RestartAgentIntent } from "../intents/restart-agent";
-import type { GetMetadataIntent } from "../intents/get-metadata";
-import type { SetMetadataIntent } from "../intents/set-metadata";
 import type { ShowHookResult } from "../intents/vscode-show-message";
-import type { VscodeCommandIntent } from "../intents/vscode-command";
 import type { ExecuteHookResult } from "../intents/vscode-command";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
@@ -94,13 +81,6 @@ import {
   DELETE_WORKSPACE_OPERATION_ID,
 } from "../intents/delete-workspace";
 import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
-import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
-import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
-import { INTENT_RESTART_AGENT } from "../intents/restart-agent";
-import type { AgentLifecycleIntent } from "../intents/agent-lifecycle";
-import { INTENT_AGENT_LIFECYCLE } from "../intents/agent-lifecycle";
-import { INTENT_GET_METADATA } from "../intents/get-metadata";
-import { INTENT_SET_METADATA } from "../intents/set-metadata";
 import {
   VSCODE_SHOW_MESSAGE_OPERATION_ID,
   type VscodeShowMessagePayload,
@@ -110,11 +90,9 @@ import { VSCODE_CANCEL_MESSAGE_OPERATION_ID } from "../intents/vscode-cancel-mes
 import { createModalEdges } from "./modal-edges";
 import { VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
 import { SEND_AGENT_MESSAGE_OPERATION_ID } from "../intents/send-agent-message";
-import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { AppBoundary } from "../boundaries/shell/app";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { raceTimeout, TIMED_OUT } from "../utils/timeout";
-import { metadataTier, visibleMetadata } from "../utils/metadata-tier";
 import type { WorkspaceRef } from "../intents/contract";
 import { asWorkspaceRef, isRef, parseWorkspaceRef, projectNameOf } from "../utils/ref";
 import { defineHooks } from "../intents/declarations";
@@ -1187,25 +1165,6 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   }
 
   /**
-   * Create a handler for no-argument API calls that dispatch intents directly.
-   */
-  function createNoArgHandler<R>(
-    eventName: string,
-    workspaceRef: WorkspaceRef,
-    dispatchFn: () => Promise<R>
-  ): (ack: (result: ApiResult<R>) => void) => void {
-    return (ack) => {
-      logger.scoped({ workspace: workspaceRef }).debug("API call", { event: eventName });
-
-      // handleApiCall never rejects (it converts all errors into a
-      // ApiResult), so this guard only covers ack() itself throwing.
-      handleApiCall(workspaceRef, eventName, dispatchFn)
-        .then((result) => ack(result))
-        .catch(() => {});
-    };
-  }
-
-  /**
    * Create a handler for validated API calls with request payload.
    */
   function createValidatedHandler<TReq, TValidated, R>(
@@ -1249,122 +1208,13 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     workspaceRef: WorkspaceRef,
     connectionLogger: Logger
   ): void {
-    // No-arg handlers
-    socket.on(
-      "api:workspace:getStatus",
-      createValidatedHandler<
-        GetWorkspaceStatusRequest | undefined,
-        GetWorkspaceStatusRequest,
-        WorkspaceStatus
-      >("api:workspace:getStatus", workspaceRef, validateGetWorkspaceStatusRequest, (req) =>
-        handleApiCall(workspaceRef, "getStatus", async () => {
-          const intent: GetWorkspaceStatusIntent = {
-            type: INTENT_GET_WORKSPACE_STATUS,
-            payload: {
-              workspaceRef,
-              ...(req.refresh !== undefined && { refresh: req.refresh }),
-            },
-          };
-          const result = await dispatcher.dispatch(intent);
-          if (!result) {
-            throw new Error("Get workspace status dispatch returned no result");
-          }
-          return result;
-        })
-      )
-    );
+    // Every other sidekick channel is a registry operation, mounted by the
+    // adapter (API_SERVER_MAP). The three below are not, and must not be both:
+    // a channel with a handler here and a mapping there runs twice per call.
 
-    socket.on(
-      "api:workspace:getAgentSession",
-      createNoArgHandler("api:workspace:getAgentSession", workspaceRef, async () => {
-        const intent: GetAgentSessionIntent = {
-          type: INTENT_GET_AGENT_SESSION,
-          payload: { workspaceRef },
-        };
-        return dispatcher.dispatch(intent);
-      })
-    );
-
-    socket.on(
-      "api:workspace:restartAgentServer",
-      createNoArgHandler("api:workspace:restartAgentServer", workspaceRef, async () => {
-        const intent: RestartAgentIntent = {
-          type: INTENT_RESTART_AGENT,
-          payload: { workspaceRef },
-        };
-        const result = await dispatcher.dispatch(intent);
-        if (result === undefined) {
-          throw new Error("Restart agent dispatch returned no result");
-        }
-        return result;
-      })
-    );
-
-    socket.on(
-      "api:workspace:getMetadata",
-      createNoArgHandler("api:workspace:getMetadata", workspaceRef, async () => {
-        const intent: GetMetadataIntent = {
-          type: INTENT_GET_METADATA,
-          payload: { workspaceRef },
-        };
-        const result = await dispatcher.dispatch(intent);
-        if (!result) {
-          throw new Error("Get metadata dispatch returned no result");
-        }
-        // Extensions are outside callers: internal keys stay hidden.
-        return visibleMetadata(result);
-      })
-    );
-
-    // Validated handlers
-    socket.on(
-      "api:workspace:setMetadata",
-      createValidatedHandler<SetMetadataRequest, SetMetadataRequest, void>(
-        "api:workspace:setMetadata",
-        workspaceRef,
-        validateSetMetadataRequest,
-        (req) =>
-          handleApiCall(workspaceRef, "setMetadata", async () => {
-            if (metadataTier(req.key) !== "public") {
-              throw new Error(`Metadata key "${req.key}" is managed by CodeHydra and read-only.`);
-            }
-            const intent: SetMetadataIntent = {
-              type: INTENT_SET_METADATA,
-              payload: {
-                workspaceRef,
-                key: req.key,
-                value: req.value,
-              },
-            };
-            await dispatcher.dispatch(intent);
-            return undefined;
-          }),
-        (req) => ({ key: req.key })
-      )
-    );
-
-    socket.on(
-      "api:workspace:executeCommand",
-      createValidatedHandler<ExecuteCommandRequest, ExecuteCommandRequest, unknown>(
-        "api:workspace:executeCommand",
-        workspaceRef,
-        validateExecuteCommandRequest,
-        (req) =>
-          handleApiCall(workspaceRef, "executeCommand", async () => {
-            const intent: VscodeCommandIntent = {
-              type: INTENT_VSCODE_COMMAND,
-              payload: {
-                workspaceRef,
-                command: req.command,
-                args: req.args,
-              },
-            };
-            return dispatcher.dispatch(intent);
-          }),
-        (req) => ({ command: req.command })
-      )
-    );
-
+    // Its wire shape ({ app, path }) is not the registry's `system.open`
+    // ({ path, reveal }), and "explorer" opens a folder itself rather than its
+    // parent: served here, null in API_SERVER_MAP.
     socket.on(
       "api:workspace:openSystemPath",
       createValidatedHandler<OpenSystemPathRequest, OpenSystemPathRequest, void>(
@@ -1386,7 +1236,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       )
     );
 
-    // Handle api:log (fire-and-forget - special case)
+    // Handle api:log (fire-and-forget): the extension's own log lines, into the
+    // `extension` logger, tagged with this connection's workspace. Not the
+    // registry's `log` (null in API_SERVER_MAP), which writes to `api`.
     socket.on("api:log", (request) => {
       const validation = validateLogRequest(request);
       if (!validation.valid) return;
@@ -1397,30 +1249,15 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       logAtLevel(connectionLogger, level, request.message, context);
     });
 
-    // Handle api:workspace:agentLifecycle (fire-and-forget) — drives agent
-    // status open/close by dispatching the agent:lifecycle intent.
+    // api:workspace:agentLifecycle is the registry's `agent.lifecycle`: the
+    // adapter mounts it, and it dispatches agent:lifecycle. This listener only
+    // wakes teardown waiting for the agent terminal to close — at once, from
+    // the socket, needing no intent to get through. It must not dispatch too:
+    // it once did, and every lifecycle event ran twice.
     socket.on("api:workspace:agentLifecycle", (request) => {
-      const validation = validateAgentLifecycleRequest(request);
-      if (!validation.valid) {
-        logger
-          .scoped({ workspace: workspaceRef })
-          .warn("Invalid agentLifecycle request", { error: validation.error });
-        return;
-      }
-
-      if (request.event === "close") {
+      if (validateAgentLifecycleRequest(request).valid && request.event === "close") {
         resolveAgentClosed(workspaceRef);
       }
-
-      const intent: AgentLifecycleIntent = {
-        type: INTENT_AGENT_LIFECYCLE,
-        payload: {
-          workspaceRef,
-          event: request.event,
-          ...(request.pid !== undefined && { pid: request.pid }),
-        },
-      };
-      void dispatcher.dispatch(intent);
     });
   }
 

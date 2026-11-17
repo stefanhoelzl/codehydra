@@ -24,6 +24,8 @@ import type { WorkspaceStatus } from "../shared/api/types";
 import type { ApiConfig, ApiResult } from "../shared/api-protocol";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
+import { INTENT_RESTART_AGENT } from "../intents/restart-agent";
+import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { INTENT_SET_METADATA } from "../intents/set-metadata";
 import { INTENT_AGENT_LIFECYCLE } from "../intents/agent-lifecycle";
 import { INTENT_VSCODE_MODAL_CHANGED } from "../intents/vscode-modal-changed";
@@ -507,6 +509,76 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
   });
 
   describe("API calls", () => {
+    /** The workspace:get-status intents dispatched (`workspace.status` also reads metadata). */
+    const statusReads = (): number =>
+      env.mockDispatch.mock.calls.filter(
+        ([intent]) => (intent as Intent).type === INTENT_GET_WORKSPACE_STATUS
+      ).length;
+
+    // A channel with both a handler of the module's own and an API_SERVER_MAP
+    // mount ran twice per call: an agent server restarted twice, a VS Code
+    // command ran twice, a lifecycle event was applied twice.
+    it.each([
+      ["api:workspace:getStatus", undefined, INTENT_GET_WORKSPACE_STATUS],
+      ["api:workspace:getAgentSession", undefined, INTENT_GET_AGENT_SESSION],
+      ["api:workspace:restartAgentServer", undefined, INTENT_RESTART_AGENT],
+      ["api:workspace:getMetadata", undefined, INTENT_GET_METADATA],
+      ["api:workspace:setMetadata", { key: "note", value: "x" }, INTENT_SET_METADATA],
+      ["api:workspace:executeCommand", { command: "noop" }, INTENT_VSCODE_COMMAND],
+    ])("%s dispatches once per call", async (channel, request, intentType) => {
+      env.mockDispatch.mockImplementation(() =>
+        resolvedHandle({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } })
+      );
+      const client = createClient(wsPath("/test/workspace"));
+      await waitForConnect(client);
+
+      await new Promise((resolve) => {
+        (client.emit as (...args: unknown[]) => void)(channel, request, resolve);
+      });
+      // A second handler would dispatch right after the first one answered.
+      await delay(50);
+
+      const dispatched = env.mockDispatch.mock.calls.filter(
+        ([intent]) => (intent as Intent).type === intentType
+      );
+      expect(dispatched).toHaveLength(1);
+    });
+
+    it("api:workspace:agentLifecycle dispatches once per event", async () => {
+      env.mockDispatch.mockImplementation(() => resolvedHandle(undefined));
+      const client = createClient(wsPath("/test/workspace"));
+      await waitForConnect(client);
+
+      client.emit("api:workspace:agentLifecycle", { event: "open" });
+      await vi.waitFor(() =>
+        expect(env.mockDispatch).toHaveBeenCalledWith(
+          expect.objectContaining({ type: INTENT_AGENT_LIFECYCLE })
+        )
+      );
+      await delay(50);
+
+      const dispatched = env.mockDispatch.mock.calls.filter(
+        ([intent]) => (intent as Intent).type === INTENT_AGENT_LIFECYCLE
+      );
+      expect(dispatched).toHaveLength(1);
+    });
+
+    it("api:workspace:openSystemPath opens the path once", async () => {
+      const client = createClient(wsPath("/test/workspace"));
+      await waitForConnect(client);
+
+      await new Promise((resolve) => {
+        client.emit(
+          "api:workspace:openSystemPath",
+          { app: "default", path: "/project/readme.md" },
+          resolve
+        );
+      });
+      await delay(50);
+
+      expect(env.openedPaths).toEqual(["/project/readme.md"]);
+    });
+
     it("getStatus round-trip via real Socket.IO", async () => {
       const status = {
         isDirty: true,
@@ -530,7 +602,13 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.data).toEqual(status);
+      // `workspace.status` adds hibernation and the wakeup script to the status.
+      expect(result.data).toEqual({
+        ...status,
+        hibernated: false,
+        hibernatedAt: null,
+        wakeup: null,
+      });
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_WORKSPACE_STATUS,
@@ -713,7 +791,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("cannot be empty");
+      expect(result.error).toContain('Invalid metadata key ""');
       // Dispatcher should NOT be called for invalid requests
       expect(env.mockDispatch).not.toHaveBeenCalled();
     });
@@ -767,18 +845,13 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       expect(result1.success).toBe(true);
       expect(result2.success).toBe(true);
-      expect(env.mockDispatch).toHaveBeenCalledTimes(2);
+      expect(statusReads()).toBe(2);
     });
 
     it("handles rapid sequential calls from same workspace", async () => {
-      let callCount = 0;
-      env.mockDispatch.mockImplementation(() => {
-        callCount++;
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } });
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() =>
+        resolvedHandle({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } })
+      );
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -803,7 +876,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       ]);
 
       expect(results.every((r) => r.success)).toBe(true);
-      expect(callCount).toBe(3);
+      expect(statusReads()).toBe(3);
     });
 
     it("handles dispatch exception gracefully", async () => {
@@ -908,7 +981,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("cannot be empty");
+      expect(result.error).toContain("command: Too small");
       // Dispatcher should NOT be called for invalid requests
       expect(env.mockDispatch).not.toHaveBeenCalled();
     });

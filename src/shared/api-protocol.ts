@@ -7,7 +7,6 @@
 
 import { z } from "zod/v4";
 import type { WorkspaceStatus, Workspace, AgentSession } from "./api/types";
-import { METADATA_KEY_REGEX, isValidMetadataKey } from "./api/types";
 import type { AgentType } from "../intents/contract";
 
 // ============================================================================
@@ -328,17 +327,6 @@ export interface ExecuteCommandRequest {
   readonly args?: readonly unknown[];
 }
 
-const executeCommandRequestSchema = z.object({
-  command: nonEmptyString("command"),
-  args: z.array(z.unknown()).optional(),
-});
-
-/**
- * Runtime validation for ExecuteCommandRequest.
- * Validates that command is a non-empty string and args is an array if present.
- */
-export const validateExecuteCommandRequest = validateWith(executeCommandRequestSchema);
-
 /**
  * The action to perform on a system path.
  * - "explorer": show in system file manager
@@ -422,20 +410,6 @@ export interface WorkspaceCreateRequest {
   readonly [option: string]: string | boolean | undefined;
 }
 
-const setMetadataRequestSchema = z.object({
-  key: z
-    .string()
-    .refine((key) => key.length > 0, "Field 'key' cannot be empty")
-    .refine(isValidMetadataKey, `Invalid key format: must match ${METADATA_KEY_REGEX.toString()}`),
-  value: z.union([z.string(), z.null()], { error: "must be a string or null" }),
-}) satisfies z.ZodType<SetMetadataRequest>;
-
-/**
- * Runtime validation for SetMetadataRequest.
- * Validates structure and key format against METADATA_KEY_REGEX.
- */
-export const validateSetMetadataRequest = validateWith(setMetadataRequestSchema);
-
 /**
  * Request to get workspace status.
  *
@@ -445,19 +419,6 @@ export const validateSetMetadataRequest = validateWith(setMetadataRequestSchema)
 export interface GetWorkspaceStatusRequest {
   readonly refresh?: boolean;
 }
-
-const getWorkspaceStatusRequestSchema = z
-  .object({ refresh: z.boolean().optional() })
-  .nullish()
-  .transform((value): GetWorkspaceStatusRequest =>
-    value?.refresh === undefined ? {} : { refresh: value.refresh }
-  );
-
-/**
- * Runtime validation for GetWorkspaceStatusRequest.
- * Accepts undefined/null (optional request) and normalizes it to {}.
- */
-export const validateGetWorkspaceStatusRequest = parseWith(getWorkspaceStatusRequestSchema);
 
 // ============================================================================
 // UI Request/Response Types

@@ -67,17 +67,22 @@ describe("API server map", () => {
     expect(API_SERVER_MAP["agent.restart"]?.channel).toBe("api:workspace:restartAgentServer");
     expect(API_SERVER_MAP["agent.lifecycle"]?.channel).toBe("api:workspace:agentLifecycle");
     expect(API_SERVER_MAP["vscode.command"]?.channel).toBe("api:workspace:executeCommand");
-    expect(API_SERVER_MAP["system.open"]?.channel).toBe("api:workspace:openSystemPath");
-    expect(API_SERVER_MAP["log"]?.channel).toBe("api:log");
     expect(API_SERVER_MAP["config.set"]?.channel).toBe("api:config:set");
   });
 
-  it("keeps the two fire-and-forget channels fire-and-forget", () => {
-    // Both predate the registry and the sidekick emits them without an ack.
+  // api-server-module serves these two channels itself (their wire shape or
+  // sink differs from the entry's). A mapping as well would run every call twice.
+  it("leaves the channels api-server-module serves itself unmapped", () => {
+    expect(API_SERVER_MAP["system.open"]).toBeNull();
+    expect(API_SERVER_MAP["log"]).toBeNull();
+  });
+
+  it("keeps the fire-and-forget channel fire-and-forget", () => {
+    // It predates the registry, and the sidekick emits it without an ack.
     const noAck = Object.entries(API_SERVER_MAP)
       .filter(([, m]) => m?.fireAndForget)
       .map(([name]) => name)
       .sort();
-    expect(noAck).toEqual(["agent.lifecycle", "log"]);
+    expect(noAck).toEqual(["agent.lifecycle"]);
   });
 });

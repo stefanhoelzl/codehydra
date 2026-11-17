@@ -74,7 +74,11 @@ export const API_SERVER_MAP: Readonly<Record<OperationName, ApiServerMapping | n
   "vscode.diff": { channel: "api:workspace:openDiff" },
   "vscode.goto": { channel: "api:workspace:goto" },
   "vscode.preview": { channel: "api:workspace:previewMarkdown" },
-  "system.open": { channel: "api:workspace:openSystemPath" },
+  // `api:workspace:openSystemPath` is served by api-server-module itself: its
+  // wire shape ({ app, path }) predates this entry's ({ path, reveal }), and
+  // "explorer" opens a folder itself where `reveal` opens its parent. Mounting
+  // both opened every path twice.
+  "system.open": null,
   "notification.show": { channel: "api:notification:show" },
   "notification.close": { channel: "api:notification:close" },
 
@@ -105,7 +109,10 @@ export const API_SERVER_MAP: Readonly<Record<OperationName, ApiServerMapping | n
   "config.list": { channel: "api:config:list" },
   "config.set": { channel: "api:config:set" },
   "config.reset": { channel: "api:config:reset" },
-  log: { channel: "api:log", fireAndForget: true },
+  // `api:log` is served by api-server-module itself: an extension's own log
+  // lines go to the `extension` logger, tagged with its connection — not to the
+  // `api` logger this entry writes to. Mounting both logged every line twice.
+  log: null,
   "report.issue": { channel: "api:reportIssue" },
   // For people and agents reading how CodeHydra works; an extension has no use for it.
   guide: null,

@@ -9,7 +9,9 @@ import { AsyncLogScopeStore } from "../boundaries/platform/log-scope";
 import { vi, type Mock } from "vitest";
 import { z } from "zod/v4";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
-import { OperationRegistry } from "../api/registry";
+import type { OperationRegistry } from "../api/registry";
+import { createRegistry } from "../api/entries";
+import { createLockModule } from "./lock-module";
 import type { DomainEvent } from "../intents/lib/types";
 import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import type {
@@ -418,17 +420,38 @@ export async function createApiServerEnv(
   /** Every path the module asked the OS to open, in order. */
   const openedPaths: string[] = [];
 
+  const appLayer = {
+    openPath: async (path: string) => {
+      openedPaths.push(path);
+    },
+  };
+
   const moduleDeps: ApiServerModuleDeps = {
     portManager: networkLayer,
     dispatcher: mockDispatcher,
-    appLayer: {
-      openPath: async (path: string) => {
-        openedPaths.push(path);
-      },
-    },
+    appLayer,
     fileSystem,
     logger: SILENT_LOGGER,
-    registry: extra?.registry ?? new OperationRegistry([]),
+    // The real registry, dispatching through the same mock: most sidekick
+    // channels are registry operations, so a test of them is a test of these.
+    registry:
+      extra?.registry ??
+      createRegistry(
+        {
+          dispatcher: mockDispatcher,
+          appLayer,
+          awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
+          locks: createLockModule({ dispatcher: mockDispatcher, logger: SILENT_LOGGER }).locks,
+          config: extra?.config ?? createMockConfig(),
+          wakeups: { set: async () => {}, show: async () => null },
+          processes: { list: async () => null },
+          readUserGuide: async () => "",
+          plugins: () => {
+            throw new Error("the API server tests reach no plugins");
+          },
+        },
+        SILENT_LOGGER
+      ),
     cliToken: () => extra?.cliToken ?? null,
     configService: extra?.config ?? createMockConfig(),
     options: withoutLogScope(options),
