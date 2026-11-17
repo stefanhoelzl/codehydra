@@ -158,6 +158,7 @@ import { PROJECT_AUTOMATIONS_DIR } from "./modules/plugin-module/project-automat
 import { createScripts } from "./modules/scripts/scripts";
 import { createPollModule } from "./modules/poll-module";
 import { createWakeupModule } from "./modules/wakeup-module";
+import { createSessionRetentionModule } from "./modules/agent-module/claude/session-retention-module";
 import { createProcessMonitorModule } from "./modules/process-monitor/process-monitor-module";
 import { createInputPriorityModule } from "./modules/input-priority/input-priority-module";
 import { createHookOutputSink } from "./modules/plugin-module/output-sink";
@@ -1155,6 +1156,14 @@ dispatcher.registerModule(processMonitorModule);
 dispatcher.registerModule(inputPriorityModule);
 dispatcher.registerModule(workspaceLogModule.module);
 dispatcher.registerModule(claudeAgentModule);
+// Keeps hibernated workspaces' Claude transcripts past Claude's cleanup sweep.
+dispatcher.registerModule(
+  createSessionRetentionModule({
+    dispatcher,
+    serverManager: agentServerManagers.claude,
+    logger: providerLogger,
+  })
+);
 dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);
 dispatcher.registerModule(osNotificationModule);

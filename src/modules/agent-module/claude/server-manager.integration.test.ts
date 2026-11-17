@@ -1042,6 +1042,35 @@ describe("ClaudeCodeServerManager integration", () => {
       return settings.hooks[name]![0]!.hooks[0]!.command;
     }
 
+    /** `cleanupPeriodDays` in the settings file of `workspace` (undefined when absent). */
+    function cleanupPeriodDays(workspace: WorkspaceRef): number | undefined {
+      const path = serverManager.getHooksConfigPath(workspace).toString();
+      const entry = mockFileSystem.$.entries.get(path) as { content: string | Buffer };
+      const content = typeof entry.content === "string" ? entry.content : entry.content.toString();
+      return (JSON.parse(content) as { cleanupPeriodDays?: number }).cleanupPeriodDays;
+    }
+
+    it("leaves cleanupPeriodDays to Claude until a retention is set", async () => {
+      await serverManager.startServer(FEATURE_A);
+
+      expect(cleanupPeriodDays(FEATURE_A)).toBeUndefined();
+    });
+
+    it("writes a set retention into running and later workspaces, and drops it again", async () => {
+      await serverManager.startServer(FEATURE_A);
+
+      await serverManager.setCleanupPeriodDays(90);
+      await serverManager.startServer(FEATURE_B);
+
+      expect(cleanupPeriodDays(FEATURE_A)).toBe(90);
+      expect(cleanupPeriodDays(FEATURE_B)).toBe(90);
+
+      await serverManager.setCleanupPeriodDays(undefined);
+
+      expect(cleanupPeriodDays(FEATURE_A)).toBeUndefined();
+      expect(cleanupPeriodDays(FEATURE_B)).toBeUndefined();
+    });
+
     it("registers every hook Claude is meant to send, and no wrapper hook", async () => {
       await serverManager.startServer(FEATURE_A);
 
