@@ -400,6 +400,97 @@ test("a message from outside reaches the running agent, and --wake brings a clos
   expect(deleted.status, `ch ws delete failed: ${deleted.stderr}`).toBe(0);
 });
 
+test("a workspace frame reloaded after its renderer died runs one agent, not two", async () => {
+  // The agent terminal is transient: a reloaded window never gets it back, so
+  // the sidekick opens a new one and launches a second agent. When the window
+  // went without shutting its terminals down — its renderer died, or it lost
+  // the IDE server across a long sleep — the old pty, and the agent in it,
+  // kept running detached in the pty host, for days: a second agent per
+  // reload, invisible in CodeHydra, taking messages nobody saw. The new
+  // terminal reports its shell's pid; the app stops the old one's tree.
+
+  const forWorkspace = (entry: LogEntry): boolean => entry.scope?.["ws"] === WORKSPACE_NAME;
+
+  /** The shell pids the workspace's agent terminals reported, oldest first. */
+  const reportedShells = (): number[] => [
+    ...new Set(
+      appLogEntries()
+        .filter(forWorkspace)
+        .filter(
+          (entry) =>
+            entry.message === "Agent lifecycle reported" && entry.context?.["event"] === "pid"
+        )
+        .map((entry) => Number(entry.context?.["pid"]))
+    ),
+  ];
+
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  await expect
+    .poll(() => reportedShells().length, {
+      intervals: POLL_INTERVALS,
+      timeout: 60_000,
+      message: "the agent terminal never reported its shell's pid",
+    })
+    .toBeGreaterThan(0);
+  const before = reportedShells();
+  const old = before[before.length - 1]!;
+  expect(alive(old), "the agent terminal's shell is not running").toBe(true);
+
+  // Every workspace frame shares one renderer process (one site: the IDE
+  // server's port). Killing it is a window that goes without a word to the
+  // IDE server — the frame watchdog then reloads every frame.
+  const killed = await app()
+    .electron()
+    .evaluate(({ webContents }) => {
+      const pids = new Set<number>();
+      for (const contents of webContents.getAllWebContents()) {
+        for (const frame of contents.mainFrame.framesInSubtree) {
+          if (frame.url.startsWith("http://127.0.0.1")) pids.add(frame.osProcessId);
+        }
+      }
+      for (const pid of pids) process.kill(pid, "SIGKILL");
+      return [...pids];
+    });
+  expect(killed, "no workspace frame renderer to kill").not.toEqual([]);
+
+  await expect
+    .poll(() => reportedShells().length, {
+      intervals: POLL_INTERVALS,
+      timeout: TURN_TIMEOUT_MS,
+      message: "the reloaded frame never opened a new agent terminal",
+    })
+    .toBeGreaterThan(before.length);
+  const replacement = reportedShells()[reportedShells().length - 1]!;
+  expect(replacement).not.toBe(old);
+
+  await expect
+    .poll(() => alive(old), {
+      intervals: POLL_INTERVALS,
+      timeout: 30_000,
+      message: "the agent from before the reload is still running next to the new one",
+    })
+    .toBe(false);
+  expect(
+    appLogEntries()
+      .filter(forWorkspace)
+      .some(
+        (entry) =>
+          entry.message === "Stopping the agent a previous terminal left running" &&
+          entry.context?.["pid"] === old
+      ),
+    "the old agent died, but not because the app stopped it"
+  ).toBe(true);
+  expect(alive(replacement), "the new agent terminal's shell is gone").toBe(true);
+});
+
 test("deleting the workspace waits for the agent to exit, not for a timeout", async () => {
   // Teardown Ctrl+Cs the agent and waits for its terminal's close, reported as
   // the "close" agent lifecycle event. The agent used to be typed into a shell

@@ -756,6 +756,7 @@ const claudeAgentModule = createAgentModule(claudeProvider, {
   logger: apiLogger,
   agentConfig,
   resolveMcpConfig,
+  processRunner,
 });
 
 const opencodeProvider = createOpenCodeModuleProvider({
@@ -768,6 +769,7 @@ const opencodeAgentModule = createAgentModule(opencodeProvider, {
   logger: apiLogger,
   agentConfig,
   resolveMcpConfig,
+  processRunner,
 });
 
 // Agents whose binaries are currently present — same probe the app:ready

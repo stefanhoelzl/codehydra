@@ -1414,7 +1414,11 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
       const intent: AgentLifecycleIntent = {
         type: INTENT_AGENT_LIFECYCLE,
-        payload: { workspaceRef, event: request.event },
+        payload: {
+          workspaceRef,
+          event: request.event,
+          ...(request.pid !== undefined && { pid: request.pid }),
+        },
       };
       void dispatcher.dispatch(intent);
     });

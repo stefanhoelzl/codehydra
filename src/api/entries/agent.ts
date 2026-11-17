@@ -197,17 +197,24 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const lifecycle = defineEntry({
     name: "agent.lifecycle",
     kind: "event",
-    description: "Report that the agent terminal opened or closed.",
+    description: "Report that the agent terminal opened or closed, or its shell's pid.",
     instructions:
       "Sent by the sidekick when it observes the terminal event. It brackets the agent status " +
       "stream and is the completion signal teardown waits on before removing a worktree, so " +
       "only an observer that actually witnessed the terminal event may send it.",
-    input: z.object({ event: z.enum(["open", "close"]) }),
+    input: z.object({
+      event: z.enum(["open", "close", "pid"]),
+      pid: z.number().int().positive().optional(),
+    }),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const intent: AgentLifecycleIntent = {
         type: INTENT_AGENT_LIFECYCLE,
-        payload: { workspaceRef: await targetOf(ctx, {}), event: input.event },
+        payload: {
+          workspaceRef: await targetOf(ctx, {}),
+          event: input.event,
+          ...(input.pid !== undefined && { pid: input.pid }),
+        },
       };
       void dispatcher.dispatch(intent);
       return null;

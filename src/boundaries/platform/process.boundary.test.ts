@@ -7,6 +7,7 @@ import { createServer, type Server } from "node:net";
 import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "./process";
 import { SILENT_LOGGER } from "./logging";
 import { createBehavioralLogger } from "./logging.test-utils";
+import type { NativeAddon } from "./native-addon";
 import {
   isProcessRunning,
   isWindows,
@@ -1136,6 +1137,69 @@ describe("ExecaProcessRunner", () => {
       },
       TEST_TIMEOUT
     );
+
+    // A loaded machine can starve the process scan past its deadline (right
+    // after a resume, say). The tree must not silently shrink to its root: an
+    // IDE server killed that way left its pty host, and every agent under it,
+    // running.
+    describe("when no process snapshot can be taken", () => {
+      function withFailingScans() {
+        const logger = createBehavioralLogger();
+        let scans = 0;
+        const native: NativeAddon = {
+          ...nativeAddon(),
+          listProcessesAsync: () => {
+            scans++;
+            return Promise.reject(new Error("scan failed"));
+          },
+        };
+        return { runner: new ExecaProcessRunner(logger, { native }), logger, scans: () => scans };
+      }
+
+      /** Spawn a parent with a child, wait for the child (a real scan), kill the parent. */
+      async function killWithChild(scanless: ProcessRunner): Promise<number> {
+        const proc = spawnWithChild(scanless, 30_000);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+        let childPid: number | undefined;
+        for (let attempt = 0; attempt < 60 && childPid === undefined; attempt++) {
+          await delay(50);
+          const processes = await nativeAddon().listProcessesAsync(null);
+          childPid = processes.find((entry) => entry.ppid === proc.pid)?.pid;
+        }
+        expect(childPid).toBeDefined();
+        spawnedPids.push(childPid!);
+        await proc.kill(1000, 1000);
+        return childPid!;
+      }
+
+      it.runIf(isWindows)(
+        "kills the whole tree with taskkill on Windows",
+        async () => {
+          const { runner: scanless } = withFailingScans();
+
+          const childPid = await killWithChild(scanless);
+
+          expect(await waitForProcessDeath(childPid, 1000)).toBe(true);
+        },
+        TEST_TIMEOUT
+      );
+
+      it.skipIf(isWindows)(
+        "tries the scan again, then warns that it killed the process alone",
+        async () => {
+          const { runner: scanless, logger, scans } = withFailingScans();
+
+          await killWithChild(scanless);
+
+          expect(scans()).toBe(2);
+          expect(logger.getMessagesByLevel("warn").map((m) => m.message)).toContain(
+            "Could not list the process's descendants; killing it alone"
+          );
+        },
+        TEST_TIMEOUT
+      );
+    });
 
     // Unix-only: test SIGTERM behavior specifically (Windows doesn't have graceful SIGTERM)
     it.skipIf(isWindows)(

@@ -597,16 +597,30 @@ export type AgentLifecycleEvent = "open" | "close";
 /**
  * Request payload for the api:workspace:agentLifecycle event.
  * The workspace is taken from the socket's auth, not this payload.
+ *
+ * Besides "open" and "close", the sidekick reports the agent terminal's shell
+ * pid — the root of the agent's process tree — as "pid", once VS Code knows it
+ * (when the shell spawns, which can be many seconds after "open"). The main
+ * process then stops the agent a previous terminal of the workspace left
+ * running (agent-module, `stopReplacedAgent`). A "close" carries the pid when
+ * it is known by then, so a late close of a replaced terminal is told apart.
  */
 export interface AgentLifecycleRequest {
-  readonly event: AgentLifecycleEvent;
+  readonly event: AgentLifecycleEvent | "pid";
+  /** The shell's pid: required with "pid", optional with "close", ignored with "open". */
+  readonly pid?: number | undefined;
 }
 
-const agentLifecycleRequestSchema = z.object({
-  event: z.enum(["open", "close"], {
-    error: (issue) => `Invalid agent lifecycle event: ${String(issue.input)}`,
-  }),
-}) satisfies z.ZodType<AgentLifecycleRequest>;
+const agentLifecycleRequestSchema = z
+  .object({
+    event: z.enum(["open", "close", "pid"], {
+      error: (issue) => `Invalid agent lifecycle event: ${String(issue.input)}`,
+    }),
+    pid: z.number().int().positive().optional(),
+  })
+  .refine((request) => request.event !== "pid" || request.pid !== undefined, {
+    message: "Missing required field: pid",
+  }) satisfies z.ZodType<AgentLifecycleRequest>;
 
 /**
  * Runtime validation for AgentLifecycleRequest.

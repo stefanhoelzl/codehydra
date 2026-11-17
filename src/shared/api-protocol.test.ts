@@ -376,6 +376,16 @@ describe("validateAgentLifecycleRequest", () => {
   it("accepts open and close events", () => {
     expect(validateAgentLifecycleRequest({ event: "open" })).toEqual({ valid: true });
     expect(validateAgentLifecycleRequest({ event: "close" })).toEqual({ valid: true });
+    expect(validateAgentLifecycleRequest({ event: "close", pid: 42 })).toEqual({ valid: true });
+  });
+
+  it("accepts the shell's pid, which must come with one", () => {
+    expect(validateAgentLifecycleRequest({ event: "pid", pid: 42 })).toEqual({ valid: true });
+    expect(validateAgentLifecycleRequest({ event: "pid" })).toEqual({
+      valid: false,
+      error: "Missing required field: pid",
+    });
+    expect(validateAgentLifecycleRequest({ event: "pid", pid: -1 }).valid).toBe(false);
   });
 
   it("rejects unknown events with the received value", () => {

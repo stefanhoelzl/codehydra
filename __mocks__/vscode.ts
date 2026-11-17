@@ -23,6 +23,8 @@ import { vi } from "vitest";
 export interface FakeTerminal {
   name: string;
   creationOptions: unknown;
+  /** Pid of the terminal's shell, as VS Code reports it. */
+  processId: Promise<number | undefined>;
   show: ReturnType<typeof vi.fn>;
   sendText: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
@@ -260,6 +262,8 @@ export const window = {
     const terminal: FakeTerminal = {
       name: options?.name ?? "",
       creationOptions: options,
+      // Distinct per terminal: 4001, 4002, … in creation order.
+      processId: Promise.resolve(4001 + createdTerminals.length),
       show: vi.fn(),
       sendText: vi.fn(),
       dispose: vi.fn(),
