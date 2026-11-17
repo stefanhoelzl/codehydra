@@ -420,9 +420,11 @@ is easy to spot. Turn this off with `auto-tag.new`.
   open workspace goes grey at once; CodeHydra notices within a few seconds
   and reloads them all. If a single workspace's editor shuts down or navigates
   away on its own, CodeHydra reloads that workspace's editor after about 15
-  seconds. Either way, open files and the agent terminal come back; the agent
-  keeps running throughout. If the reload does not help, hibernate and wake
-  the workspace.
+  seconds. Either way, open files come back, and the agent terminal reopens
+  with a new agent that continues the conversation; whatever the agent was
+  doing at that moment is interrupted. If the agent from before the reload is
+  still running, CodeHydra stops it, so a workspace never runs two. If the
+  reload does not help, hibernate and wake the workspace.
 
 ### Wakeup scripts
 

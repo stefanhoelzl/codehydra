@@ -46,6 +46,8 @@ interface AgentTerminalState {
   workspaceState: vscode.Memento | null;
   closeListener: vscode.Disposable | null;
   startListener: vscode.Disposable | null;
+  /** The agent terminal's shell pid, once VS Code reported it (see reportShellPid). */
+  shellPid: number | null;
 }
 
 const state: AgentTerminalState = {
@@ -56,17 +58,43 @@ const state: AgentTerminalState = {
   workspaceState: null,
   closeListener: null,
   startListener: null,
+  shellPid: null,
 };
 
 /**
- * Report an agent terminal lifecycle transition to the main process.
- * Fire-and-forget; no-op when not connected.
+ * Report an agent terminal lifecycle transition to the main process: "open",
+ * "close" (with the shell's pid when known), or the shell's pid itself (see
+ * reportShellPid). Fire-and-forget; no-op when not connected.
  */
-function emitAgentLifecycle(event: "open" | "close"): void {
+function emitAgentLifecycle(event: "open" | "close" | "pid", pid?: number): void {
   const socket = connectedSocket();
   if (!socket) return;
-  socket.emit("api:workspace:agentLifecycle", { event });
-  log.debug("Agent lifecycle reported", { event });
+  socket.emit("api:workspace:agentLifecycle", { event, ...(pid !== undefined && { pid }) });
+  log.debug("Agent lifecycle reported", { event, pid: pid ?? null });
+}
+
+/**
+ * Report the agent terminal's shell pid — the root of the agent's process
+ * tree — once VS Code knows it. With it the main process stops the agent a
+ * previous terminal of this workspace left running: the terminal is
+ * transient, so a window reload never brings it back, and when the reload came
+ * from a lost connection nothing closed it either — its pty, and the agent in
+ * it, stay running detached in the IDE server's pty host (see agent-module).
+ *
+ * Separate from "open", which must not wait: VS Code reports the pid only once
+ * the shell has spawned, many seconds after the terminal was created on a busy
+ * workbench. Nothing is reported when the terminal closes first, or VS Code
+ * never reports a pid.
+ */
+function reportShellPid(terminal: vscode.Terminal): void {
+  Promise.resolve(terminal.processId).then(
+    (pid) => {
+      if (pid === undefined || state.terminal !== terminal) return;
+      state.shellPid = pid;
+      emitAgentLifecycle("pid", pid);
+    },
+    () => undefined
+  );
 }
 
 /**
@@ -145,6 +173,9 @@ function openAgentTerminal(
       // idle). Its shell ran the launch line long ago, so a close sends Ctrl+C.
       state.terminal = running;
       state.launched = running;
+      // Still the workspace's agent terminal; reporting it again re-registers
+      // it with a main process that lost track (it restarted, say).
+      reportShellPid(running);
       log.debug("Adopted running agent terminal", { agentType });
     }
   }
@@ -191,6 +222,7 @@ function openAgentTerminal(
 
   // Agent terminal created → agent is starting (replaces wrapper's WrapperStart).
   emitAgentLifecycle("open");
+  reportShellPid(terminal);
 
   log.debug("Agent terminal opened", { agentType, command });
 }
@@ -211,7 +243,8 @@ export function initAgentTerminal(workspaceState: vscode.Memento): void {
       state.terminal = null;
       void state.workspaceState?.update(AGENT_TERMINAL_OPEN_KEY, false);
       // Agent terminal closed → agent gone (replaces wrapper's WrapperEnd).
-      emitAgentLifecycle("close");
+      emitAgentLifecycle("close", state.shellPid ?? undefined);
+      state.shellPid = null;
       log.debug("Agent terminal closed");
     }
     if (terminal === state.launched) state.launched = null;
@@ -325,6 +358,7 @@ export function resetAgentTerminal(): void {
   state.startListener = null;
   state.launched = null;
   state.terminal = null;
+  state.shellPid = null;
   state.agentType = null;
   state.agentEnv = null;
   state.workspaceState = null;

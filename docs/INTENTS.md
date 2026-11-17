@@ -1028,7 +1028,8 @@ if (result.running) {
 
 **Platform-specific kill behavior:**
 
-- **Windows**: Always uses `taskkill /t /f` (immediate forceful termination) because WM_CLOSE cannot signal console processes and CTRL_C_EVENT cannot be sent to detached processes
+- **Windows**: `TerminateProcess` on every descendant (from a process snapshot), then the process (immediate forceful termination) because WM_CLOSE cannot signal console processes and CTRL_C_EVENT cannot be sent to detached processes. When no snapshot can be taken, `taskkill /t /f` kills the tree instead
+- **No snapshot elsewhere**: the scan is tried once more, then only the process itself is signalled, with a warning
 - **Unix**: Uses two-phase SIGTERM -> SIGKILL with configurable timeouts
 
 **Kill Timeouts:**

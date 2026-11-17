@@ -13,6 +13,7 @@
 import type { IntentModule } from "../../intents/lib/module";
 import { ANY_VALUE, type HookOutput } from "../../intents/lib/operation";
 import type { Logger } from "../../boundaries/platform/logging-types";
+import type { ProcessRunner } from "../../boundaries/platform/process";
 import type { BinaryType } from "../../utils/binary-resolution/types";
 import type { AgentType, WorkspaceRef } from "../../intents/contract";
 import { Path } from "../../utils/path/path";
@@ -90,6 +91,20 @@ export interface AgentModuleDeps {
    * and token only exist once the API server has bound.
    */
   readonly resolveMcpConfig: () => McpConfig | null;
+  /** Stops the agent a newer agent terminal replaced (see `stopReplacedAgent`). */
+  readonly processRunner: Pick<ProcessRunner, "listProcesses" | "kill">;
+}
+
+/** How long a replaced agent gets to exit on SIGTERM, then on SIGKILL (ms). */
+const REPLACED_AGENT_TERM_TIMEOUT_MS = 2000;
+const REPLACED_AGENT_KILL_TIMEOUT_MS = 1000;
+
+/** A workspace's agent terminal, as its "pid" lifecycle event reported it. */
+interface AgentTerminalRecord {
+  /** Its shell's pid: the root of the agent's process tree. */
+  readonly pid: number;
+  /** When the pid arrived — the shell had started by then. */
+  readonly reportedAt: number;
 }
 
 // =============================================================================
@@ -181,6 +196,87 @@ export function createAgentModule(
     initialized = true;
   }
 
+  /** Each workspace's current agent terminal (from the sidekick's lifecycle events). */
+  const agentTerminals = new Map<WorkspaceRef, AgentTerminalRecord>();
+
+  /**
+   * Stop the agent in `previous`, a terminal a newer agent terminal of the
+   * workspace replaced. The sidekick opens a new one only when its window has
+   * no agent terminal to adopt — after a window reload, say. The agent
+   * terminal is transient, so a reload never brings it back; and when the
+   * reload came from a lost connection, nothing closed it either: its pty, and
+   * the agent in it, keep running detached in the IDE server's pty host. That
+   * agent would be a second one for the workspace, which nobody can see.
+   *
+   * Usually the previous terminal is gone. A pid that now belongs to a process
+   * started after that terminal reported it was reused, and is left alone.
+   * Never throws.
+   */
+  async function stopReplacedAgent(
+    workspaceRef: WorkspaceRef,
+    previous: AgentTerminalRecord
+  ): Promise<void> {
+    const log = logger.scoped({ workspace: workspaceRef });
+    try {
+      const snapshot = await deps.processRunner.listProcesses();
+      if (snapshot === null) {
+        log.warn("Could not check for an agent a previous terminal left running", {
+          pid: previous.pid,
+        });
+        return;
+      }
+      const entry = snapshot.processes.find((process) => process.pid === previous.pid);
+      if (entry === undefined) return;
+      if (entry.startedAt === null || entry.startedAt > previous.reportedAt) {
+        log.debug("Previous agent terminal's pid now names another process", {
+          pid: previous.pid,
+        });
+        return;
+      }
+      log.warn("Stopping the agent a previous terminal left running", {
+        pid: previous.pid,
+        command: entry.commandLine,
+      });
+      const result = await deps.processRunner.kill(
+        previous.pid,
+        REPLACED_AGENT_TERM_TIMEOUT_MS,
+        REPLACED_AGENT_KILL_TIMEOUT_MS
+      );
+      if (!result.success) {
+        log.warn("Agent a previous terminal left running survived", { pid: previous.pid });
+      }
+    } catch (error) {
+      log.warn("Failed to stop the agent a previous terminal left running", {
+        pid: previous.pid,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /**
+   * A new agent terminal reported its shell's pid: it is now the workspace's
+   * agent terminal, and the one it replaced is stopped (`stopReplacedAgent`).
+   */
+  async function trackAgentTerminal(workspaceRef: WorkspaceRef, pid: number): Promise<void> {
+    const previous = agentTerminals.get(workspaceRef);
+    agentTerminals.set(workspaceRef, { pid, reportedAt: Date.now() });
+    if (previous !== undefined && previous.pid !== pid) {
+      await stopReplacedAgent(workspaceRef, previous);
+    }
+  }
+
+  /**
+   * An agent terminal closed: forget it, if it is the one tracked. A close
+   * without a pid is of a terminal that never reported one, so never the
+   * tracked one — forgetting on it would spare an agent a detached terminal
+   * left running.
+   */
+  function forgetAgentTerminal(workspaceRef: WorkspaceRef, pid: number | undefined): void {
+    if (pid !== undefined && agentTerminals.get(workspaceRef)?.pid === pid) {
+      agentTerminals.delete(workspaceRef);
+    }
+  }
+
   /**
    * Shared agent-server teardown used by delete + hibernate.
    * Returns a structured outcome and never throws. Callers decide whether
@@ -190,6 +286,7 @@ export function createAgentModule(
     workspaceRef: WorkspaceRef,
     logTag: string
   ): Promise<{ error?: string }> {
+    agentTerminals.delete(workspaceRef);
     try {
       const stopResult = await provider.stopWorkspace(workspaceRef);
       provider.clearWorkspaceTracking(workspaceRef);
@@ -527,7 +624,12 @@ export function createAgentModule(
         lifecycle: {
           requires: { agent: provider.type },
           handler: async (ctx): Promise<void> => {
-            const { workspaceRef, event } = ctx;
+            const { workspaceRef, event, pid } = ctx;
+            if (event === "pid") {
+              if (pid !== undefined) await trackAgentTerminal(workspaceRef, pid);
+              return;
+            }
+            if (event === "close") forgetAgentTerminal(workspaceRef, pid);
             provider.applyTerminalLifecycle(workspaceRef, event);
           },
         },

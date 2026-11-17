@@ -106,28 +106,99 @@ describe("sidekick agent lifecycle emits", () => {
     delete process.env._CH_API_PORT;
   });
 
-  it("emits agentLifecycle 'open' when the agent terminal is created", async () => {
+  /** The agentLifecycle requests sent so far, in order. */
+  function lifecycleRequests(socket: FakeSocket): unknown[] {
+    return socket.emit.mock.calls
+      .filter(([channel]) => channel === "api:workspace:agentLifecycle")
+      .map(([, request]) => request);
+  }
+
+  /** A terminal whose shell pid VS Code reports when `report` is called. */
+  function terminalWithPendingPid(): { report: (pid: number | undefined) => void } {
+    let report: (pid: number | undefined) => void = () => {};
+    vi.mocked(vscodeWindow.createTerminal).mockImplementationOnce((options: { name?: string }) => {
+      const terminal: FakeTerminal = {
+        name: options.name ?? "",
+        creationOptions: options,
+        processId: new Promise((resolve) => (report = resolve)),
+        show: vi.fn(),
+        sendText: vi.fn(),
+        dispose: vi.fn(),
+      };
+      createdTerminals.push(terminal);
+      return terminal;
+    });
+    return { report: (pid) => report(pid) };
+  }
+
+  it("emits agentLifecycle 'open' at once when the agent terminal is created", async () => {
+    const shell = terminalWithPendingPid();
     activate(makeContext());
     const socket = getSocket();
 
     await socket._handlers.config!(CONFIG);
 
     expect(createdTerminals).toHaveLength(1);
-    expect(socket.emit).toHaveBeenCalledWith("api:workspace:agentLifecycle", { event: "open" });
+    expect(lifecycleRequests(socket)).toEqual([{ event: "open" }]);
+    shell.report(4001);
   });
 
-  it("emits agentLifecycle 'close' when the agent terminal closes", async () => {
+  // The shell's pid lets the main process stop an agent a reload left running.
+  // VS Code reports it only once the shell spawned: long after "open".
+  it("emits the shell's pid once VS Code reports it", async () => {
+    const shell = terminalWithPendingPid();
     activate(makeContext());
     const socket = getSocket();
     await socket._handlers.config!(CONFIG);
 
-    socket.emit.mockClear();
+    shell.report(4001);
 
-    // Fire the terminal-close listener with the agent terminal.
+    await vi.waitFor(() =>
+      expect(lifecycleRequests(socket)).toEqual([{ event: "open" }, { event: "pid", pid: 4001 }])
+    );
+  });
+
+  it("emits no pid when VS Code reports none", async () => {
+    const shell = terminalWithPendingPid();
+    activate(makeContext());
+    const socket = getSocket();
+    await socket._handlers.config!(CONFIG);
+
+    shell.report(undefined);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(lifecycleRequests(socket)).toEqual([{ event: "open" }]);
+  });
+
+  it("emits agentLifecycle 'close' with the shell's pid", async () => {
+    activate(makeContext());
+    const socket = getSocket();
+    await socket._handlers.config!(CONFIG);
+    await vi.waitFor(() => expect(lifecycleRequests(socket)).toHaveLength(2));
+
     expect(closeHandlers.length).toBeGreaterThan(0);
     closeHandlers[0]!(createdTerminals[0]!);
 
-    expect(socket.emit).toHaveBeenCalledWith("api:workspace:agentLifecycle", { event: "close" });
+    expect(lifecycleRequests(socket)).toEqual([
+      { event: "open" },
+      { event: "pid", pid: 4001 },
+      { event: "close", pid: 4001 },
+    ]);
+  });
+
+  it("closes without a pid, and reports none, when the shell closes before VS Code knows it", async () => {
+    const shell = terminalWithPendingPid();
+    activate(makeContext());
+    const socket = getSocket();
+    await socket._handlers.config!(CONFIG);
+
+    closeHandlers[0]!(createdTerminals[0]!);
+    shell.report(4001);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(lifecycleRequests(socket)).toEqual([{ event: "open" }, { event: "close" }]);
   });
 
   // The terminal must close when the agent exits: its close is what teardown
@@ -188,10 +259,11 @@ describe("sidekick agent lifecycle emits", () => {
   // After an extension host restart the window still holds the agent terminal,
   // and the agent in it is still running. A second launch would be a second agent.
   describe("with an agent terminal that outlived the extension host", () => {
-    function existingTerminal(creationOptions: unknown): FakeTerminal {
+    function existingTerminal(creationOptions: unknown, pid: number): FakeTerminal {
       const terminal: FakeTerminal = {
         name: "",
         creationOptions,
+        processId: Promise.resolve(pid),
         show: vi.fn(),
         sendText: vi.fn(),
         dispose: vi.fn(),
@@ -205,9 +277,9 @@ describe("sidekick agent lifecycle emits", () => {
     let duplicate: FakeTerminal;
 
     beforeEach(() => {
-      existingTerminal({ name: "bash" });
-      agent = existingTerminal({ name: "Claude", env: CONFIG.env });
-      duplicate = existingTerminal({ name: "Claude", env: CONFIG.env });
+      existingTerminal({ name: "bash" }, 3001);
+      agent = existingTerminal({ name: "Claude", env: CONFIG.env }, 3002);
+      duplicate = existingTerminal({ name: "Claude", env: CONFIG.env }, 3003);
     });
 
     it("adopts it instead of launching a second agent", async () => {
@@ -216,9 +288,11 @@ describe("sidekick agent lifecycle emits", () => {
       await socket._handlers.config!(RESTART_CONFIG);
 
       expect(createdTerminals).toHaveLength(0);
-      expect(socket.emit).not.toHaveBeenCalledWith("api:workspace:agentLifecycle", {
-        event: "open",
-      });
+      await Promise.resolve();
+      expect(socket.emit).not.toHaveBeenCalledWith(
+        "api:workspace:agentLifecycle",
+        expect.objectContaining({ event: "open" })
+      );
       expect(agent.show).not.toHaveBeenCalled();
       expect(agent.sendText).not.toHaveBeenCalled();
       expect(duplicate.dispose).not.toHaveBeenCalled();
@@ -236,6 +310,25 @@ describe("sidekick agent lifecycle emits", () => {
       expect(duplicate.sendText).not.toHaveBeenCalled();
       closeHandlers.forEach((handler) => handler(agent));
     });
+
+    // The main process may have lost track of it (it restarted): reporting it
+    // again keeps it the workspace's agent terminal. Not "open": that would
+    // reset a busy agent to idle.
+    it("reports the adopted terminal's pid, and that pid when it closes", async () => {
+      activate(makeContext());
+      const socket = getSocket();
+      await socket._handlers.config!(RESTART_CONFIG);
+      await vi.waitFor(() =>
+        expect(lifecycleRequests(socket)).toEqual([{ event: "pid", pid: 3002 }])
+      );
+
+      closeHandlers.forEach((handler) => handler(agent));
+
+      expect(lifecycleRequests(socket)).toEqual([
+        { event: "pid", pid: 3002 },
+        { event: "close", pid: 3002 },
+      ]);
+    });
   });
 
   it("does not emit when the socket is disconnected", async () => {
@@ -248,9 +341,10 @@ describe("sidekick agent lifecycle emits", () => {
 
     closeHandlers[0]!(createdTerminals[0]!);
 
-    expect(socket.emit).not.toHaveBeenCalledWith("api:workspace:agentLifecycle", {
-      event: "close",
-    });
+    expect(socket.emit).not.toHaveBeenCalledWith(
+      "api:workspace:agentLifecycle",
+      expect.objectContaining({ event: "close" })
+    );
   });
 });
 

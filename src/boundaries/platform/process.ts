@@ -410,8 +410,11 @@ export interface ProcessRunner {
  */
 type ExecaSubprocess = ReturnType<typeof execa>;
 
-/** The descendants of a pid alive right now (from a process snapshot). */
-type DescendantLookup = (pid: number) => Promise<readonly number[]>;
+/**
+ * The descendants of a pid alive right now (from a process snapshot); null
+ * when no snapshot could be taken, which is not the same as "none".
+ */
+type DescendantLookup = (pid: number) => Promise<readonly number[] | null>;
 
 /**
  * Every descendant of `pid` in `processes`, following parent links level by
@@ -472,6 +475,8 @@ export function descendantsIn(processes: readonly ProcessSnapshotEntry[], pid: n
  *   parent died of the SIGTERM is re-parented and can no longer be found from
  *   `pid`, so the forced pass must remember it rather than look for it again.
  * @param descendants - How to find them; omitted, only `pid` is signalled.
+ *   When it cannot (no snapshot), Windows falls back to `taskkill /t /f`
+ *   (see taskkillTree); elsewhere only `pid` is signalled, with a warning.
  */
 async function killProcessTree(
   pid: number,
@@ -483,9 +488,39 @@ async function killProcessTree(
   const signal = force ? "SIGKILL" : "SIGTERM";
   // Descendants first: once the parent is gone, they are re-parented and
   // can no longer be found from it.
-  for (const descendant of (await descendants?.(pid)) ?? []) tree.add(descendant);
+  const found = descendants === undefined ? [] : await descendants(pid);
+  if (found === null) {
+    if (isWindows && (await taskkillTree(pid, logger))) return;
+    logger.warn("Could not list the process's descendants; killing it alone", { pid, signal });
+  }
+  for (const descendant of found ?? []) tree.add(descendant);
   for (const descendant of tree) signalProcess(descendant, signal, logger);
   signalProcess(pid, signal, logger);
+}
+
+/**
+ * Kill `pid` and its descendants with `taskkill /t /f`, which walks the tree
+ * itself. Only the fallback for when no process snapshot could be taken: the
+ * addon's scan runs on the libuv thread pool, which a loaded machine (right
+ * after a resume, typically) can starve past the scan's deadline, while
+ * spawning taskkill does not wait on that pool. Left running, the
+ * descendants outlive their root for good — an IDE server's pty host, and every
+ * terminal and agent under it, say. True when taskkill succeeded.
+ */
+async function taskkillTree(pid: number, logger: Logger): Promise<boolean> {
+  const result = await execa("taskkill", ["/pid", String(pid), "/t", "/f"], {
+    reject: false,
+    windowsHide: true,
+  });
+  if (result.exitCode === 0) {
+    logger.warn("Killed process tree with taskkill: no process snapshot", { pid });
+    return true;
+  }
+  logger.warn("taskkill could not kill the process tree", {
+    pid,
+    exitCode: result.exitCode ?? null,
+  });
+  return false;
 }
 
 /**
@@ -921,13 +956,16 @@ export class ExecaProcessRunner implements ProcessRunner {
 
   /**
    * A process's descendants, from the process list: what a tree kill signals.
-   * Without the addon (or when the scan fails) none are found, and a kill
-   * reaches only the process itself.
+   * Without the addon none are found, and a kill reaches only the process
+   * itself. A failed scan is reported as null (see killProcessTree): Windows
+   * then kills the tree with taskkill; elsewhere, with nothing to fall back
+   * on, the scan is tried once more first.
    */
   private readonly descendantsOf: DescendantLookup = async (pid) => {
     if (this.options.native === undefined) return [];
-    const snapshot = await this.listProcesses();
-    return snapshot === null ? [] : descendantsIn(snapshot.processes, pid);
+    const snapshot =
+      (await this.listProcesses()) ?? (isWindows ? null : await this.listProcesses());
+    return snapshot === null ? null : descendantsIn(snapshot.processes, pid);
   };
 
   run(command: string, args: readonly string[], options?: ProcessOptions): SpawnedProcess {

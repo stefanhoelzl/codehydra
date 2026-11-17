@@ -6,6 +6,9 @@
  * which drives the status state machine:
  *  - "open"  → WrapperStart (Claude) / markActive (OpenCode)
  *  - "close" → WrapperEnd (Claude) / TUI detach (OpenCode)
+ *  - "pid"   → the terminal's shell pid, once known; the agent module stops the
+ *              agent a previous terminal of the workspace left running. Not a
+ *              status transition: providers never see it.
  *
  * Replaces the wrapper-synthesized WrapperStart/WrapperEnd HTTP POSTs. No domain
  * event is emitted here — the provider's own status change propagates via
@@ -33,16 +36,20 @@ export const AGENT_LIFECYCLE_OPERATION_ID = "agent-lifecycle";
 // =============================================================================
 
 /**
- * Local schema for `AgentLifecycleEvent` (`"open" | "close"`, from shared/api-protocol).
- * That shared type is not part of the intent `contract` vocabulary, so it is defined here;
- * its inferred type is structurally identical to `AgentLifecycleEvent`.
+ * Local schema for `AgentLifecycleRequest.event` (`AgentLifecycleEvent | "pid"`, from
+ * shared/api-protocol). That shared type is not part of the intent `contract` vocabulary,
+ * so it is defined here.
  */
-const agentLifecycleEventSchema = z.enum(["open", "close"]);
+const agentLifecycleEventSchema = z.enum(["open", "close", "pid"]);
+
+/** Pid of the agent terminal's shell (`AgentLifecycleRequest.pid`), when known. */
+const agentTerminalPidSchema = z.number().int().positive().optional();
 
 export const agentLifecyclePayloadSchema = z
   .object({
     workspaceRef: workspaceRefSchema,
     event: agentLifecycleEventSchema,
+    pid: agentTerminalPidSchema,
   })
   .readonly();
 
@@ -50,6 +57,7 @@ export const agentLifecyclePayloadSchema = z
 const lifecycleEnrichmentSchema = z.object({
   ...workspaceTargetShape,
   event: agentLifecycleEventSchema,
+  pid: agentTerminalPidSchema,
 });
 
 /** Runtime whole-context validation schema for "lifecycle". */
@@ -98,6 +106,7 @@ export class AgentLifecycleOperation implements Operation<typeof schemas> {
         await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef, { withProject: false })
       ).workspacePath,
       event: payload.event,
+      ...(payload.pid !== undefined && { pid: payload.pid }),
     };
     const { errors } = await ctx.hooks.collect("lifecycle", lifecycleCtx);
     throwHookErrors(errors, "agent-lifecycle lifecycle hooks failed");

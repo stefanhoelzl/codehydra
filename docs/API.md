@@ -658,7 +658,10 @@ interface OpenSystemPathRequest {
 }
 
 interface AgentLifecycleRequest {
-  event: "open" | "close"; // Agent terminal opened/closed
+  // Agent terminal opened/closed, or "pid": its shell's pid, sent once VS Code knows it
+  // (when the shell spawns); the agent a previous terminal left running is then stopped
+  event: "open" | "close" | "pid";
+  pid?: number; // Required with "pid"; with "close" when known
 }
 
 interface LogRequest {

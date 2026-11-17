@@ -94,6 +94,8 @@ import type {
   WorkspaceStartResult,
 } from "./agent-module-provider";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
+import { createMockProcessRunner } from "../../boundaries/platform/process.state-mock";
+import type { ProcessSnapshotEntry } from "../../boundaries/platform/process";
 import { SetupError } from "../../shared/errors/service-errors";
 import type { AggregatedAgentStatus } from "../../shared/ipc";
 import type { WorkspaceName } from "../../shared/api/types";
@@ -372,11 +374,19 @@ function createTestSetup(
     }),
   } as unknown as Dispatcher;
 
+  // The machine's processes, as the module's process scans see them; null = a failed scan.
+  const machine: { processes: ProcessSnapshotEntry[] | null } = { processes: [] };
+  const processRunner = createMockProcessRunner({
+    processes: () =>
+      machine.processes === null ? null : { takenAt: Date.now(), processes: machine.processes },
+  });
+
   const moduleDeps: AgentModuleDeps = {
     dispatcher: mockDispatcher,
     logger: SILENT_LOGGER,
     agentConfig,
     resolveMcpConfig: () => mcpConfig,
+    processRunner,
   };
 
   const dispatcher = createMockDispatcher();
@@ -384,7 +394,16 @@ function createTestSetup(
 
   dispatcher.registerModule(agentModule);
 
-  return { mockProvider, agentConfig, moduleDeps, dispatcher, agentModule, metadata };
+  return {
+    mockProvider,
+    agentConfig,
+    moduleDeps,
+    dispatcher,
+    agentModule,
+    metadata,
+    machine,
+    processRunner,
+  };
 }
 
 /** Run app:start's "start" hook point with `apiPort` as the capability. */
@@ -1475,6 +1494,9 @@ describe("createAgentModule", () => {
               workspaceRef: TEST_WS_REF,
               workspacePath: (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath,
               event: (ctx.intent.payload as { event: "open" | "close" }).event,
+              ...((ctx.intent.payload as { pid?: number }).pid !== undefined && {
+                pid: (ctx.intent.payload as { pid?: number }).pid,
+              }),
               capabilities: { agent },
             }),
           }
@@ -1506,6 +1528,138 @@ describe("createAgentModule", () => {
       });
 
       expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith(TEST_WS_REF, "close");
+    });
+
+    // A window reload leaves the transient agent terminal's pty — and the agent
+    // in it — running detached; the sidekick then opens a second agent terminal.
+    describe("an agent terminal replacing an earlier one", () => {
+      const SHELL = (pid: number, startedAt: number | null): ProcessSnapshotEntry => ({
+        pid,
+        ppid: 1,
+        name: "pwsh",
+        commandLine: "pwsh",
+        cwd: null,
+        rssBytes: 0,
+        cpuTimeMs: null,
+        startedAt,
+        envValue: null,
+      });
+
+      async function lifecycle(
+        dispatcher: Dispatcher,
+        event: "open" | "close" | "pid",
+        pid?: number
+      ): Promise<void> {
+        await dispatcher.dispatch({
+          type: "agent:lifecycle",
+          payload: {
+            workspacePath: testPath("/test/workspace").toNative(),
+            event,
+            ...(pid !== undefined && { pid }),
+          },
+        });
+      }
+
+      async function setup() {
+        const ctx = createTestSetup();
+        await activateModule(ctx.dispatcher, ctx.agentConfig);
+        registerLifecycleOp(ctx.dispatcher, "claude");
+        return ctx;
+      }
+
+      it("stops the agent the earlier terminal left running once the new shell's pid arrives", async () => {
+        const { dispatcher, machine, processRunner, mockProvider } = await setup();
+        machine.processes = [SHELL(100, Date.now() - 60_000)];
+        await lifecycle(dispatcher, "open");
+        await lifecycle(dispatcher, "pid", 100);
+        machine.processes.push(SHELL(200, Date.now()));
+        await lifecycle(dispatcher, "open");
+
+        await lifecycle(dispatcher, "pid", 200);
+
+        expect(processRunner.$.killedPids).toEqual([100]);
+        // A pid is no status transition: the provider only ever saw the opens.
+        expect(vi.mocked(mockProvider.applyTerminalLifecycle).mock.calls).toEqual([
+          [TEST_WS_REF, "open"],
+          [TEST_WS_REF, "open"],
+        ]);
+      });
+
+      it("leaves a pid alone that a later process reuses", async () => {
+        const { dispatcher, machine, processRunner } = await setup();
+        await lifecycle(dispatcher, "pid", 100);
+        machine.processes = [SHELL(100, Date.now() + 60_000), SHELL(200, Date.now())];
+
+        await lifecycle(dispatcher, "pid", 200);
+
+        expect(processRunner.$.killedPids).toEqual([]);
+      });
+
+      it("kills nothing when the earlier terminal is gone", async () => {
+        const { dispatcher, machine, processRunner } = await setup();
+        await lifecycle(dispatcher, "pid", 100);
+        machine.processes = [SHELL(200, Date.now())];
+
+        await lifecycle(dispatcher, "pid", 200);
+
+        expect(processRunner.$.killedPids).toEqual([]);
+      });
+
+      it("kills nothing when the process scan fails", async () => {
+        const { dispatcher, machine, processRunner } = await setup();
+        await lifecycle(dispatcher, "pid", 100);
+        machine.processes = null;
+
+        await lifecycle(dispatcher, "pid", 200);
+
+        expect(processRunner.$.killedPids).toEqual([]);
+      });
+
+      it("kills nothing when the same terminal reports its pid again (adopted)", async () => {
+        const { dispatcher, machine, processRunner } = await setup();
+        machine.processes = [SHELL(100, Date.now() - 60_000)];
+        await lifecycle(dispatcher, "pid", 100);
+
+        await lifecycle(dispatcher, "pid", 100);
+
+        expect(processRunner.$.killedPids).toEqual([]);
+      });
+
+      it("forgets a terminal that closed, so reopening the agent stops nothing", async () => {
+        const { dispatcher, machine, processRunner } = await setup();
+        machine.processes = [SHELL(100, Date.now() - 60_000)];
+        await lifecycle(dispatcher, "pid", 100);
+        await lifecycle(dispatcher, "close", 100);
+
+        await lifecycle(dispatcher, "pid", 200);
+
+        expect(processRunner.$.killedPids).toEqual([]);
+      });
+
+      it("keeps the current terminal when a replaced one reports its close late", async () => {
+        const { dispatcher, machine, processRunner } = await setup();
+        machine.processes = [SHELL(100, Date.now() - 60_000), SHELL(200, Date.now() - 60_000)];
+        await lifecycle(dispatcher, "pid", 100);
+        await lifecycle(dispatcher, "pid", 200);
+        await lifecycle(dispatcher, "close", 100);
+
+        await lifecycle(dispatcher, "pid", 300);
+
+        expect(processRunner.$.killedPids).toEqual([100, 200]);
+      });
+
+      // A terminal closed before VS Code knew its pid never reported one, so it
+      // is not the tracked terminal: that one may still be running, detached.
+      it("keeps the tracked terminal on a close without a pid", async () => {
+        const { dispatcher, machine, processRunner } = await setup();
+        machine.processes = [SHELL(100, Date.now() - 60_000)];
+        await lifecycle(dispatcher, "pid", 100);
+        await lifecycle(dispatcher, "close");
+
+        await lifecycle(dispatcher, "pid", 200);
+
+        expect(processRunner.$.killedPids).toEqual([100]);
+      });
     });
 
     it("does not run when agent capability does not match provider type", async () => {
