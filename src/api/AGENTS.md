@@ -14,6 +14,7 @@ Single source of truth for every operation the outside world can reach: MCP (`ch
 
 - Each owns an exhaustive `Readonly<Record<OperationName, Mapping | null>>`: `api-server-map.ts`, `mcp-map.ts`, `cli-map.ts`, `plugin-actions-map.ts`. A new operation fails to compile until every adapter says what it does with it; deliberate absence is an explicit `null`.
 - API server channel names are historical, a published contract — never derived from operation names. `ch` and `ch mcp` call `api:operation:<name>` instead.
+- A sidekick channel is served by the adapter (its `API_SERVER_MAP` entry) or by a handler in `api-server-module`, never both: both run on every call. The module serves only `api:log` (into the `extension` logger) and `api:workspace:openSystemPath` (its `{ app, path }` shape predates `system.open`), both `null` in the map; its `api:workspace:agentLifecycle` listener only wakes teardown and dispatches nothing.
 - Adapters go through `OperationRegistry.invoke` (`registry.ts`), which applies input shaping, validation and `requiresWorkspace`. Per-surface differences are `defaults` only (`InputShaping`), e.g. MCP `lock_take` → `noWait: true`.
 
 ## Caller vs target
