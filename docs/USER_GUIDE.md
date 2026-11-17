@@ -83,6 +83,18 @@ screenshot of where you left it — wake it any time to pick up where you left
 off, or give it a [wakeup script](#wakeup-scripts) that wakes it when
 something happens.
 
+Waking resumes the workspace's Claude conversation (`claude --continue`).
+Claude Code deletes conversations older than its `cleanupPeriodDays` setting
+(30 days by default) whenever a session starts. So the conversation of a
+workspace that sleeps longer still exists when you wake it, the Claude that
+CodeHydra starts sets `cleanupPeriodDays` high enough to cover the oldest
+hibernated workspace in your open projects, plus 60 days. This applies to
+every conversation and overrides your own value from Claude's settings files,
+except a managed (organization) setting. Not covered: workspaces hibernated
+before CodeHydra recorded when they were hibernated (they show no age),
+hibernated workspaces in closed projects, and a `claude` you start outside
+CodeHydra, which deletes old conversations by your own setting.
+
 ### Agent status
 
 Each workspace reports its agent's status:

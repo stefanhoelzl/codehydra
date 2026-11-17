@@ -131,6 +131,12 @@ export interface HookTargets {
  */
 export interface ClaudeSettingsFile {
   readonly hooks: Readonly<Record<string, readonly ClaudeHookMatcher[]>>;
+  /**
+   * How many days Claude keeps session transcripts before its startup sweep
+   * deletes them. Set only to keep a hibernated workspace's session resumable
+   * (see session-retention-module.ts); absent, the user's own value applies.
+   */
+  readonly cleanupPeriodDays?: number;
 }
 
 /** One stdio MCP server entry. */
@@ -168,7 +174,10 @@ export interface ClaudeMcpConfigFile {
  * the real values makes escaping structural instead of something each value has
  * to be safe for.
  */
-export function buildSettingsFile(targets: HookTargets): ClaudeSettingsFile {
+export function buildSettingsFile(
+  targets: HookTargets,
+  cleanupPeriodDays?: number
+): ClaudeSettingsFile {
   const hooks: Record<string, ClaudeHookMatcher[]> = {};
   for (const [name, register] of registeredHooks()) {
     const hook: ClaudeHookCommand | ClaudeHookHttp = COMMAND_HOOKS.has(name)
@@ -185,7 +194,7 @@ export function buildSettingsFile(targets: HookTargets): ClaudeSettingsFile {
       },
     ];
   }
-  return { hooks };
+  return { hooks, ...(cleanupPeriodDays !== undefined && { cleanupPeriodDays }) };
 }
 
 /**
@@ -380,6 +389,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
   /** MCP configuration (set before starting servers) */
   private mcpConfig: McpConfig | null = null;
+
+  /** `cleanupPeriodDays` for the settings file; undefined leaves Claude's own. */
+  private cleanupPeriodDays: number | undefined = undefined;
 
   constructor(deps: ClaudeCodeServerManagerDeps) {
     this.portManager = deps.portManager;
@@ -1151,20 +1163,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     await this.fileSystem.mkdir(workspaceConfigDir);
 
     // Generate the two files Claude is launched with.
-    // Called after the bridge is up, so its port is known.
-    const port = this.hookPort ?? this.port;
-    if (port === null) {
-      throw new Error("Hook settings generated before the bridge server started");
-    }
-    await this.writeJsonFile(
-      new Path(workspaceConfigDir, "codehydra-hooks.json"),
-      buildSettingsFile({
-        handlerPath: this.hookHandlerPath,
-        interpreter: hookInterpreter(this.mcpConfig ?? null, this.logger),
-        port,
-        workspaceRef,
-      })
-    );
+    await this.writeSettingsFile(workspaceRef);
     await this.writeJsonFile(
       new Path(workspaceConfigDir, "codehydra-mcp.json"),
       buildMcpConfigFile(workspaceRef, this.mcpConfig ?? null)
@@ -1173,6 +1172,43 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.logger
       .scoped({ workspace: workspaceRef })
       .debug("Config files generated", { configDir: workspaceConfigDir.toString() });
+  }
+
+  /**
+   * Write the settings file (`claude --settings`) of a workspace.
+   * Called after the bridge is up, so its port is known.
+   */
+  private async writeSettingsFile(workspaceRef: WorkspaceRef): Promise<void> {
+    const port = this.hookPort ?? this.port;
+    if (port === null) {
+      throw new Error("Hook settings generated before the bridge server started");
+    }
+    await this.writeJsonFile(
+      this.getHooksConfigPath(workspaceRef),
+      buildSettingsFile(
+        {
+          handlerPath: this.hookHandlerPath,
+          interpreter: hookInterpreter(this.mcpConfig ?? null, this.logger),
+          port,
+          workspaceRef,
+        },
+        this.cleanupPeriodDays
+      )
+    );
+  }
+
+  /**
+   * Set the `cleanupPeriodDays` every workspace's settings file carries, and
+   * rewrite the files of the workspaces already running so the next `claude`
+   * started in any of them reads it. Undefined drops the key again.
+   */
+  async setCleanupPeriodDays(days: number | undefined): Promise<void> {
+    if (days === this.cleanupPeriodDays) return;
+    this.cleanupPeriodDays = days;
+    this.logger.debug("Session retention changed", { cleanupPeriodDays: days ?? "default" });
+    for (const workspaceRef of [...this.workspaces.keys()]) {
+      await this.writeSettingsFile(workspaceRef);
+    }
   }
 
   /**

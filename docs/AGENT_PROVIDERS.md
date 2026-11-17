@@ -563,6 +563,8 @@ The Claude wrapper automatically attempts to resume previous sessions using the 
 3. If continuation fails (no session exists), automatically retries without `--continue`
 4. This enables seamless session continuity across CodeHydra restarts
 
+**Transcript retention**: Claude Code deletes transcripts older than `cleanupPeriodDays` (default 30) in a sweep after any session starts, so a workspace hibernated longer would wake to an empty session. `claude/session-retention-module.ts` recomputes, on project open/close and workspace hibernate/wake/delete, the oldest `hibernated-at` among the open projects' hibernated workspaces, and `setCleanupPeriodDays` writes that age plus 60 days into every workspace's `codehydra-hooks.json` (rewriting the running ones). Workspaces without `hibernated-at` are not counted.
+
 **Flag precedence**: If user passes `--resume <session-id>`, it takes precedence over `--continue`. The wrapper detects this and skips adding `--continue` to avoid conflicts.
 
 ---
