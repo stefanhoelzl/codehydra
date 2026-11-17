@@ -24,6 +24,7 @@ import {
   HIBERNATED_AT_METADATA_KEY,
   HIBERNATED_METADATA_KEY,
   INTENT_HIBERNATE_WORKSPACE,
+  readHibernatedAt,
 } from "../../intents/hibernate-workspace";
 import type { HibernateWorkspaceIntent } from "../../intents/hibernate-workspace";
 import { INTENT_WAKE_WORKSPACE } from "../../intents/wake-workspace";
@@ -162,8 +163,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     description:
       "Get workspace status: the project type's status and, when deleting would lose work, its statusDescription (git: clean, dirty, unmerged, dirty-unmerged), agent status, hibernation and wakeup script.",
     instructions:
-      "hibernatedAt is when the workspace was hibernated (ISO-8601 UTC); null while it is " +
-      "awake, and for a workspace hibernated before CodeHydra recorded the time.",
+      "hibernatedAt is when the workspace was hibernated (ISO-8601 UTC); null while it is awake.",
     input: z.object({
       ...targetFields,
       refresh: z
@@ -190,7 +190,12 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       return {
         ...result,
         hibernated,
-        hibernatedAt: (hibernated && metadata?.[HIBERNATED_AT_METADATA_KEY]) || null,
+        // A hibernated workspace always has a time (the hibernation module
+        // backfills a missing one on project open); should it still lack a
+        // valid one, it reads as now, as in the sidebar (where it is logged).
+        hibernatedAt: hibernated
+          ? (readHibernatedAt(metadata?.[HIBERNATED_AT_METADATA_KEY]) ?? new Date().toISOString())
+          : null,
         wakeup: await deps.wakeups.show(workspaceRef),
       };
     },

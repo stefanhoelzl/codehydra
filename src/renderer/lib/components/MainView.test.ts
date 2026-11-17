@@ -24,7 +24,12 @@ const mockApi = vi.mocked(api);
 
 // Import after mock setup
 import MainView from "./MainView.svelte";
-import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
+import {
+  DEFAULT_HIBERNATED_AT,
+  makeUiState,
+  makeUiProjectRow,
+  makeUiWorkspaceRow,
+} from "$lib/test-utils";
 
 /** The snapshot currently rendered; updated by pushState/openCreationPanelSession. */
 let current: UiState;
@@ -159,13 +164,20 @@ describe("MainView component", () => {
       const { container } = renderMainView();
 
       await pushState(
-        makeUiState([makeUiProjectRow([{ ...WS1_ACTIVE, hibernated: true }])], {
-          main: {
-            kind: "hibernated",
-            screenshot: "data:image/png;base64,UE5H",
-            hibernatedAt: null,
-          },
-        })
+        makeUiState(
+          [
+            makeUiProjectRow([
+              { ...WS1_ACTIVE, hibernated: true, hibernatedAt: DEFAULT_HIBERNATED_AT },
+            ]),
+          ],
+          {
+            main: {
+              kind: "hibernated",
+              screenshot: "data:image/png;base64,UE5H",
+              hibernatedAt: DEFAULT_HIBERNATED_AT,
+            },
+          }
+        )
       );
 
       await waitFor(() => {

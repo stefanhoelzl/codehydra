@@ -1707,6 +1707,8 @@ User: Click "Open Project"
         report the project's type ("git") and its config
   → "discover": GitProjectModule hands the project's worktrees to the registry
   → "register": ProjectStoreModule assigns the id and badge color, saves the record
+  → "backfill": HibernationModule gives a hibernated workspace without a
+    `hibernated-at` one (its screenshot's time, else now), before the announcement
   → Emits project:opened domain event (every row; awake ones loading)
   → If nothing is active: switch to the first awake workspace (sidebar order)
   → Operation dispatches workspace:open per awake worktree, one at a time, the

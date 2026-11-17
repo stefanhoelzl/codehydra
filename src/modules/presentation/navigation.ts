@@ -125,7 +125,7 @@ export function createShortcutNavigation(deps: ShortcutNavigationDeps): (key: st
     // Hibernating needs a running workspace; one still creating or opening has
     // nothing to stop.
     if (workspace === undefined || workspace.phase !== "ready") return;
-    if (workspace.hibernated) {
+    if (workspace.hibernation !== undefined) {
       deps.dispatch({
         type: INTENT_WAKE_WORKSPACE,
         payload: { workspaceRef: workspace.ref, source: "ui-ipc" },

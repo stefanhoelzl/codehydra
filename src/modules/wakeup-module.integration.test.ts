@@ -553,7 +553,8 @@ describe("wakeup scripts: polling", () => {
     const setup = createSetup();
     const at = "2026-10-27T14:02:11.000Z";
     const timed = setup.add("timed", { hibernated: "true", "hibernated-at": at });
-    const legacy = setup.add("legacy", { hibernated: "true" });
+    // Without a valid time (the backfill failed, a hand edit) it reads as now.
+    const garbled = setup.add("garbled", { hibernated: "true", "hibernated-at": "soon" });
     // A stray time without the flag is not a hibernation.
     const awake = setup.add("awake", { "hibernated-at": at });
 
@@ -561,10 +562,13 @@ describe("wakeup scripts: polling", () => {
       hibernated: true,
       hibernatedAt: at,
     });
-    await expect(setup.call("workspace.status", legacy.ref)).resolves.toMatchObject({
-      hibernated: true,
-      hibernatedAt: null,
-    });
+    const before = Date.now();
+    const status = (await setup.call("workspace.status", garbled.ref)) as {
+      hibernated: boolean;
+      hibernatedAt: string;
+    };
+    expect(status.hibernated).toBe(true);
+    expect(Date.parse(status.hibernatedAt)).toBeGreaterThanOrEqual(before);
     await expect(setup.call("workspace.status", awake.ref)).resolves.toMatchObject({
       hibernated: false,
       hibernatedAt: null,

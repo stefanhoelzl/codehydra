@@ -15,13 +15,13 @@
   interface Props {
     /** Inline screenshot data URL from the snapshot (null = none/loading). */
     screenshot: string | null;
-    /** When it was hibernated (ISO-8601); null when unrecorded. */
-    hibernatedAt?: string | null;
+    /** When it was hibernated (ISO-8601). */
+    hibernatedAt: string;
     /** Wake the active (hibernated) workspace. */
     onWake: () => void;
   }
 
-  let { screenshot, hibernatedAt = null, onWake }: Props = $props();
+  let { screenshot, hibernatedAt, onWake }: Props = $props();
 
   let imageBroken = $state(false);
 

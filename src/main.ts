@@ -116,7 +116,7 @@ import {
   EVENT_WORKSPACE_WAKE_FAILED,
 } from "./intents/wake-workspace";
 import type { WakeWorkspacePayload } from "./intents/wake-workspace";
-import { createHibernationScreenshotModule } from "./modules/hibernation-screenshot-module";
+import { createHibernationModule } from "./modules/hibernation-module";
 import {
   OpenProjectOperation,
   INTENT_OPEN_PROJECT,
@@ -1127,7 +1127,8 @@ const terminalFocusModule = createTerminalFocusModule({
   viewManager,
 });
 
-const hibernationScreenshotModule = createHibernationScreenshotModule({
+const hibernationModule = createHibernationModule({
+  dispatcher,
   fileSystem: fileSystemLayer,
   pathProvider,
   viewManager,
@@ -1200,7 +1201,7 @@ dispatcher.registerModule(autoTaggingModule);
 dispatcher.registerModule(lockModule);
 dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);
-dispatcher.registerModule(hibernationScreenshotModule);
+dispatcher.registerModule(hibernationModule);
 dispatcher.registerModule(presentationModule);
 dispatcher.registerModule(cliModule.module);
 

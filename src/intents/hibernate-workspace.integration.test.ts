@@ -2,10 +2,10 @@
  * Smoke integration tests for HibernateWorkspaceOperation and
  * WakeWorkspaceOperation.
  *
- * Hibernate splits foreground (resolve → capture → set-metadata → optional
+ * Hibernate splits foreground (resolve → capture → mark → optional
  * switch) from background (shutdown → release → emit hibernated). Uses
- * minimal stub modules that record interactions; no provider boundaries
- * are exercised.
+ * minimal stub modules that record interactions, plus the real hibernation
+ * module (the mark / unmark metadata writes) over mocked boundaries.
  */
 
 import { createMockDispatcher } from "./lib/dispatcher.test-utils";
@@ -27,6 +27,7 @@ import {
   type PrepareCaptureHookResult,
   type CaptureHookResult,
   type CleanupCaptureHookResult,
+  type MarkHookResult,
   type HibernateShutdownHookResult,
   type HibernateReleaseHookResult,
   type HibernatePipelineHookInput,
@@ -62,6 +63,11 @@ import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
 import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import { workspaceSchema } from "./contract";
 import { gitProjectRef } from "../modules/git/ref";
+import { createHibernationModule } from "../modules/hibernation-module";
+import { createFileSystemMock } from "../boundaries/platform/filesystem.state-mock";
+import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
+import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
 
 const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;
@@ -326,6 +332,16 @@ function buildHarness(
 
   dispatcher.registerModule(createMetadataModule(recorder));
   dispatcher.registerModule(createSwitchModule(recorder));
+  // The real owner of the hibernation metadata (the mark / unmark writes).
+  dispatcher.registerModule(
+    createHibernationModule({
+      dispatcher,
+      fileSystem: createFileSystemMock(),
+      pathProvider: createMockPathProvider(),
+      viewManager: createMockViewManager(),
+      logger: SILENT_LOGGER,
+    })
+  );
   for (const m of buildHookModules(recorder)) dispatcher.registerModule(m);
 
   for (const t of [
@@ -574,6 +590,35 @@ describe("workspace:hibernate", () => {
     expect(
       recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATE_FAILED)
     ).toBeUndefined();
+  });
+
+  it("fails, and tears nothing down, when marking the workspace hibernated fails", async () => {
+    const failingMark: IntentModule = {
+      name: "test-failing-mark",
+      hooks: {
+        [HIBERNATE_WORKSPACE_OPERATION_ID]: {
+          mark: {
+            handler: async (): Promise<HookOutput<MarkHookResult>> => {
+              throw new Error("mark boom");
+            },
+          },
+        },
+      },
+    };
+    const { dispatcher, recorder } = buildHarness((r) => [
+      createHibernateHookModule(r),
+      failingMark,
+    ]);
+
+    await expect(
+      dispatcher.dispatch<HibernateWorkspaceIntent>({
+        type: INTENT_HIBERNATE_WORKSPACE,
+        payload: { workspaceRef: WORKSPACE_REF },
+      })
+    ).rejects.toThrow("mark boom");
+
+    expect(recorder.shutdownCalled).toBe(false);
+    expect(recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATE_FAILED)).toBeDefined();
   });
 });
 

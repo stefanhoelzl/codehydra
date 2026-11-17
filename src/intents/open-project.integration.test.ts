@@ -39,6 +39,8 @@ import type {
   PrepareHookResult,
   ResolveHookResult,
   DiscoverHookResult,
+  BackfillHookInput,
+  BackfillHookResult,
   RegisterHookInput,
   RegisterHookResult,
   ProjectOpenedEvent,
@@ -1014,6 +1016,66 @@ describe("OpenProjectOperation", () => {
     expect(harness.projectState.lastBaseBranches.get(new Path(PROJECT_PATH).toString())).toBe(
       "main"
     );
+  });
+
+  it("announces the metadata backfill handlers wrote, merged into the discovered workspaces", async () => {
+    const harness = createTestHarness();
+    const seen: string[][] = [];
+    harness.dispatcher.registerModule({
+      name: "test-backfill",
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          backfill: {
+            handler: async (ctx: HookContext): Promise<HookOutput<BackfillHookResult>> => {
+              const { workspaces, projectId } = ctx as BackfillHookInput;
+              expect(projectId).toBe(PROJECT_ID);
+              seen.push(workspaces.map((w) => w.name));
+              return { result: { metadata: { "feature-a": { "hibernated-at": "2026-10-01" } } } };
+            },
+          },
+        },
+      },
+    });
+    let announced: ProjectOpenedEvent | undefined;
+    harness.dispatcher.subscribe(EVENT_PROJECT_OPENED, (event) => {
+      announced = event as ProjectOpenedEvent;
+    });
+
+    const result = (await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    )) as Project;
+
+    expect(seen).toEqual([["feature-a", "feature-b"]]);
+    const metadataOf = (project: Project): Record<string, unknown> =>
+      Object.fromEntries(project.workspaces.map((w) => [w.name, w.metadata]));
+    const expected = {
+      "feature-a": { base: "main", "hibernated-at": "2026-10-01" },
+      "feature-b": { base: "main" },
+    };
+    expect(metadataOf(announced!.payload.project)).toEqual(expected);
+    expect(metadataOf(result)).toEqual(expected);
+  });
+
+  it("announces the discovered workspaces as they are when a backfill handler fails", async () => {
+    const harness = createTestHarness();
+    harness.dispatcher.registerModule({
+      name: "test-backfill",
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          backfill: {
+            handler: async (): Promise<HookOutput<BackfillHookResult>> => {
+              throw new Error("backfill boom");
+            },
+          },
+        },
+      },
+    });
+
+    const result = (await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    )) as Project;
+
+    expect(result.workspaces.map((w) => w.metadata)).toEqual([{ base: "main" }, { base: "main" }]);
   });
 
   it("announces the project before opening any workspace; the caller still gets the URLs", async () => {

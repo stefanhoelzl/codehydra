@@ -88,7 +88,10 @@ describe("focusOwnerId", () => {
     const dialogs = [dialog("create-1", "modeless"), dialog("panel-1", "panel")];
 
     expect(
-      focusOwnerId({ dialogs, main: { kind: "hibernated", screenshot: null, hibernatedAt: null } })
+      focusOwnerId({
+        dialogs,
+        main: { kind: "hibernated", screenshot: null, hibernatedAt: "2026-11-01T12:00:00.000Z" },
+      })
     ).toBeNull();
     expect(focusOwnerId({ dialogs, main: { kind: "starting" } })).toBeNull();
   });

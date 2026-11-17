@@ -11,11 +11,11 @@
  * 3. "prepare-capture" → "capture" (in a try) → "cleanup-capture" (finally)
  *    hooks — collapse the sidebar out of the shot, take the best-effort
  *    screenshot, then always restore the sidebar
- * 4. Dispatch workspace:set-metadata to persist `hibernated-at` (when it
+ * 4. "mark" hook — the hibernation module persists `hibernated-at` (when it
  *    happened: the sidebar/overlay age, `ch ws status`), then
- *    `hibernated="true"` (this is
- *    what makes the renderer show HibernatedOverlay; switch-workspace's
- *    `c.hibernated` filter also begins excluding the workspace immediately)
+ *    `hibernated="true"` (this is what makes the renderer show
+ *    HibernatedOverlay; switch-workspace's `c.hibernated` filter also begins
+ *    excluding the workspace immediately). A failure here fails the operation.
  * 5. If active, dispatch workspace:switch so the user is moved to an awake
  *    sibling without waiting for the background teardown
  *
@@ -56,7 +56,7 @@ import {
   workspaceTargetShape,
 } from "./contract";
 import type { ProjectRef } from "./contract";
-import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
+import { throwHookErrors } from "./lib/hook-helpers";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { resolveWorkspaceIdentity, workspaceFailurePayload } from "./lib/workspace-identity";
 
@@ -70,11 +70,17 @@ export const HIBERNATED_METADATA_KEY = "hibernated";
 
 /**
  * Metadata key holding when the workspace was hibernated (ISO-8601 UTC). Set
- * just before `hibernated` and cleared on wake, so it is present exactly while
- * the workspace sleeps — except for workspaces hibernated before the key
- * existed, which have the flag but no time.
+ * just before `hibernated` and cleared just after it on wake, so a hibernated
+ * workspace always has one (workspaces hibernated before the key existed get
+ * theirs from the hibernation module's backfill when their project opens).
  */
 export const HIBERNATED_AT_METADATA_KEY = "hibernated-at";
+
+/** A `hibernated-at` value as a valid ISO timestamp, or undefined. */
+export function readHibernatedAt(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  return Number.isNaN(Date.parse(value)) ? undefined : value;
+}
 
 // =============================================================================
 // Contract schemas (single source of truth)
@@ -141,6 +147,7 @@ export const schemas = {
     "prepare-capture": { input: hibernatePipelineHookInputSchema, result: z.object({}).readonly() },
     capture: { input: hibernatePipelineHookInputSchema, result: z.object({}).readonly() },
     "cleanup-capture": { input: hibernatePipelineHookInputSchema, result: z.object({}).readonly() },
+    mark: { input: hibernatePipelineHookInputSchema, result: z.object({}).readonly() },
     shutdown: { input: hibernatePipelineHookInputSchema, result: z.object({}).readonly() },
     release: { input: hibernatePipelineHookInputSchema, result: hibernateReleaseHookResultSchema },
   },
@@ -191,6 +198,12 @@ export type CaptureHookResult = Record<string, never>;
  * restores the sidebar and can never leave it stuck collapsed.
  */
 export type CleanupCaptureHookResult = Record<string, never>;
+
+/**
+ * Per-handler result for the "mark" hook point, where the workspace's
+ * metadata turns hibernated. Errors fail the operation.
+ */
+export type MarkHookResult = Record<string, never>;
 
 /** Per-handler result for the "shutdown" hook point. */
 export type HibernateShutdownHookResult = Record<string, never>;
@@ -248,27 +261,11 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
         await ctx.hooks.collect("cleanup-capture", hookCtx);
       }
 
-      // Persist hibernated flag via existing set-metadata pipeline. This is
-      // what makes the renderer swap in HibernatedOverlay via the
-      // workspace:metadata-changed → WORKSPACE_METADATA_CHANGED IPC, and
-      // makes switch-workspace's `c.hibernated` filter exclude us. The time
-      // goes first, so the age is known by the time the flag flips the row.
-      await ctx.dispatch<SetMetadataIntent>({
-        type: INTENT_SET_METADATA,
-        payload: {
-          workspaceRef: payload.workspaceRef,
-          key: HIBERNATED_AT_METADATA_KEY,
-          value: new Date().toISOString(),
-        },
-      });
-      await ctx.dispatch<SetMetadataIntent>({
-        type: INTENT_SET_METADATA,
-        payload: {
-          workspaceRef: payload.workspaceRef,
-          key: HIBERNATED_METADATA_KEY,
-          value: "true",
-        },
-      });
+      // Mark the workspace hibernated (the hibernation module's metadata
+      // writes). This is what makes the renderer swap in HibernatedOverlay
+      // and makes switch-workspace's `c.hibernated` filter exclude us.
+      const { errors: markErrors } = await ctx.hooks.collect("mark", hookCtx);
+      throwHookErrors(markErrors, "workspace:hibernate mark hooks failed");
 
       // If the hibernated workspace was active, switch to an awake sibling
       // immediately so the user is moved away while the teardown runs in the

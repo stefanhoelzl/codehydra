@@ -5,7 +5,7 @@
  */
 
 import type { UiNotification, UiProjectRow, UiWorkspaceRow } from "@shared/ui-state";
-import { makeUiProjectRow, makeUiWorkspaceRow } from "../test-utils";
+import { makeUiProjectRow, makeUiWorkspaceRow, type UiWorkspaceRowOverrides } from "../test-utils";
 
 export const NOW = new Date(2026, 10, 1, 12, 0).getTime();
 const MIN = 60_000;
@@ -16,7 +16,7 @@ const busy = { type: "busy", counts: { idle: 0, busy: 1, total: 1 } } as const;
 function ws(
   project: string,
   name: string,
-  overrides: Partial<UiWorkspaceRow> & { ago?: number } = {}
+  overrides: UiWorkspaceRowOverrides & { ago?: number } = {}
 ): UiWorkspaceRow {
   const { ago, ...rest } = overrides;
   return makeUiWorkspaceRow(name, {

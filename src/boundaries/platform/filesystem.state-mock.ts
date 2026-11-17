@@ -19,7 +19,13 @@
  */
 
 import { expect } from "vitest";
-import type { FileSystemErrorCode, FileSystemBoundary, PathLike, DirEntry } from "./filesystem";
+import type {
+  FileSystemErrorCode,
+  FileSystemBoundary,
+  FileStat,
+  PathLike,
+  DirEntry,
+} from "./filesystem";
 import { FileSystemError } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
 import { testPath } from "../../shared/test-fixtures";
@@ -42,9 +48,18 @@ export interface FileEntry {
   readonly type: "file";
   readonly content: string | Buffer;
   readonly executable?: boolean;
+  /** What `stat` reports as its modification time; `UNSET_MTIME` when absent. */
+  readonly mtime?: Date;
   /** If set, accessing this entry throws an error with this code */
   readonly error?: FileSystemErrorCode;
 }
+
+/**
+ * The modification time `stat` reports for an entry that names none (a
+ * directory, or a file written through the mock): the epoch, so a test that
+ * cares about a time seeds it with `file(content, { mtime })`.
+ */
+export const UNSET_MTIME = new Date(0);
 
 /**
  * Directory entry in the mock filesystem.
@@ -137,11 +152,13 @@ export type MockFileSystemBoundary = FileSystemBoundary & MockWithState<FileSyst
  * file(Buffer.from([0x89, 0x50, 0x4e, 0x47]))  // Binary
  * file("content", { executable: true })
  * file("secret", { error: "EACCES" })
+ * file("old", { mtime: new Date("2026-10-01T12:00:00Z") })
  */
 export function file(
   content: string | Buffer,
   options?: {
     executable?: boolean;
+    mtime?: Date;
     error?: FileSystemErrorCode;
   }
 ): FileEntry {
@@ -149,6 +166,7 @@ export function file(
     type: "file" as const,
     content,
     ...(options?.executable !== undefined && { executable: options.executable }),
+    ...(options?.mtime !== undefined && { mtime: options.mtime }),
     ...(options?.error !== undefined && { error: options.error }),
   };
 }
@@ -763,6 +781,13 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
       }
       return new Path(current);
     },
+
+    async stat(target: PathLike): Promise<FileStat> {
+      const resolved = normalizePath(await layer.realpath(target));
+      const entry = state.entries.get(resolved);
+      throwIfError(entry, resolved);
+      return { mtime: entry?.type === "file" && entry.mtime ? entry.mtime : UNSET_MTIME };
+    },
   };
 
   return Object.assign(layer, { $: state });
@@ -990,6 +1015,7 @@ export interface SpyFileSystemBoundary extends FileSystemBoundary {
   rename: Mock<FileSystemBoundary["rename"]>;
   mkdtemp: Mock<FileSystemBoundary["mkdtemp"]>;
   realpath: Mock<FileSystemBoundary["realpath"]>;
+  stat: Mock<FileSystemBoundary["stat"]>;
   /** State access for behavioral mock */
   $: FileSystemMockState;
 }
@@ -1030,6 +1056,7 @@ export function createSpyFileSystemBoundary(
     rename: vi.fn(mock.rename.bind(mock)),
     mkdtemp: vi.fn(mock.mkdtemp.bind(mock)),
     realpath: vi.fn(mock.realpath.bind(mock)),
+    stat: vi.fn(mock.stat.bind(mock)),
     $: mock.$,
   } as SpyFileSystemBoundary;
 }
