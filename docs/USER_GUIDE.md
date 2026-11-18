@@ -357,7 +357,10 @@ project. The form has:
 - **Name** — becomes the git branch. Type a new name, or pick an existing local
   or remote branch to check it out (which also fills in its base). Letters,
   digits and `-_./`, starting with a letter or digit, at most 100 characters,
-  no `..`, and not the name of an existing workspace.
+  no `..`, and not the name of an existing workspace. Nor can it clash with an
+  existing local branch the way git forbids: with a branch `a/b` there can be no
+  `a`, and with a branch `a` no `a/b` (`ch ws create` and automations refuse it
+  too). A remote branch that clashes like that is not offered.
 - **Base branch** — what a new branch forks from (default: the project's
   default branch). Cached branches show at once while a fetch runs.
 - **Prompt** (optional) — sent to the agent as soon as the workspace is ready.

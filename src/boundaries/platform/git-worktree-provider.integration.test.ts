@@ -1081,6 +1081,24 @@ describe("GitWorktreeProvider", () => {
       ).rejects.toThrow(/already checked out.*\/workspaces\/existing-workspace/);
     });
 
+    it.each([
+      ["a branch nests under it", "feature/login", "feature"],
+      ["it nests under a branch", "feature", "feature/login"],
+    ])(
+      "throws WorkspaceError, creating nothing, for a name clashing with a branch: %s",
+      async (_, branch, name) => {
+        const mockClient = gitRepo({ branches: ["main", branch], currentBranch: "main" });
+        const provider = await providerFor(mockClient, mockFs);
+
+        await expect(provider.createWorkspace(PROJECT_ROOT, name, "main")).rejects.toThrow(
+          new WorkspaceError(
+            `Branch '${branch}' already exists; git cannot have both '${branch}' and '${name}'`
+          )
+        );
+        expect(mockClient).not.toHaveBranch(PROJECT_ROOT, name);
+      }
+    );
+
     it("throws WorkspaceError when branch is checked out in main worktree", async () => {
       const mockClient = gitRepo(MAIN_ONLY);
       const provider = await providerFor(mockClient, mockFs);

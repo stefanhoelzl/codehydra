@@ -53,6 +53,7 @@ import {
   type GetOptionChoicesIntent,
   type GetOptionChoicesResult,
   type NameSuggestion,
+  type BlockedName,
 } from "../intents/get-option-choices";
 import {
   INTENT_ADD_PROJECT,
@@ -149,6 +150,8 @@ interface FormState {
   choices: Readonly<Record<string, FieldChoices>>;
   /** The type's suggestions for the Name field. */
   nameSuggestions: readonly NameSuggestion[];
+  /** Names the type cannot create (git: those clashing with an existing branch). */
+  blockedNames: readonly BlockedName[];
   /** Waiting for the type's choices to be confirmed by a refresh. */
   choicesLoading: boolean;
   choicesError: string | null;
@@ -191,6 +194,7 @@ function initialForm(): FormState {
     projectRef: null,
     choices: {},
     nameSuggestions: [],
+    blockedNames: [],
     choicesLoading: false,
     choicesError: null,
     name: "",
@@ -403,7 +407,7 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     return form.nameSuggestions.find((s) => s.value === raw)?.label ?? raw;
   }
 
-  /** Per-field name error: format violations and duplicates. Empty = no error. */
+  /** Per-field name error: format violations, duplicates, names the type blocks. Empty = no error. */
   function nameError(raw: string): string | null {
     const resolved = resolveName(raw).trim();
     if (resolved === "") return null;
@@ -413,7 +417,10 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     if (existing.some((w) => w.name.toLowerCase() === resolved.toLowerCase())) {
       return "Workspace already exists";
     }
-    return null;
+    const blocked = form.blockedNames.find((b) =>
+      b.prefix ? resolved.startsWith(b.name) : resolved === b.name
+    );
+    return blocked?.reason ?? null;
   }
 
   function isFormValid(): boolean {
@@ -680,6 +687,7 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
   function applyChoices(result: GetOptionChoicesResult, keepValid: boolean): void {
     form.choices = result.fields;
     form.nameSuggestions = result.nameSuggestions;
+    form.blockedNames = result.blockedNames;
     for (const [name, field] of optionFields()) {
       if (field.kind !== "select" || field.choices !== "dynamic") continue;
       const choices = choicesOf(name, field);
@@ -703,6 +711,7 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
     form.projectRef = projectRef;
     form.choices = {};
     form.nameSuggestions = [];
+    form.blockedNames = [];
     form.choicesLoading = true;
     form.choicesError = null;
     form.options = initialOptions(projectRef);
@@ -1047,6 +1056,7 @@ export function createCreationModule(deps: CreationModuleDeps): CreationModule {
           form.projectRef = null;
           form.choices = {};
           form.nameSuggestions = [];
+          form.blockedNames = [];
           form.choicesLoading = false;
           form.choicesError = null;
           form.options = {};

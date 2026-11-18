@@ -1,11 +1,12 @@
 /**
  * A git project's branches as the New workspace form takes them
  * (`project:get-option-choices`): `base`'s choices, and the Name field's
- * suggestions.
+ * suggestions, and the names an existing branch blocks.
  */
 
 import type { BaseInfo } from "../../boundaries/platform/git-types";
 import type { ListChoicesHookResult } from "../../intents/get-option-choices";
+import { clashingBranch, namesRuledOutBy } from "../../utils/branch-names";
 
 const LOCAL_GROUP = "Local Branches";
 const REMOTE_GROUP = "Remote Branches";
@@ -25,7 +26,13 @@ export function branchChoices(
     defaultBase !== undefined && bases.some((b) => b.name === defaultBase)
       ? defaultBase
       : ordered[0]?.name;
+  const local = bases.filter((b) => !b.isRemote).map((b) => b.name);
   return {
+    blockedNames: local.flatMap((branch) => {
+      const { exact, prefix } = namesRuledOutBy(branch);
+      const reason = `Clashes with branch '${branch}' (git cannot have both)`;
+      return [...exact.map((name) => ({ name, reason })), { name: prefix, prefix: true, reason }];
+    }),
     fields: {
       base: {
         choices: ordered.map((b) => ({ value: b.name, group: groupOf(b) })),
@@ -34,7 +41,8 @@ export function branchChoices(
       },
     },
     nameSuggestions: ordered.flatMap((b) =>
-      b.derives === undefined
+      // A remote branch whose name clashes with a local one (`origin/a/b` next to `a`) cannot be checked out.
+      b.derives === undefined || clashingBranch(b.derives, local) !== undefined
         ? []
         : [
             {
