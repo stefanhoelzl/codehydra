@@ -86,6 +86,7 @@ function choicesOf(
   return {
     fields: answer.fields ?? {},
     nameSuggestions: answer.nameSuggestions ?? [],
+    blockedNames: answer.blockedNames ?? [],
     projectRef: project.ref,
     projectId: project.id,
   };
@@ -532,6 +533,7 @@ describe("CreationModule", () => {
       s.dispatcher.results.set(INTENT_GET_OPTION_CHOICES, () => ({
         fields: {},
         nameSuggestions: [],
+        blockedNames: [],
         projectRef: fake.ref,
         projectId: fake.id,
       }));
@@ -663,6 +665,30 @@ describe("CreationModule", () => {
       panel.emitChange("name", { name: "bad name!" });
       await flush();
       expect(field(panel.config, "name")["error"]).toMatch(/letters, numbers/);
+    });
+
+    it.each([
+      ["a branch nests under it", "feature/login", "feature"],
+      ["it nests under a branch", "feature", "feature/login"],
+    ])("flags a name clashing with an existing branch: %s", async (_, branch, name) => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await s.start();
+      const bases: BaseInfo[] = [...BASES_A, { name: branch, isRemote: false, derives: branch }];
+      await s.emit(EVENT_OPTION_CHOICES_UPDATED, updated(PROJECT_A, bases, "main"));
+
+      panel.emitChange("name", { name });
+      await flush();
+      expect(field(panel.config, "name")["error"]).toBe(
+        `Clashes with branch '${branch}' (git cannot have both)`
+      );
+      expect(field(panel.config, "create")["disabled"]).toBe(true);
+
+      // The branch itself stays a valid name (its workspace reuses it), as do siblings.
+      for (const ok of [branch, `${branch}-2`]) {
+        panel.emitChange("name", { name: ok });
+        await flush();
+        expect(field(panel.config, "name")["error"]).toBeUndefined();
+      }
     });
 
     it("picking an existing branch name suggests its base", async () => {

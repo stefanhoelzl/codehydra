@@ -6,7 +6,8 @@
  * (`project-type-options.ts`): its choices, and the one to preselect, come from
  * the type here. The type may also suggest names for the core Name field, each
  * of which may set other options when picked (git: an existing branch, which
- * sets the base it was made from).
+ * sets the base it was made from), and block names it cannot create a
+ * workspace under (git: one clashing with an existing branch, `a` next to `a/b`).
  *
  * One hook point, "list", answered by the project's own type:
  * - first with `fresh: false` — a fast answer, from what the type holds already
@@ -17,7 +18,7 @@
  *
  * Flow:
  * 1. Dispatch project:resolve for the project's id and path
- * 2. hooks.collect("list") → choices per field, name suggestions
+ * 2. hooks.collect("list") → choices per field, name suggestions, blocked names
  * 3. If refresh: background project:refresh → re-list → emit option-choices:updated
  * 4. Return the first answer
  */
@@ -76,6 +77,19 @@ export const nameSuggestionSchema = z
   .readonly();
 export type NameSuggestion = z.infer<typeof nameSuggestionSchema>;
 
+/**
+ * A workspace name the project type cannot create: `name` itself, or with
+ * `prefix` every name starting with it. The Name field shows `reason` for it.
+ */
+export const blockedNameSchema = z
+  .object({
+    name: z.string().min(1),
+    prefix: z.boolean().optional(),
+    reason: z.string().min(1),
+  })
+  .readonly();
+export type BlockedName = z.infer<typeof blockedNameSchema>;
+
 export const getOptionChoicesPayloadSchema = z
   .object({
     projectRef: projectRefSchema,
@@ -88,6 +102,7 @@ const choicesShape = {
   /** By option name: only options declared `choices: "dynamic"`. */
   fields: z.record(z.string(), fieldChoicesSchema).readonly(),
   nameSuggestions: z.array(nameSuggestionSchema).readonly(),
+  blockedNames: z.array(blockedNameSchema).readonly(),
 };
 
 export const getOptionChoicesResultSchema = z
@@ -100,6 +115,7 @@ export const listChoicesHookResultSchema = z
   .object({
     fields: choicesShape.fields.optional(),
     nameSuggestions: choicesShape.nameSuggestions.optional(),
+    blockedNames: choicesShape.blockedNames.optional(),
   })
   .readonly();
 
@@ -167,11 +183,13 @@ export class GetOptionChoicesOperation implements Operation<typeof schemas> {
       throwHookErrors(errors, "project:get-option-choices list hooks failed");
       const fields: Record<string, FieldChoices> = {};
       const nameSuggestions: NameSuggestion[] = [];
+      const blockedNames: BlockedName[] = [];
       for (const result of results) {
         Object.assign(fields, result.fields);
         nameSuggestions.push(...(result.nameSuggestions ?? []));
+        blockedNames.push(...(result.blockedNames ?? []));
       }
-      return { fields, nameSuggestions, projectRef, projectId };
+      return { fields, nameSuggestions, blockedNames, projectRef, projectId };
     };
 
     const first = await list(false);

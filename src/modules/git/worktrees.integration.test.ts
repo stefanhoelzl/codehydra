@@ -1282,6 +1282,25 @@ describe("Git module: worktrees", () => {
       ]);
     });
 
+    it("blocks names clashing with a local branch, and suggests no remote branch that does", async () => {
+      const { dispatcher, provider } = setup;
+      provider.listBases.mockResolvedValue([
+        { name: "feature/login", isRemote: false },
+        { name: "origin/feature/login/v2", isRemote: true, derives: "feature/login/v2" },
+        { name: "origin/other", isRemote: true, derives: "other" },
+      ]);
+      provider.defaultBase.mockResolvedValue("feature/login");
+
+      const result = await dispatchListChoices(dispatcher, projPath("/projects/my-app"));
+
+      const reason = "Clashes with branch 'feature/login' (git cannot have both)";
+      expect(result.blockedNames).toEqual([
+        { name: "feature", reason },
+        { name: "feature/login/", prefix: true, reason },
+      ]);
+      expect(result.nameSuggestions?.map((s) => s.label)).toEqual(["other"]);
+    });
+
     it("says why there is nothing to choose for a repository without branches", async () => {
       const { dispatcher, provider } = setup;
       provider.listBases.mockResolvedValue([]);

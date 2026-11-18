@@ -37,6 +37,7 @@ import {
   type Metadata,
 } from "./workspace-metadata-store";
 import { Path } from "../../utils/path/path";
+import { branchClashMessage, clashingBranch } from "../../utils/branch-names";
 
 /**
  * Internal state for a registered project.
@@ -815,6 +816,13 @@ export class GitWorktreeProvider {
     // Check if branch already exists (local branches only)
     const branches = await this.gitClient.listBranches(projectRoot);
     const branchExists = branches.some((b) => b.name === name && !b.isRemote);
+
+    // Git cannot create `a` next to `a/b`, nor `a/b` next to `a`: say so before it fails.
+    if (!branchExists) {
+      const local = branches.filter((b) => !b.isRemote).map((b) => b.name);
+      const clash = clashingBranch(name, local);
+      if (clash !== undefined) throw new WorkspaceError(branchClashMessage(name, clash));
+    }
 
     // Validate tracking ref is a known remote branch
     if (tracking !== undefined) {
