@@ -9,6 +9,7 @@ import {
   isValidGitUrl,
   expandGitUrl,
   isLocalGitOrigin,
+  gitServerProject,
 } from "./url-utils";
 
 describe("normalizeGitUrl", () => {
@@ -181,5 +182,31 @@ describe("isLocalGitOrigin", () => {
     "myserver:repos/app.git",
   ])("reads %s as a remote", (url) => {
     expect(isLocalGitOrigin(url)).toBe(false);
+  });
+});
+
+describe("gitServerProject", () => {
+  it.each([
+    ["git@github.com:Org/Repo.git", { server: "github.com", project: "org/repo" }],
+    [
+      "https://user@GitLab.com/group/sub/app.git",
+      { server: "gitlab.com", project: "group/sub/app" },
+    ],
+    [
+      "https://git.example.com:8443/team/app",
+      { server: "git.example.com:8443", project: "team/app" },
+    ],
+    ["ssh://git@host.example/srv/app.git", { server: "host.example", project: "srv/app" }],
+  ])("splits %s", (url, expected) => {
+    expect(gitServerProject(url)).toEqual(expected);
+  });
+
+  it.each([
+    "/srv/git/repo",
+    String.raw`C:\repos\app`,
+    "file:///srv/git/repo",
+    "https://github.com/",
+  ])("has none for %s", (url) => {
+    expect(gitServerProject(url)).toBeUndefined();
   });
 });

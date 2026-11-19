@@ -102,6 +102,8 @@ import type { ProjectRef } from "../../intents/contract";
 import { descriptionOf } from "../../utils/workspace-conversion";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { testProjectTypes } from "../../intents/project-type-options.test-utils";
+import type { SecretsProvider, SecretsResolveOptions, SecretsTarget } from "../secrets-module";
+import type { PrepareHookInput, PrepareHookResult } from "../../intents/open-workspace";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
@@ -159,6 +161,11 @@ interface SetupOptions {
   readonly sources?: string;
   /** Other folders' plugins: folder → file name → manifest text. */
   readonly folders?: Record<string, Record<string, string>>;
+  /**
+   * The repository's secrets: handed to the plugin module, and contributed to
+   * the workspace environment at "prepare" as the secrets module does.
+   */
+  readonly secrets?: SecretsProvider;
 }
 
 interface TestSetup {
@@ -514,10 +521,35 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     sink,
     projectRefs: async () => options?.projectRefs ?? new Map(),
     registry: () => registry,
+    ...(options?.secrets !== undefined && { secrets: options.secrets }),
     platform: "linux",
     now: () => clock,
   });
   dispatcher.registerModule(module);
+  const secrets = options?.secrets;
+  if (secrets !== undefined) {
+    dispatcher.registerModule({
+      name: "test-secrets",
+      hooks: {
+        [OPEN_WORKSPACE_OPERATION_ID]: {
+          prepare: {
+            handler: async (ctx: HookContext): Promise<HookOutput<PrepareHookResult>> => {
+              const input = ctx as PrepareHookInput;
+              const env = await secrets.env(
+                {
+                  projectPath: input.projectPath,
+                  cwd: input.workspacePath,
+                  label: input.workspaceName,
+                },
+                { share: input.intent }
+              );
+              return { result: { env } };
+            },
+          },
+        },
+      },
+    });
+  }
 
   return {
     projects: [],
@@ -2477,5 +2509,134 @@ describe("ch plugin automation", () => {
         state: "ask",
       }),
     ]);
+  });
+});
+
+// =============================================================================
+
+/** Secrets as the secrets module hands them out: one resolution per share object. */
+function fakeSecrets(env: Record<string, string>): SecretsProvider & {
+  readonly calls: Array<{ target: SecretsTarget; options: SecretsResolveOptions | undefined }>;
+  resolutions: number;
+} {
+  const shared = new WeakSet<object>();
+  const fake = {
+    calls: [] as Array<{ target: SecretsTarget; options: SecretsResolveOptions | undefined }>,
+    resolutions: 0,
+    env: async (
+      target: SecretsTarget,
+      options?: SecretsResolveOptions
+    ): Promise<Record<string, string>> => {
+      fake.calls.push({ target, options });
+      const share = options?.share;
+      if (share === undefined || !shared.has(share)) fake.resolutions += 1;
+      if (share !== undefined) shared.add(share);
+      return { ...env };
+    },
+  };
+  return fake;
+}
+
+describe("secrets", () => {
+  it("gives every hook of one open the workspace's secrets, resolved once", async () => {
+    const secrets = fakeSecrets({ API_TOKEN: "s3cret" });
+    const setup = createTestSetup({
+      secrets,
+      local: {
+        "a.yaml": hooksManifest({
+          "after-worktree-created": "setup",
+          "before-workspace-opened": "env",
+        }),
+      },
+      outcomes: { setup: { stdout: "{}" }, env: { stdout: "{}" } },
+    });
+
+    await openWorkspace(setup);
+
+    expect(setup.ran).toEqual(["setup", "env"]);
+    expect(setup.envs[0]).toMatchObject({ API_TOKEN: "s3cret" });
+    expect(setup.envs[1]).toMatchObject({ API_TOKEN: "s3cret" });
+    expect(setup.terminalEnv[0]).toMatchObject({ API_TOKEN: "s3cret" });
+    expect(secrets.resolutions).toBe(1);
+    expect(new Path(secrets.calls[0]!.target.cwd).equals(new Path(WORKSPACE_PATH))).toBe(true);
+  });
+
+  it("resolves again on every open", async () => {
+    const secrets = fakeSecrets({ API_TOKEN: "s3cret" });
+    const setup = createTestSetup({ secrets });
+
+    await reopenWorkspace(setup);
+    await reopenWorkspace(setup);
+
+    expect(secrets.resolutions).toBe(2);
+  });
+
+  it("keeps a secret when a plugin's env names the same variable", async () => {
+    const secrets = fakeSecrets({ API_TOKEN: "s3cret" });
+    const setup = createTestSetup({
+      secrets,
+      local: { "a.yaml": hooksManifest({ "before-workspace-opened": "env" }) },
+      outcomes: { env: { stdout: JSON.stringify({ env: { API_TOKEN: "plugin", A: "1" } }) } },
+    });
+
+    await reopenWorkspace(setup);
+
+    expect(setup.terminalEnv[0]).toMatchObject({ API_TOKEN: "s3cret", A: "1" });
+  });
+
+  it("lets a plugin's settings win over a secret of the same name", async () => {
+    const secrets = fakeSecrets({ CH_CONFIG_TOKEN: "from-vault" });
+    const setup = repositorySetup(
+      {
+        "notes.yaml": [
+          "config:",
+          "  token: {type: string, required: true}",
+          "automations:",
+          "  a: list",
+        ].join("\n"),
+      },
+      {
+        secrets,
+        sources: `project:\n  type: project\n  project: ${PROJECT_ROOT}\n  config:\n    notes: {token: t1}\n`,
+        outcomes: { list: { stdout: "[]" } },
+      }
+    );
+
+    await setup.tick();
+
+    expect(setup.envs[0]).toMatchObject({ CH_CONFIG_TOKEN: "t1" });
+  });
+
+  it("resolves a repository's automation's secrets on every run", async () => {
+    const secrets = fakeSecrets({ API_TOKEN: "s3cret" });
+    const setup = repositorySetup(
+      { "github.yaml": automation("list") },
+      { secrets, outcomes: { list: { stdout: "[]" } } }
+    );
+
+    await setup.tick();
+    await setup.tick();
+
+    expect(setup.envs).toHaveLength(2);
+    expect(setup.envs[1]).toMatchObject({ API_TOKEN: "s3cret" });
+    expect(secrets.resolutions).toBe(2);
+    expect(secrets.calls[0]!.options?.repeatKey).toBeDefined();
+    expect(new Path(secrets.calls[0]!.target.projectPath).equals(new Path(PROJECT_ROOT))).toBe(
+      true
+    );
+  });
+
+  it("gives a user's automation none", async () => {
+    const secrets = fakeSecrets({ API_TOKEN: "s3cret" });
+    const setup = createTestSetup({
+      secrets,
+      local: { "notes.yaml": automation("list") },
+      outcomes: { list: { stdout: "[]" } },
+    });
+
+    await setup.startApp();
+
+    expect(setup.envs[0]).not.toHaveProperty("API_TOKEN");
+    expect(secrets.calls).toHaveLength(0);
   });
 });

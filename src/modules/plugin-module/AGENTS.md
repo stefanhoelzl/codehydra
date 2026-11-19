@@ -53,6 +53,7 @@ User scripts attached to CodeHydra: YAML manifests contributing **hooks** and **
 ## Running scripts (`src/modules/scripts/`)
 
 - `script-runner.ts`: body → temp file, GitHub-Actions shell flags, `ch` on PATH, `CH_PLUGIN_DIR` (folder plugins) / `CH_WORKSPACE_DIR` (hooks), JSON stdin newline-terminated, rest of the app's env inherited. Windows bash = `paths.bash` or Git Bash (`shells.ts`), never WSL.
+- Secrets (`src/modules/secrets-module.ts`, `deps.secrets`): hooks get the workspace's (`HookTarget.occasion` = the open's/deletion's intent, so one fetch per occasion), a repository's automations get the project's (fetched in `collectAutomations`, into the job's `env`); `CH_CONFIG_*` win over a secret, and a `before-workspace-opened` `env` key a secret already sets is dropped.
 - Each run writes `<data>/logs/plugins/<type>/<entry>/<plugin>/<kind>/<hook-or-automation>/<ts>-<hex>.<ok|failed>.log` (project plugins: `project/<project dir>/…`) — header, stdin, stderr, stdout, never env. Retention per entry: newest 10 failures, newest 1 success (`run-log.ts`). Script output never reaches the app log.
 - Error book (`errors.ts`): **problems** (a plugin cannot run: bad manifest, bad settings, missing shell) and **failures** (last failed run of a hook or remote fetch). `ch plugin errors --all` adds past failures: kept failed run logs plus log-less ones since start. One card per failing entry (`failure-cards.ts`), raised per distinct message, closed when the entry clears, with a `keepOpen` **Open log** button (OS default app).
 

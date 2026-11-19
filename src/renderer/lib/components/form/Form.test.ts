@@ -1364,6 +1364,42 @@ describe("Form component", () => {
       });
     });
 
+    it("focuses a settings row's field when an update gives it the autofocus flag", async () => {
+      // The settings dialog swaps a preset select for a free-text field (a new
+      // field id) when Custom is picked; the new field must take the focus.
+      const row = (field: "select" | "custom"): DialogConfig => ({
+        sections: [
+          {
+            type: "setting-row",
+            label: "command",
+            fields: [
+              field === "select"
+                ? {
+                    type: "dropdown",
+                    id: "cmd",
+                    searchable: false,
+                    suggestions: [{ items: [{ value: "x", label: "x" }] }],
+                  }
+                : {
+                    type: "dropdown",
+                    id: "cmd::v1",
+                    freeText: true,
+                    autofocus: true,
+                    suggestions: [{ items: [] }],
+                  },
+            ],
+          },
+        ],
+      });
+      const { rerender } = renderForm(row("select"));
+
+      await rerender({ dialogId: "test-dialog", config: row("custom") });
+
+      await waitFor(() => {
+        expect(document.activeElement?.id).toBe("cmd::v1-input");
+      });
+    });
+
     it("does not steal focus when an update re-sends the same target", async () => {
       const { rerender } = renderForm(twoDropdowns("a"));
 

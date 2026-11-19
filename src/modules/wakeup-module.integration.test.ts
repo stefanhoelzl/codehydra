@@ -61,6 +61,7 @@ import { createRegistry } from "../api/entries";
 import type { OperationName } from "../api/names";
 import type { OperationContext as EntryContext } from "../api/types";
 import { Path } from "../utils/path/path";
+import type { SecretsProvider, SecretsTarget } from "./secrets-module";
 
 const MINUTE = 60_000;
 const PROJECT_PATH = projPath(testPath("/projects/repo").toString());
@@ -98,7 +99,7 @@ function fakeOperation<I extends { type: string; payload: unknown }, R>(
   })();
 }
 
-function createSetup() {
+function createSetup(options?: { secrets?: SecretsProvider }) {
   const dispatcher = createMockDispatcher();
   const cards = createMockNotificationManager();
   cards.register(dispatcher);
@@ -251,6 +252,7 @@ function createSetup() {
     logger: createBehavioralLogger(),
     pathProvider: createMockPathProvider(),
     pollErrors: (owner) => poll.errors(owner),
+    ...(options?.secrets !== undefined && { secrets: options.secrets }),
   });
   dispatcher.registerOperation(new PollTickOperation());
   dispatcher.registerModule(poll);
@@ -569,5 +571,30 @@ describe("wakeup scripts: polling", () => {
       hibernated: false,
       hibernatedAt: null,
     });
+  });
+});
+
+describe("wakeup scripts: secrets", () => {
+  it("resolves the repository's secrets for every poll, and stores none", async () => {
+    const targets: SecretsTarget[] = [];
+    const secrets: SecretsProvider = {
+      env: async (target) => {
+        targets.push(target);
+        return { API_TOKEN: "s3cret", A: "from-vault" };
+      },
+    };
+    const setup = createSetup({ secrets });
+    const ws = setup.add("pr-12");
+    await setup.call("workspace.hibernate", ws.ref, { wakeup: "check", env: ["A=1"] });
+
+    await setup.start();
+    await setup.tick();
+
+    expect(setup.requests).toHaveLength(2);
+    // The script's own variables win.
+    expect(setup.requests[1]!.env).toEqual({ API_TOKEN: "s3cret", A: "1" });
+    expect(targets).toHaveLength(2);
+    expect(new Path(targets[0]!.cwd).equals(new Path(ws.path))).toBe(true);
+    expect(JSON.stringify(setup.get(ws.ref).metadata)).not.toContain("s3cret");
   });
 });

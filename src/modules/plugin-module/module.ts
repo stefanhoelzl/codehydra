@@ -172,6 +172,7 @@ import {
 import { automationManifest, holdsOnlyAutomation } from "./automation-files";
 import { isDue, nextRun } from "./schedule";
 import { settingsEnv } from "./plugin-config";
+import type { SecretsProvider } from "../secrets-module";
 import { manifestJsonSchema, type PluginDocument } from "./manifest";
 import { createPluginErrorBook, ERRORS_POINTER, type PluginErrorBook } from "./errors";
 import { createPluginTrust, type PluginTrust, type TrustProject } from "./trust";
@@ -239,6 +240,11 @@ export interface PluginModuleDeps {
    * `plugin.*` entries reach this module, so it is built after it.
    */
   readonly registry: () => OperationRegistry;
+  /**
+   * A repository's secrets, for its workspace's hooks and its own automations
+   * (secrets-module.ts). Absent: none.
+   */
+  readonly secrets?: SecretsProvider;
   /** Which documents apply. Default: this process's platform. */
   readonly platform?: NodeJS.Platform;
   /** What a `schedule` is compared with. Default: `Date.now`. */
@@ -467,6 +473,11 @@ interface HookTarget {
   readonly projectRef: ProjectRef;
   readonly projectPath: string;
   readonly workspaceName: string;
+  /**
+   * The occasion its scripts run for (an open's or a deletion's intent): its
+   * scripts share one resolution of the workspace's secrets.
+   */
+  readonly occasion?: object;
 }
 
 export function createPluginModule(deps: PluginModuleDeps): PluginModule {
@@ -920,7 +931,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     // A remote's tree stays while its script runs, whatever an update does meanwhile.
     const release = plugin.tree === undefined ? undefined : checkouts.acquire(plugin.tree);
     try {
-      return await runScriptNow({ ...request, env: plugin.env }, parse, describeExit);
+      // The plugin's own settings win over a secret of the same name.
+      return await runScriptNow(
+        { ...request, env: { ...request.env, ...plugin.env } },
+        parse,
+        describeExit
+      );
     } finally {
       release?.();
     }
@@ -1034,6 +1050,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       entry,
     };
     const worktree = new Path(target.workspacePath);
+    const secretsEnv = await workspaceSecrets(target);
 
     const run = await runScript(
       script.plugin,
@@ -1046,6 +1063,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         input: stdin,
         logDir: logDir(script.plugin, target.projectPath, "hooks", entry),
         workspaceDir: worktree,
+        ...(Object.keys(secretsEnv).length > 0 && { env: secretsEnv }),
         ...(script.plugin.pluginDir !== undefined && { pluginDir: script.plugin.pluginDir }),
         signal,
       },
@@ -1160,7 +1178,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     const core = coreInput(input);
     const outputs = await runOpenEntry(
       spec.name,
-      targetOf(input, core.workspaceName),
+      targetOf(input, core.workspaceName, input.intent),
       // The create options it was made with, as workspace:open checked them.
       { ...core, options: input.intent.payload.options ?? {} },
       spec.output
@@ -1185,9 +1203,10 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     input: HookInput<typeof OPEN_WORKSPACE_OPERATION_ID, "prepare">
   ): Promise<HookOutput<PrepareHookResult>> {
     const core = coreInput(input);
+    const target = targetOf(input, core.workspaceName, input.intent);
     const outputs = await runOpenEntry(
       spec.name,
-      targetOf(input, core.workspaceName),
+      target,
       { ...core, reopened: !input.fresh },
       spec.output
     );
@@ -1201,6 +1220,17 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       deps.logger.warn("Plugin env may not set CodeHydra's own variables", {
         entry: spec.name,
         dropped: dropped.join(","),
+      });
+    }
+    // The secrets module contributes these to the same environment; two
+    // contributions of one variable would fail the open.
+    const secretsEnv = await workspaceSecrets(target);
+    const shadowed = Object.keys(kept).filter((name) => name in secretsEnv);
+    if (shadowed.length > 0) {
+      for (const name of shadowed) delete kept[name];
+      deps.logger.warn("Plugin env may not override the repository's secrets", {
+        entry: spec.name,
+        dropped: shadowed.join(","),
       });
     }
     return { result: { env: kept } };
@@ -1233,7 +1263,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       projectRef: ProjectRef;
       projectPath: string;
     },
-    workspaceName: string
+    workspaceName: string,
+    occasion?: object
   ): HookTarget {
     return {
       workspaceRef: input.workspaceRef,
@@ -1241,7 +1272,24 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       projectRef: input.projectRef,
       projectPath: input.projectPath,
       workspaceName,
+      ...(occasion !== undefined && { occasion }),
     };
+  }
+
+  /**
+   * The workspace's secrets for a hook script: one resolution per occasion
+   * (the open, the deletion), else one per script.
+   */
+  function workspaceSecrets(target: HookTarget): Promise<Record<string, string>> {
+    if (deps.secrets === undefined) return Promise.resolve({});
+    return deps.secrets.env(
+      {
+        projectPath: target.projectPath,
+        cwd: target.workspacePath,
+        label: `workspace "${target.workspaceName}"`,
+      },
+      target.occasion === undefined ? undefined : { share: target.occasion }
+    );
   }
 
   /** A target's project, as trust asks about it. */
@@ -1261,7 +1309,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     if (!allowed()) return { result: {} };
 
     const entry = spec.name;
-    const target = targetOf(input, input.workspaceName);
+    const target = targetOf(input, input.workspaceName, intent);
 
     // Claim a row on the deletion panel before anything slow happens — the
     // trust dialog included, so a question raised here has something to explain
@@ -1349,7 +1397,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
           type: INTENT_RESOLVE_WORKSPACE,
           payload: { workspaceRef: payload.workspaceRef },
         });
-        const target = targetOf(resolved, payload.workspaceName);
+        // Its scripts share one resolution of the workspace's secrets.
+        const target = targetOf(resolved, payload.workspaceName, {});
         const stdin = {
           workspaceName: payload.workspaceName,
           workspacePath: resolved.workspacePath,
@@ -1602,7 +1651,28 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         leases.set(id, defaultBranches.acquire(owner.checkout.tree, project));
       }
     }
-    return sources.map(automationJob);
+    return Promise.all(sources.map(withSecrets));
+  }
+
+  /**
+   * An automation's job, with its repository's secrets resolved for this run
+   * (a user's automation has no repository, so none). Its own settings win
+   * over a secret of the same name.
+   */
+  async function withSecrets(source: PluginAutomation): Promise<PollJob> {
+    const job = automationJob(source);
+    const { repository, owner } = source;
+    if (deps.secrets === undefined || repository === undefined) return job;
+    const secretsEnv = await deps.secrets.env(
+      {
+        projectPath: repository.path,
+        cwd: job.cwd,
+        label: `automation "${owner.name}/${source.name}"`,
+      },
+      { repeatKey: `automation:${source.id}` }
+    );
+    if (Object.keys(secretsEnv).length === 0) return job;
+    return { ...job, env: { ...secretsEnv, ...job.env } };
   }
 
   /** When each automation with a schedule last ran since the app started, by id. */

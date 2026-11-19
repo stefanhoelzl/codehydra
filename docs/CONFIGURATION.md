@@ -92,6 +92,10 @@ Default `60` · `poll-module.ts`. Seconds between the **end** of one poll (`poll
 
 Default `30` · `poll-module.ts`. Seconds a poll script (automation, wakeup script) may run before it is killed; a job may set its own. Minimum 1.
 
+#### `secrets.command`
+
+Default `null` (no password manager) · `secrets-module.ts`. The password manager's command line that a command is appended to (`op run --env-file .env.tpl --`, …): the secrets it injects reach every workspace's environment, its plugin hooks, a repository's automations and wakeup scripts — fetched anew for each, never cached or persisted. `${NAME}` is expanded by CodeHydra (`CH_GIT_SERVER`, `CH_GIT_PROJECT`: the origin's server and path) and the line is split without a shell (`utils/command-line.ts`); one with an unclosed quote is invalid. Settings control `preset-text`: a select of `SECRETS_PRESETS` plus None and Custom (free text). Applies live (next fetch). `omit: true` — a custom line may carry a token.
+
 #### `version.claude`
 
 Default `null` · `src/main.ts`. `null` = the `claude` on PATH, else a download of the latest `stable`; set = that version (exact, or `latest`/`stable` re-resolved each start), downloaded and used even over a system install. Any string; a bad one fails on the setup screen.
@@ -274,6 +278,7 @@ The `LoggerName` union in `src/boundaries/platform/logging-types.ts` is the sour
 | `agent-resolver`  | Agent selection                                                                                    |
 | `binary-download` | Binary downloads and resolution                                                                    |
 | `plugins`         | PluginModule (hooks, automations), PollModule, WakeupModule, the shared script runner              |
+| `secrets`         | SecretsModule (a password manager's secrets, `secrets.command`)                                    |
 | `api`             | IPC handlers, ApiServerModule, view/agent/workspace intent modules                                 |
 | `lifecycle`       | App lifecycle API                                                                                  |
 | `cli`             | CliModule (`ch` scripts, published connection details)                                             |

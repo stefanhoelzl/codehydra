@@ -568,3 +568,112 @@ describe("SettingsModule — contributed rows", () => {
     expect(keys).not.toContain("extra:storage.moved");
   });
 });
+
+describe("SettingsModule — preset-text", () => {
+  const PRESETS = [
+    { label: "1Password", value: "op run --env-file .env.tpl --" },
+    { label: "Doppler", value: "doppler run --" },
+  ];
+  type DropdownField = Extract<
+    Extract<DialogSection, { type: "setting-row" }>["fields"][number],
+    { type: "dropdown" }
+  >;
+
+  function presetSetup(stored: string | null): {
+    config: Config;
+    dialogs: ReturnType<typeof createMockDialogManager>;
+    field: () => DropdownField;
+  } {
+    const config = createMockConfig({ defaults: { "secrets.command": stored } });
+    config.register("secrets.command", {
+      default: null,
+      applies: "live",
+      ...storeCustom<string | null>({
+        parse: (s) => (s === "" ? null : s),
+        validate: (v) => (v === null ? null : typeof v === "string" ? v : undefined),
+        settingsControl: { kind: "preset-text", presets: PRESETS },
+      }),
+    });
+    const dialogs = createMockDialogManager();
+    const { openSettings } = createSettingsModule({
+      ui: dialogs.ui as unknown as UiPresenter,
+      config,
+      app: createAppBoundaryMock({ platform: "linux" }),
+      dialog: createBehavioralDialogBoundary(),
+      extras: () => [],
+      logger: createMockLogger(),
+    });
+    openSettings();
+    const field = (): DropdownField => {
+      const row = rowByLabel(dialogs.lastHandle!.config, "command")!;
+      const first = row.fields[0]!;
+      if (first.type !== "dropdown") throw new Error("not a dropdown");
+      return first;
+    };
+    return { config, dialogs, field };
+  }
+
+  it("offers None, the presets and Custom in a select", () => {
+    const { field } = presetSetup(null);
+
+    expect(field().freeText).toBeUndefined();
+    expect(field().searchable).toBe(false);
+    expect(field().value).toBe("");
+    expect(field().suggestions[0]!.items.map((item) => item.label)).toEqual([
+      "None",
+      "1Password",
+      "Doppler",
+      "Custom…",
+    ]);
+  });
+
+  it("turns editable on Custom, seeded with the preset selected before", async () => {
+    const { config, dialogs, field } = presetSetup(null);
+    const handle = dialogs.lastHandle!;
+
+    handle.emitChange(field().id, { [field().id]: PRESETS[1]!.value });
+    handle.emitChange(field().id, { [field().id]: "::custom" });
+
+    expect(field().freeText).toBe(true);
+    expect(field().value).toBe("doppler run --");
+    // It replaces the focused select, so it takes the focus.
+    expect(field().autofocus).toBe(true);
+    const customId = field().id;
+    expect(customId).not.toBe("secrets.command");
+
+    handle.emitAction("save", { [customId]: "doppler run --project api --" });
+    await flush();
+    expect(config.getEffective()["secrets.command"]).toBe("doppler run --project api --");
+  });
+
+  it("opens a command that names no preset as Custom", () => {
+    const { field } = presetSetup("vault-run --");
+
+    expect(field().freeText).toBe(true);
+    expect(field().value).toBe("vault-run --");
+    // Opening the dialog does not move the focus to it.
+    expect(field().autofocus).toBeUndefined();
+  });
+
+  it("goes back to the select when a preset is picked from Custom's suggestions", async () => {
+    const { config, dialogs, field } = presetSetup("vault-run --");
+    const handle = dialogs.lastHandle!;
+
+    handle.emitChange(field().id, { [field().id]: `::preset:${PRESETS[0]!.value}` });
+
+    expect(field().freeText).toBeUndefined();
+    expect(field().value).toBe(PRESETS[0]!.value);
+    handle.emitAction("save", { [field().id]: PRESETS[0]!.value });
+    await flush();
+    expect(config.getEffective()["secrets.command"]).toBe(PRESETS[0]!.value);
+  });
+
+  it("saves None as no command", async () => {
+    const { config, dialogs, field } = presetSetup(PRESETS[0]!.value);
+
+    dialogs.lastHandle!.emitAction("save", { [field().id]: "" });
+    await flush();
+
+    expect(config.getEffective()["secrets.command"]).toBeNull();
+  });
+});

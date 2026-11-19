@@ -416,7 +416,9 @@ ch ws hibernate --wakeup 'gh pr checks 12 >/dev/null && echo "{\"action\":\"wake
   once the app has opened its projects. It is killed after `poll.timeout`
   (default 30 seconds). It runs in the worktree, with `ch` on `PATH` (so
   `ch ws …` acts on that workspace), `CH_WORKSPACE_DIR` and its own variables
-  set, and `{"workspace": <ref>, "project": <ref>, "workspacePath": …}` on
+  set — plus the repository's
+  [secrets](#secrets-from-a-password-manager), fetched for that run (its own
+  variables win) — and `{"workspace": <ref>, "project": <ref>, "workspacePath": …}` on
   stdin. `plugins.enabled` does not stop it.
 - **What it prints** — nothing, or `{"action":"keep"}`, keeps the workspace
   asleep. `{"action":"wake","message":"…"}` wakes it in place (you stay where
@@ -771,6 +773,74 @@ Earlier versions marked the workspaces a migration left behind with an
 `external` tag. The first start of this version removes that tag from them;
 they stay listed, now on any branch.
 
+### Secrets from a password manager
+
+A repository's secrets — API tokens, database passwords — can come from your
+password manager instead of a file. Pick it under **secrets → command** in the
+settings dialog (key `secrets.command`):
+
+| Entry                     | Command line                                                      |
+| ------------------------- | ----------------------------------------------------------------- |
+| None (default)            | —                                                                 |
+| 1Password                 | `op run --env-file .env.tpl --`                                   |
+| Bitwarden Secrets Manager | `bws run --`                                                      |
+| Doppler                   | `doppler run --`                                                  |
+| Infisical                 | `infisical run --`                                                |
+| Keeper Secrets Manager    | `ksm exec --`                                                     |
+| Heylogin                  | `uvx heyl --project heyl://${CH_GIT_SERVER}/${CH_GIT_PROJECT}`    |
+| Custom…                   | your own; the field turns editable, starting from the entry above |
+
+The setting is the command line; a command line that is no preset shows as
+**Custom**, and picking a preset from Custom's suggestions goes back to the
+list. Every such tool starts a command with the secrets added to its
+environment, so the setting is the part before that command. Which secrets
+apply is the repository's business: the command reads a file in the worktree
+(1Password's `.env.tpl`, with `op://` references), or names the vault by the
+repository:
+
+- `CH_GIT_SERVER` — the server of the repository's `origin`, e.g. `github.com`
+  (with a port when it is not the default);
+- `CH_GIT_PROJECT` — its path there, e.g. `org/repo`.
+
+Both are lower-cased, as CodeHydra names projects. `${NAME}` in the command
+line is replaced by CodeHydra itself, the same on every system, and so is the
+quoting: the line is split at spaces, `"…"` or `'…'` keep spaces together, and
+a backslash is literal (inside `"…"`, `\"` is a quote). No shell runs it.
+
+**When secrets are fetched** — every time they are needed, never kept:
+
+- when a workspace opens: on creation, when CodeHydra starts or a project is
+  opened, and when it wakes from hibernation. One fetch per open serves the
+  workspace's environment — the agent and every command it runs, and the
+  editor's terminals, as a [`before-workspace-opened`](#before-workspace-opened)
+  `env` does — and that open's plugin hooks;
+- for every run of a [repository's automation](#repository-automations), in its
+  default branch's checkout, and every poll of a [wakeup script](#wakeup-scripts);
+- once for a deletion's `before-worktree-deleted` hooks, and once for the
+  `on-workspace-opened` hooks after each open.
+
+What a fetch returns is used for that one thing and dropped; it is never written
+to a file nor to the workspace's metadata. A workspace's environment stays in
+memory while it is open, as every workspace environment does, and is gone when
+it closes or hibernates. Your own automations — no repository — get no secrets.
+A plugin's own [settings](#plugin-settings) win over a secret of the same name;
+a `before-workspace-opened` `env` cannot replace one (it is dropped, with a
+warning in the log).
+
+A repository with no `origin` remote (or one that is a local path) gets
+neither the variables nor secrets, and nothing runs. With **None**, the
+variables are still set.
+
+**When it fails** — the tool exits with an error, cannot be started, does not
+run the command it was handed, or takes over 2 minutes (time enough for an
+unlock prompt) — the workspace opens, or the script runs, without secrets, and
+a **Secrets for … could not be loaded** notification shows the tool's error.
+For automations and wakeup scripts, which run every poll, only the first
+failure in a row is shown.
+
+A change of the setting applies to the next fetch: an open workspace keeps its
+environment until it is reopened (hibernate and wake it, or restart).
+
 ## Plugins
 
 A plugin is your own script — or a repository's — attached to CodeHydra. A
@@ -968,7 +1038,10 @@ the way GitHub Actions runs a `run:` step for its shell:
   - `CH_WORKSPACE_DIR`: the worktree, for hooks;
   - `CH_CONFIG_<NAME>`: the values of the plugin's own
     [settings](#plugin-settings) — never another plugin's, nor any
-    `CH_CONFIG_*` in CodeHydra's own environment.
+    `CH_CONFIG_*` in CodeHydra's own environment;
+  - for a hook, and a repository's automation: `CH_GIT_SERVER`,
+    `CH_GIT_PROJECT` and the repository's secrets, when a
+    [password manager](#secrets-from-a-password-manager) is set up.
 - **Working directory**: the worktree for a hook; the plugin's folder (or the
   plugins folder, for a one-file plugin) for an automation; for a repository's
   automation, CodeHydra's checkout of the project's default branch (see
@@ -1233,7 +1306,8 @@ Output — optional:
 A value replaces any variable of the same name in the environment CodeHydra
 starts things with; there is no appending, so an `env` that sets `PATH` must
 contain the whole path. Keys starting with `_CH_` are CodeHydra's own and are
-dropped (a warning is logged).
+dropped (a warning is logged), and so are keys the repository's
+[secrets](#secrets-from-a-password-manager) already set.
 
 CodeHydra puts `GIT_OPTIONAL_LOCKS=0` in the same places, plugin or no plugin,
 so `git status` there never takes `index.lock` — one killed mid-way cannot

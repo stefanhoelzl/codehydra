@@ -58,6 +58,10 @@ const PICK_PREFIX = "pick:";
 const EXTRA_PREFIX = "extra:";
 /** Sub-field id suffix for a guarded-text control's on/off checkbox. */
 const GUARD_ON_SUFFIX = "::on";
+/** A preset-text select's "Custom…" entry. */
+const PRESET_CUSTOM = "::custom";
+/** A preset-text free-text field's suggestions are `${PRESET_PICK}${preset value}`. */
+const PRESET_PICK = "::preset:";
 
 // =============================================================================
 // Dependencies
@@ -95,6 +99,24 @@ interface SettingKey {
   readonly key: string;
   readonly def: PersistedKeyDefinition<unknown>;
   readonly control: SettingsControl;
+}
+
+/**
+ * A preset-text row's mode while the dialog is open: a select of the presets,
+ * or free text (Custom). Every switch moves the row to a fresh field id
+ * (`generation`), so the renderer seeds the new field from `seed` instead of
+ * keeping what the old one held.
+ */
+interface PresetMode {
+  readonly custom: boolean;
+  readonly generation: number;
+  /** The string the current field starts with. */
+  readonly seed: string;
+  /**
+   * The field was just switched to free text by picking "Custom…": it takes
+   * the focus, which the replaced select had, so typing edits it at once.
+   */
+  readonly focus?: boolean;
 }
 
 // =============================================================================
@@ -164,6 +186,71 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
   let pickedValues: Record<string, string> = {};
   /** Latest renderer field data, so a pick can rebuild without losing other edits. */
   let latestData: Record<string, string> | undefined;
+  /** Each preset-text key's mode (see PresetMode). Keyed by config key. */
+  let presetModes: Record<string, PresetMode> = {};
+
+  /** A preset-text key's mode as the stored value implies it: Custom iff it names no preset. */
+  function initialPresetMode(entry: SettingKey, generation: number): PresetMode {
+    const current = asString(config.getEffective()[entry.key]);
+    const presets = entry.control.kind === "preset-text" ? entry.control.presets : [];
+    const custom = current !== "" && !presets.some((preset) => preset.value === current);
+    return { custom, generation, seed: current };
+  }
+
+  /** (Re)derive preset-text modes from the stored values, each on a fresh field id. */
+  function resetPresetModes(only?: string): void {
+    for (const entry of settingKeys()) {
+      if (entry.control.kind !== "preset-text") continue;
+      if (only !== undefined && entry.key !== only) continue;
+      const previous = presetModes[entry.key];
+      presetModes[entry.key] = initialPresetMode(
+        entry,
+        previous === undefined ? 0 : previous.generation + 1
+      );
+    }
+  }
+
+  function presetMode(key: string): PresetMode {
+    return presetModes[key] ?? { custom: false, generation: 0, seed: "" };
+  }
+
+  /** The id of the field a preset-text key currently renders as. */
+  function presetFieldId(key: string): string {
+    const { generation } = presetMode(key);
+    return generation === 0 ? key : `${key}::v${generation}`;
+  }
+
+  /**
+   * Switch the preset-text rows whose field just asked for it: "Custom…" picked
+   * in the select (free text, seeded with the entry selected before), or a
+   * preset picked from the free-text field's suggestions (back to the select).
+   */
+  function applyPresetSwitches(
+    previous: Record<string, string> | undefined,
+    data: Record<string, string>
+  ): void {
+    for (const entry of settingKeys()) {
+      if (entry.control.kind !== "preset-text") continue;
+      const mode = presetMode(entry.key);
+      const id = presetFieldId(entry.key);
+      const value = data[id];
+      if (!mode.custom && value === PRESET_CUSTOM) {
+        const before = previous?.[id] ?? mode.seed;
+        presetModes[entry.key] = {
+          custom: true,
+          generation: mode.generation + 1,
+          seed: before === PRESET_CUSTOM ? mode.seed : before,
+          focus: true,
+        };
+      } else if (mode.custom && value?.startsWith(PRESET_PICK) === true) {
+        presetModes[entry.key] = {
+          custom: false,
+          generation: mode.generation + 1,
+          seed: value.slice(PRESET_PICK.length),
+        };
+      }
+    }
+  }
 
   /** Settings-eligible keys (see isUserSetting), sorted. */
   function settingKeys(): SettingKey[] {
@@ -201,6 +288,14 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
       case "enum-list": {
         const selected = control.options.filter((opt) => data[`${key}::${opt}`] === "true");
         return def.validate(selected.slice().sort().join(","));
+      }
+      case "preset-text": {
+        const mode = presetMode(key);
+        let raw = data[presetFieldId(key)] ?? mode.seed;
+        if (raw === PRESET_CUSTOM) raw = mode.seed;
+        if (raw.startsWith(PRESET_PICK)) raw = raw.slice(PRESET_PICK.length);
+        raw = raw.trim();
+        return def.validate(raw === "" ? null : raw);
       }
       case "guarded-text": {
         const on = data[`${key}${GUARD_ON_SUFFIX}`] === "true";
@@ -265,6 +360,54 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
             changeEvent: true,
             suggestions,
             value: asString(current),
+          },
+        ];
+      }
+      case "preset-text": {
+        const mode = presetMode(key);
+        const id = presetFieldId(key);
+        if (mode.custom) {
+          return [
+            {
+              type: "dropdown",
+              id,
+              freeText: true,
+              changeEvent: true,
+              placeholder: "Command line",
+              suggestions: [
+                {
+                  header: "Presets",
+                  items: control.presets.map((preset) => ({
+                    value: `${PRESET_PICK}${preset.value}`,
+                    label: preset.label,
+                  })),
+                },
+              ],
+              value: mode.seed,
+              ...(mode.focus === true && { autofocus: true }),
+              ...(error !== undefined && { error }),
+            },
+          ];
+        }
+        return [
+          {
+            type: "dropdown",
+            id,
+            searchable: false,
+            changeEvent: true,
+            suggestions: [
+              {
+                items: [
+                  { value: "", label: "None" },
+                  ...control.presets.map((preset) => ({
+                    value: preset.value,
+                    label: preset.label,
+                  })),
+                  { value: PRESET_CUSTOM, label: "Custom…" },
+                ],
+              },
+            ],
+            value: mode.seed,
           },
         ];
       }
@@ -506,6 +649,8 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
     openValues = { ...config.getEffective() };
     pickedValues = {};
     latestData = undefined;
+    presetModes = {};
+    resetPresetModes();
     const handle = ui.dialog(buildConfig().config);
     activeHandle = handle;
 
@@ -517,6 +662,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
     handle.onChange((event) => {
       // Rebuild with the latest field values so validation, guard enable/disable
       // and restart notes reflect the edit.
+      applyPresetSwitches(latestData, event.data);
       latestData = { ...event.data };
       handle.update(buildConfig(event.data).config);
     });
@@ -534,6 +680,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
             if (config.getSource(entry.key) !== "default") await config.reset(entry.key);
           }
           openValues = { ...config.getEffective() };
+          resetPresetModes();
           handle.update(buildConfig().config);
         })();
         return;
@@ -544,6 +691,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
           delete pickedValues[key];
           await config.reset(key);
           openValues = { ...config.getEffective() };
+          resetPresetModes(key);
           handle.update(buildConfig().config);
         })();
         return;

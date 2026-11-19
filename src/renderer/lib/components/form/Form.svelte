@@ -440,6 +440,10 @@
         for (const item of section.items) {
           if (item.autofocus) return item.id;
         }
+      } else if (section.type === "setting-row") {
+        for (const field of section.fields) {
+          if (field.autofocus) return field.id;
+        }
       } else if (
         (section.type === "input" ||
           section.type === "dropdown" ||

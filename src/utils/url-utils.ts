@@ -231,3 +231,27 @@ export function isValidGitUrl(url: string): boolean {
 
   return false;
 }
+
+/** A remote repository's server and its path on that server. */
+export interface GitServerProject {
+  /** Host, with a non-default port: `github.com`, `git.example.com:8443`. */
+  readonly server: string;
+  /** The repository's path on the server, without `.git`: `org/repo`. */
+  readonly project: string;
+}
+
+/**
+ * Split a remote's URL into server and project, normalized as `normalizeGitUrl`
+ * does (so as project refs name it). Undefined for a local origin (a path) or a
+ * URL without both parts.
+ *
+ * @example
+ * gitServerProject("git@github.com:Org/Repo.git") // { server: "github.com", project: "org/repo" }
+ */
+export function gitServerProject(url: string): GitServerProject | undefined {
+  if (isLocalGitOrigin(url)) return undefined;
+  const normalized = normalizeGitUrl(url);
+  const slash = normalized.indexOf("/");
+  if (slash <= 0 || slash === normalized.length - 1) return undefined;
+  return { server: normalized.slice(0, slash), project: normalized.slice(slash + 1) };
+}

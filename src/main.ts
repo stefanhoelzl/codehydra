@@ -197,6 +197,7 @@ import { createSettingsModule } from "./modules/settings-module";
 import { createHelpModule } from "./modules/help-module";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createErrorNotificationModule } from "./modules/error-notification-module";
+import { createSecretsModule } from "./modules/secrets-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
 import { createCreationModule } from "./modules/creation-module";
 import type { ProjectRef } from "./intents/contract";
@@ -595,6 +596,17 @@ const helpModule = createHelpModule({
 openHelp = helpModule.openHelp;
 const cloneNotificationModule = createCloneNotificationModule({ dispatcher });
 const errorNotificationModule = createErrorNotificationModule({ dispatcher });
+// A repository's secrets from the user's password manager, for its workspaces,
+// hooks, automations and wakeup scripts.
+const secretsModule = createSecretsModule({
+  config: configService,
+  processRunner,
+  gitClient,
+  dispatcher,
+  logger: loggingService.createLogger("secrets"),
+  // Run as Node (ELECTRON_RUN_AS_NODE) to print the environment it was given.
+  selfExecutable: process.execPath,
+});
 
 // Owns the transient per-workspace facts contributed to workspace:resolve:
 // which teardown holds a workspace (`closing`), and which workspace is active.
@@ -683,6 +695,7 @@ const wakeupModule = createWakeupModule({
   logger: loggingService.createLogger("plugins"),
   pathProvider,
   pollErrors: (owner) => pollModule.errors(owner),
+  secrets: secretsModule.secrets,
 });
 
 // Every project type's workspace create/delete options. Empty until app:start's
@@ -831,6 +844,7 @@ const pluginModule = createPluginModule({
   // Built further down; read when app:start migrates.
   projectRefs: () => gitProjectModule.projectRefs(),
   registry: () => operationRegistry,
+  secrets: secretsModule.secrets,
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
   processRunner,
@@ -1173,6 +1187,7 @@ dispatcher.registerModule(autoTaggingModule);
 dispatcher.registerModule(lockModule);
 dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);
+dispatcher.registerModule(secretsModule.module);
 dispatcher.registerModule(hibernationScreenshotModule);
 dispatcher.registerModule(presentationModule);
 dispatcher.registerModule(cliModule.module);

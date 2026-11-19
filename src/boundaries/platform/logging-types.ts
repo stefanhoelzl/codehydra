@@ -34,6 +34,7 @@ export type LoggerName =
   | "opencode" // OpenCodeClient - OpenCode SDK
   | "claude" // ClaudeServerManager - Claude agent
   | "plugins" // PluginModule - user plugins: hooks, automations, the script runner
+  | "secrets" // SecretsModule - a password manager's secrets for repositories
   | "opencode-server" // OpenCodeServerManager - opencode server lifecycle
   | "api" // IPC handlers
   | "window" // WindowManager

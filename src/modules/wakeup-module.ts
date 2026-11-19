@@ -36,6 +36,7 @@ import type { PathProvider } from "../boundaries/platform/path-provider";
 import { projectDirName } from "../boundaries/platform/paths";
 import { defineEvents, defineHooks } from "../intents/declarations";
 import { POLL_TICK_OPERATION_ID, type PollJob, type PollRun } from "../intents/poll-tick";
+import type { SecretsProvider, SecretsTarget } from "./secrets-module";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../intents/list-projects";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "../intents/get-metadata";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../intents/set-metadata";
@@ -116,6 +117,8 @@ export interface WakeupModuleDeps {
   readonly pathProvider: Pick<PathProvider, "dataPath">;
   /** The wakeup scripts failing right now, as the poll module recorded them. */
   readonly pollErrors: (owner: string) => readonly PollError[];
+  /** The repository's secrets, resolved for every run (secrets-module.ts). Absent: none. */
+  readonly secrets?: SecretsProvider;
   /** Default: `Date.now`. */
   readonly now?: () => number;
 }
@@ -197,13 +200,13 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
       type: INTENT_LIST_PROJECTS,
       payload: {},
     });
-    const jobs: PollJob[] = [];
+    const jobs: Promise<PollJob>[] = [];
     for (const project of projects ?? []) {
       for (const workspace of project.workspaces) {
         if (workspace.metadata[HIBERNATED_METADATA_KEY] !== "true") continue;
         const wakeup = decodeWakeup(workspace.metadata[WAKEUP_METADATA_KEY]);
         if (wakeup === undefined) continue;
-        jobs.push({
+        const job: PollJob = {
           owner: WAKEUP_OWNER,
           id: workspace.ref,
           source: "wakeup",
@@ -216,10 +219,28 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
           ...(Object.keys(wakeup.env).length > 0 && { env: { ...wakeup.env } }),
           workspaceDir: workspace.path,
           failure: { title: "Wakeup script failed", pointer: "see ch ws wakeup show" },
-        });
+        };
+        jobs.push(
+          withSecrets(job, {
+            projectPath: project.path,
+            cwd: workspace.path,
+            label: `the wakeup script of "${workspace.name}"`,
+          })
+        );
       }
     }
-    return jobs;
+    return Promise.all(jobs);
+  }
+
+  /**
+   * A job with its repository's secrets resolved for this one run — never
+   * stored with the script, whose own variables win a clash.
+   */
+  async function withSecrets(job: PollJob, target: SecretsTarget): Promise<PollJob> {
+    if (deps.secrets === undefined) return job;
+    const secretsEnv = await deps.secrets.env(target, { repeatKey: `wakeup:${job.id}` });
+    if (Object.keys(secretsEnv).length === 0) return job;
+    return { ...job, env: { ...secretsEnv, ...job.env } };
   }
 
   /** Act on what a wakeup script printed. Returns what went wrong, for the poll module. */

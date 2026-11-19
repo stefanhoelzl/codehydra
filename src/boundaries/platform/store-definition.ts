@@ -71,6 +71,16 @@ export type SettingsControl =
     }
   | { readonly kind: "enum-list"; readonly options: readonly string[] }
   | {
+      /**
+       * A nullable string picked from named presets: a select listing "None"
+       * (null), each preset (its value is the string) and "Custom…". Custom
+       * turns the field into free text, seeded with the last selected preset's
+       * string; a stored string matching no preset opens as Custom.
+       */
+      readonly kind: "preset-text";
+      readonly presets: readonly SettingsOption[];
+    }
+  | {
       readonly kind: "guarded-text";
       /** Value written when the guard checkbox is unchecked. */
       readonly offValue: unknown;
