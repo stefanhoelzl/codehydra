@@ -301,6 +301,14 @@ export interface WorkspaceState {
    * the session the wrapper launched with the prompt is up.
    */
   onInitialPromptDelivered?: () => void;
+  /**
+   * The permission mode the session last reported (every hook carries it), or
+   * the one the workspace last ran in, restored at start. Mirrored to the
+   * permission-mode file the wrapper starts `claude` in.
+   */
+  permissionMode?: string;
+  /** Called when the session reports a permission mode other than `permissionMode`. */
+  onPermissionModeChange?: (mode: string) => void;
 }
 
 /**
@@ -376,6 +384,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
   /** Per-workspace state */
   private readonly workspaces = new Map<WorkspaceRef, WorkspaceState>();
+
+  /** Permission-mode file writes still in flight (see writePermissionModeFile). */
+  private readonly permissionModeWrites = new Map<WorkspaceRef, Promise<void>>();
 
   /** Senders waiting for a workspace's session inbox to appear. */
   private readonly inboxWaiters = new ConditionWaiters();
@@ -510,6 +521,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // leaves a running `claude` alone, so its inbox is still the one to use.
     const savedCallbacks = state.statusCallbacks;
     const savedInbox = state.inbox;
+    const { permissionMode, onPermissionModeChange } = state;
     clearTimeout(state.startupTimer);
 
     // Fire stopped callback with isRestart=true
@@ -524,10 +536,15 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       backgroundOwners: INITIAL_BACKGROUND_OWNERS,
       statusCallbacks: savedCallbacks,
       ...(savedInbox !== undefined && { inbox: savedInbox }),
+      ...(permissionMode !== undefined && { permissionMode }),
+      ...(onPermissionModeChange !== undefined && { onPermissionModeChange }),
     });
 
     // Regenerate config files
     await this.generateConfigFiles(workspaceRef);
+    if (permissionMode !== undefined) {
+      await this.writePermissionModeFile(workspaceRef, permissionMode);
+    }
 
     // Fire started callback
     for (const callback of this.startedCallbacks) {
@@ -785,6 +802,88 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   }
 
   /**
+   * Track a workspace's permission mode across `claude` launches.
+   *
+   * `mode` is the one it last ran in (persisted by the caller), written to the
+   * permission-mode file so the next `claude` the wrapper starts begins in it.
+   * From then on every hook reports the session's mode; a change is written to
+   * the file and passed to `onChange`, so the caller can persist it.
+   *
+   * @param workspaceRef - The workspace
+   * @param mode - The mode to start in, or undefined to leave it to Claude
+   * @param onChange - Called with each new mode the session reports
+   */
+  async trackPermissionMode(
+    workspaceRef: WorkspaceRef,
+    mode: string | undefined,
+    onChange: ((mode: string) => void) | undefined
+  ): Promise<void> {
+    const state = this.workspaces.get(workspaceRef);
+    if (state === undefined) {
+      this.logger
+        .scoped({ workspace: workspaceRef })
+        .warn("trackPermissionMode called for unknown workspace");
+      return;
+    }
+    if (onChange !== undefined) state.onPermissionModeChange = onChange;
+    if (mode === undefined) return;
+    state.permissionMode = mode;
+    await this.writePermissionModeFile(workspaceRef, mode);
+  }
+
+  /**
+   * The file holding the permission mode the wrapper starts `claude` in. It
+   * exists only once a mode is known (restored or reported).
+   */
+  getPermissionModePath(workspaceRef: WorkspaceRef): Path {
+    return this.configFilePath(workspaceRef, "permission-mode");
+  }
+
+  /**
+   * Write the permission-mode file, after any write still pending for the
+   * workspace, so the file ends up holding the latest mode. Best-effort: a
+   * failure only loses the restore.
+   */
+  private writePermissionModeFile(workspaceRef: WorkspaceRef, mode: string): Promise<void> {
+    const write = async (): Promise<void> => {
+      try {
+        await this.fileSystem.writeFile(this.getPermissionModePath(workspaceRef), mode);
+      } catch (error) {
+        this.logger
+          .scoped({ workspace: workspaceRef })
+          .warn("Failed to write permission mode file", { error: getErrorMessage(error) });
+      }
+    };
+    const next = (this.permissionModeWrites.get(workspaceRef) ?? Promise.resolve()).then(write);
+    this.permissionModeWrites.set(workspaceRef, next);
+    void next.then(() => {
+      if (this.permissionModeWrites.get(workspaceRef) === next) {
+        this.permissionModeWrites.delete(workspaceRef);
+      }
+    });
+    return next;
+  }
+
+  /**
+   * Record the permission mode a main-agent hook reports, when it changed.
+   * Sub-agent hooks (with `agent_id`) are left out: the mode to restore is the
+   * session's own.
+   */
+  private notePermissionMode(
+    workspaceRef: WorkspaceRef,
+    state: WorkspaceState,
+    payload: ClaudeCodeBridgePayload
+  ): void {
+    const mode = payload.permission_mode;
+    if (typeof mode !== "string" || mode === "" || payload.agent_id !== undefined) return;
+    if (mode === state.permissionMode) return;
+    state.permissionMode = mode;
+    this.logger.scoped({ workspace: workspaceRef }).debug("Permission mode changed", { mode });
+    void this.writePermissionModeFile(workspaceRef, mode);
+    state.onPermissionModeChange?.(mode);
+  }
+
+  /**
    * Dispose the server manager, stopping all workspaces and the HTTP server.
    */
   async dispose(): Promise<void> {
@@ -985,6 +1084,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     if (session_id) {
       state.sessionId = session_id;
     }
+    this.notePermissionMode(workspaceRef, state, payload);
 
     // Track the session's inbox: announced by SessionStart (every start,
     // resume, /clear and compaction), gone with the session or its terminal.

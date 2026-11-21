@@ -481,7 +481,7 @@ Each workspace's metadata (flat string key → value) lives in one JSON file. Th
 
 | Tier        | Keys                                                     | Outside                                   |
 | ----------- | -------------------------------------------------------- | ----------------------------------------- |
-| `internal`  | `agent.pending-prompt`                                   | hidden (`metadata.get` omits it), refused |
+| `internal`  | `agent.pending-prompt`, `agent.permission-mode`          | hidden (`metadata.get` omits it), refused |
 | `protected` | `base`, `agent`, `hibernated`, `hibernated-at`, `source` | read-only                                 |
 | `public`    | `title`, `tags.*` (incl. `external`), others             | read/write                                |
 

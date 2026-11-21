@@ -142,6 +142,11 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
         if (options.isNewWorkspace) {
           await serverManager.setNoSessionMarker(workspaceRef);
         }
+        await serverManager.trackPermissionMode(
+          workspaceRef,
+          options.permissionMode,
+          options.onPermissionModeChange
+        );
       },
 
       // --- Terminal lifecycle ---

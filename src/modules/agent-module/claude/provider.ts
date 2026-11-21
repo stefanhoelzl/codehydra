@@ -161,6 +161,10 @@ export class ClaudeCodeProvider implements AgentProvider {
       _CH_CLAUDE_MCP_CONFIG: mcpConfigPath.toNative(),
       _CH_CLAUDE_SYSTEM_PROMPT: this.serverManager.getSystemPromptPath().toNative(),
       _CH_BRIDGE_PORT: String(this.port),
+      // The mode the wrapper starts a resumed `claude` in (present once known).
+      _CH_CLAUDE_PERMISSION_MODE_FILE: this.serverManager
+        .getPermissionModePath(this.workspaceRef)
+        .toNative(),
       // The API server port and token let `ch` in this terminal reach CodeHydra
       // without reading state.json. The MCP server no longer has a port of its
       // own: it is a stdio subprocess the agent launches from its config.

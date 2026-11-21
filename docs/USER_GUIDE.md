@@ -1830,7 +1830,11 @@ hooks, the CodeHydra MCP server, the system prompt below,
 `--allow-dangerously-skip-permissions` (so bypass mode is available through
 Shift+Tab, not switched on), and `--disallowedTools=Artifact` (see
 [Pages and browsers](#pages-and-browsers)). It resumes the workspace's last conversation
-(`--continue`) unless the workspace is new.
+(`--continue`) unless the workspace is new, in the permission mode that
+conversation was last in — the one chosen at creation, or one you switched to
+with Shift+Tab — across reopening the agent terminal, hibernation and app
+restarts. CodeHydra learns a switch from the agent's next hook (prompt, tool
+call or turn end).
 
 Claude Code 2.1.63 or newer is needed: its status hooks are HTTP hooks that
 report straight to CodeHydra, which older versions do not have. With an older

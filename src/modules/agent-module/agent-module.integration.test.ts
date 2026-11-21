@@ -905,6 +905,7 @@ describe("createAgentModule", () => {
         testPath("/test/workspace"),
         {
           isNewWorkspace: true,
+          onPermissionModeChange: expect.any(Function),
         }
       );
       expect(result).toBeDefined();
@@ -932,6 +933,7 @@ describe("createAgentModule", () => {
           initialPrompt: { prompt: "Hello Claude" },
           onInitialPromptDelivered: expect.any(Function),
           isNewWorkspace: true,
+          onPermissionModeChange: expect.any(Function),
         }
       );
     });
@@ -1015,6 +1017,7 @@ describe("createAgentModule", () => {
           initialPrompt: { prompt: "Review PR #65", permissionMode: "plan" },
           onInitialPromptDelivered: expect.any(Function),
           isNewWorkspace: true,
+          onPermissionModeChange: expect.any(Function),
         });
         // Still pending until the agent takes it over.
         expect(metadata.get(PENDING_KEY)).toBe(JSON.stringify(spec));
@@ -1032,6 +1035,7 @@ describe("createAgentModule", () => {
         expect(metadata.has(PENDING_KEY)).toBe(false);
         expect(startOptions(mockProvider)).toEqual({
           isNewWorkspace: false,
+          onPermissionModeChange: expect.any(Function),
         });
       });
 
@@ -1045,7 +1049,73 @@ describe("createAgentModule", () => {
         expect(metadata.has(PENDING_KEY)).toBe(false);
         expect(startOptions(mockProvider)).toEqual({
           isNewWorkspace: false,
+          onPermissionModeChange: expect.any(Function),
         });
+      });
+    });
+
+    describe("permission mode (survives hibernation and restarts)", () => {
+      const MODE_KEY = "agent.permission-mode";
+
+      function reopen(dispatcher: Dispatcher, metadata: Record<string, string>) {
+        return openWorkspace(dispatcher, {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          existingWorkspace: {
+            path: testPath("/test/workspace").toNative(),
+            name: "feature-1",
+            branch: "feature-1",
+            metadata,
+          },
+        });
+      }
+
+      function startOptions(mockProvider: AgentModuleProvider): WorkspaceStartOptions {
+        return vi.mocked(mockProvider.startWorkspace).mock.calls.at(-1)![2]!;
+      }
+
+      async function setup() {
+        const ctx = createTestSetup();
+        await activateModule(ctx.dispatcher, ctx.agentConfig);
+        registerSetup(ctx.dispatcher);
+        return ctx;
+      }
+
+      it("stores each mode the agent reports running in", async () => {
+        const { dispatcher, mockProvider, metadata } = await setup();
+        await openWorkspace(dispatcher, {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          base: "main",
+        });
+
+        startOptions(mockProvider).onPermissionModeChange!("bypassPermissions");
+
+        await vi.waitFor(() => expect(metadata.get(MODE_KEY)).toBe("bypassPermissions"));
+      });
+
+      it("starts a reopened (woken) workspace's agent in the mode it last ran in", async () => {
+        const { dispatcher, mockProvider } = await setup();
+
+        await reopen(dispatcher, { [MODE_KEY]: "bypassPermissions" });
+
+        expect(startOptions(mockProvider)).toEqual({
+          isNewWorkspace: false,
+          permissionMode: "bypassPermissions",
+          onPermissionModeChange: expect.any(Function),
+        });
+      });
+
+      it("hands a new workspace no stored mode", async () => {
+        const { dispatcher, mockProvider } = await setup();
+
+        await openWorkspace(dispatcher, {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          base: "main",
+        });
+
+        expect(startOptions(mockProvider).permissionMode).toBeUndefined();
       });
     });
 
@@ -1072,6 +1142,7 @@ describe("createAgentModule", () => {
         testPath("/test/workspace"),
         {
           isNewWorkspace: false,
+          onPermissionModeChange: expect.any(Function),
         }
       );
     });

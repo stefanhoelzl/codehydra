@@ -65,6 +65,11 @@ export interface ClaudeCodeHookPayload {
   readonly agent_type?: string;
   /** Still-running background tasks, sent with Stop/StopFailure hooks */
   readonly background_tasks?: readonly ClaudeCodeBackgroundTask[];
+  /**
+   * The session's permission mode when the hook fired (`default`, `plan`,
+   * `bypassPermissions`, …). Sent with every hook; checked on 2.1.330.
+   */
+  readonly permission_mode?: string;
 }
 
 /**

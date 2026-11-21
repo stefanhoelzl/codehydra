@@ -12,6 +12,7 @@ import {
   buildInitialPromptArgs,
   buildPermissionArgs,
   consumeNoSessionMarker,
+  getSavedPermissionMode,
   type InitialPromptConfig,
 } from "./wrapper";
 
@@ -128,5 +129,46 @@ describe("consumeNoSessionMarker", () => {
   it("returns false when env var is set but file does not exist", () => {
     process.env._CH_CLAUDE_NO_SESSION_MARKER_PATH = join(tempDir, "nonexistent");
     expect(consumeNoSessionMarker()).toBe(false);
+  });
+});
+
+describe("getSavedPermissionMode", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ch-wrapper-test-"));
+    delete process.env._CH_CLAUDE_PERMISSION_MODE_FILE;
+  });
+
+  afterEach(() => {
+    delete process.env._CH_CLAUDE_PERMISSION_MODE_FILE;
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  /** Point the wrapper at a mode file holding `content`. */
+  function modeFileWith(content: string): void {
+    const filePath = join(tempDir, "permission-mode");
+    writeFileSync(filePath, content);
+    process.env._CH_CLAUDE_PERMISSION_MODE_FILE = filePath;
+  }
+
+  it("returns undefined when env var is not set", () => {
+    expect(getSavedPermissionMode()).toBeUndefined();
+  });
+
+  it("returns undefined when the file does not exist yet", () => {
+    process.env._CH_CLAUDE_PERMISSION_MODE_FILE = join(tempDir, "nonexistent");
+    expect(getSavedPermissionMode()).toBeUndefined();
+  });
+
+  it("returns the mode, trimmed, and leaves the file", () => {
+    modeFileWith("bypassPermissions\n");
+    expect(getSavedPermissionMode()).toBe("bypassPermissions");
+    expect(existsSync(join(tempDir, "permission-mode"))).toBe(true);
+  });
+
+  it("returns undefined for content that is not a mode name", () => {
+    modeFileWith("plan --dangerously-skip-permissions");
+    expect(getSavedPermissionMode()).toBeUndefined();
   });
 });

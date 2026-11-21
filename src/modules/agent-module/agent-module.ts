@@ -145,6 +145,13 @@ function agentPromptConfigFor(
  */
 const PENDING_PROMPT_METADATA_KEY = "agent.pending-prompt";
 
+/**
+ * Metadata key holding the permission mode a workspace's agent last ran in, so
+ * a reopened workspace (wake, app restart) starts its agent in it again rather
+ * than in the default. Internal: not rendered, not documented as a key.
+ */
+const PERMISSION_MODE_METADATA_KEY = "agent.permission-mode";
+
 /** The AgentSpec a reopened workspace still owes its agent, if any. */
 function pendingAgentSpec(metadata: Readonly<Record<string, string>>): AgentSpec | undefined {
   const value = metadata[PENDING_PROMPT_METADATA_KEY];
@@ -302,20 +309,31 @@ export function createAgentModule(
   }
 
   /**
-   * Write (or, with null, clear) the pending prompt. Best-effort: a failure
-   * only loses the restart safety net, never the workspace.
+   * Write (or, with null, clear) one of the module's internal metadata keys.
+   * Best-effort: a failure only loses what the key carries across a restart,
+   * never the workspace.
    */
-  async function setPendingPrompt(workspaceRef: WorkspaceRef, value: string | null) {
+  async function setInternalMetadata(
+    workspaceRef: WorkspaceRef,
+    key: string,
+    value: string | null
+  ) {
     try {
       await deps.dispatcher.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
-        payload: { workspaceRef, key: PENDING_PROMPT_METADATA_KEY, value },
+        payload: { workspaceRef, key, value },
       });
     } catch (error) {
-      logger.scoped({ workspace: workspaceRef }).warn("Failed to update pending initial prompt", {
+      logger.scoped({ workspace: workspaceRef }).warn("Failed to update agent metadata", {
+        key,
         error: getErrorMessage(error),
       });
     }
+  }
+
+  /** Write (or, with null, clear) the pending prompt. */
+  function setPendingPrompt(workspaceRef: WorkspaceRef, value: string | null) {
+    return setInternalMetadata(workspaceRef, PENDING_PROMPT_METADATA_KEY, value);
   }
 
   // =========================================================================
@@ -494,6 +512,9 @@ export function createAgentModule(
             const hasPending =
               !fresh && existingMetadata[PENDING_PROMPT_METADATA_KEY] !== undefined;
             const spec = fresh ? intent.payload.agent : pendingAgentSpec(existingMetadata);
+            const savedPermissionMode = fresh
+              ? undefined
+              : existingMetadata[PERMISSION_MODE_METADATA_KEY];
             const initialPrompt = agentPromptConfigFor(spec, provider.type);
 
             if (fresh && initialPrompt !== undefined) {
@@ -509,6 +530,9 @@ export function createAgentModule(
                 onInitialPromptDelivered: () => void setPendingPrompt(workspaceRef, null),
               }),
               isNewWorkspace: fresh || initialPrompt !== undefined,
+              ...(savedPermissionMode !== undefined && { permissionMode: savedPermissionMode }),
+              onPermissionModeChange: (mode) =>
+                void setInternalMetadata(workspaceRef, PERMISSION_MODE_METADATA_KEY, mode),
               env: ctx.workspaceEnv,
             });
 
