@@ -65,11 +65,14 @@ export const WAKEUP_INSTRUCTIONS =
   "A hibernated workspace wakes on whichever comes first: its wakeup script says so, or the " +
   "workspaces it waits on (untilDeleted, untilHibernated, untilWoken; any one of them, every " +
   "one with all) reach their state, checked the moment any workspace is deleted, hibernated " +
-  "or woken. Either way it wakes once its timeout has passed since it hibernated (default " +
-  `${formatDuration(DEFAULT_WAKEUP_TIMEOUT_SECONDS)}; never with timeout "never"), so a ` +
-  "condition that never comes cannot leave it asleep for good. The script runs every poll tick (poll.interval, default 60 s; killed after " +
-  "poll.timeout, default 30 s) while the workspace is hibernated, in its worktree, with `ch` " +
-  'on PATH. It prints nothing or {"action":"keep"} to stay asleep, or ' +
+  "or woken. At the latest it wakes once its timeout has passed since it hibernated " +
+  `(default ${formatDuration(DEFAULT_WAKEUP_TIMEOUT_SECONDS)}; never with timeout "never"), ` +
+  "so a condition that never comes cannot leave it asleep for good. While the workspace is " +
+  "hibernated the script runs every poll tick (poll.interval, default 60 s) for its first " +
+  "day asleep, then every 15 minutes, then every 2 hours after a week; it is killed after " +
+  "poll.timeout (default 30 s), and runs in the worktree with `ch` on PATH. Bash runs it " +
+  "with -eo pipefail: a failing command stops it, so catch the failures you expect. " +
+  'It prints nothing or {"action":"keep"} to stay asleep, or ' +
   '{"action":"wake","message":"…"} to wake the workspace in place and send the message to its ' +
   "agent. A script that fails (a non-zero exit, output that is not that JSON) wakes the " +
   "workspace too, and its agent is told what went wrong. There is no delete: to have a " +

@@ -9,7 +9,10 @@
  *   is hibernated, the poll module (poll-module.ts) runs it every tick, and it
  *   prints what to do — nothing or `{"action":"keep"}` to stay asleep,
  *   `{"action":"wake","message":"…"}` to wake in place (no switch) and send
- *   `message`, if any, to its agent. A script that fails (any exit but 0; exit
+ *   `message`, if any, to its agent. The longer it sleeps, the less often it
+ *   runs: every tick for its first day, every 15 minutes after a day, every 2
+ *   hours after a week (counted from `hibernated-at`; a script just set runs
+ *   on the next tick). A script that fails (any exit but 0; exit
  *   75, a temporary failure, once it has gone on for the poll module's grace
  *   period) or prints something else wakes the workspace too, with a message
  *   telling its agent what went wrong: a broken script must not leave a
@@ -105,6 +108,24 @@ export const WAKEUP_TAG_KEY = tagKey("wakeup");
 export const WAKEUP_OWNER = "wakeup";
 /** Who a wakeup message is signed by. */
 const MESSAGE_FROM = "CodeHydra · wakeup";
+const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+/**
+ * How often a script runs, by how long its workspace has slept: the first
+ * matching step's gap (none: every tick).
+ */
+const CADENCE: readonly { readonly asleepFor: number; readonly every: number }[] = [
+  { asleepFor: 7 * DAY_MS, every: 120 * MINUTE_MS },
+  { asleepFor: DAY_MS, every: 15 * MINUTE_MS },
+];
+
+/** The gap between a script's runs, for a workspace asleep since `hibernatedAt` (ms; 0: every tick). */
+export function runGap(hibernatedAt: string | undefined, now: number): number {
+  if (hibernatedAt === undefined) return 0;
+  const asleepFor = now - Date.parse(hibernatedAt);
+  return CADENCE.find((step) => asleepFor >= step.asleepFor)?.every ?? 0;
+}
+
 /** How much of a failed script's output its agent is shown. */
 const OUTPUT_TAIL_CHARS = 2000;
 
@@ -232,6 +253,8 @@ export interface WakeupModuleDeps {
   readonly pathProvider: Pick<PathProvider, "dataPath">;
   /** The wakeup scripts failing right now, as the poll module recorded them. */
   readonly pollErrors: (owner: string) => readonly PollError[];
+  /** Tells the poll module a script is not due this tick (its failure stands). */
+  readonly markWaiting: (job: Pick<PollJob, "owner" | "id">) => void;
   /** Default: `Date.now`. */
   readonly now?: () => number;
 }
@@ -540,6 +563,12 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
           continue;
         }
         if (wakeup.script === undefined) continue;
+        const lastRun = lastRuns.get(workspace.ref);
+        const gap = runGap(hibernatedAt, now());
+        if (lastRun !== undefined && now() - Date.parse(lastRun.at) < gap) {
+          deps.markWaiting({ owner: WAKEUP_OWNER, id: workspace.ref });
+          continue;
+        }
         const env = wakeup.env ?? {};
         jobs.push({
           owner: WAKEUP_OWNER,

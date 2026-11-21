@@ -288,6 +288,7 @@ function createSetup() {
     logger: createBehavioralLogger(),
     pathProvider: createMockPathProvider(),
     pollErrors: (owner) => poll.errors(owner),
+    markWaiting: (job) => poll.markWaiting(job),
   });
   dispatcher.registerOperation(new PollTickOperation());
   dispatcher.registerModule(poll);
@@ -934,5 +935,57 @@ describe("wakeup: timeouts", () => {
     expect(describe({ script: "check", timeoutSeconds: 10 * DAY_SECONDS })).toBe(
       "check · or at the latest after 10d"
     );
+  });
+});
+
+describe("wakeup scripts: cadence", () => {
+  it("runs every tick for a day, then every 15 minutes, then every 2 hours after a week", async () => {
+    const setup = createSetup();
+    const ws = setup.add("pr-12");
+    await setup.call("workspace.hibernate", ws.ref, { wakeup: "check", timeout: "never" });
+    const hibernatedAt = Date.parse(ws.metadata["hibernated-at"]!);
+    await setup.start();
+    await setup.tick();
+    expect(setup.requests).toHaveLength(2); // first day: every tick
+
+    vi.setSystemTime(hibernatedAt + DAY_SECONDS * 1000);
+    const runsIn = async (minutes: number): Promise<number> => {
+      const before = setup.requests.length;
+      for (let minute = 0; minute < minutes; minute++) await setup.tick();
+      return setup.requests.length - before;
+    };
+    expect(await runsIn(30)).toBe(2); // after a day: every 15 minutes
+
+    vi.setSystemTime(hibernatedAt + 7 * DAY_SECONDS * 1000);
+    expect(await runsIn(1)).toBe(1); // overdue: its last run was days ago
+    expect(await runsIn(119)).toBe(0); // after a week: every 2 hours
+    expect(await runsIn(1)).toBe(1);
+  });
+
+  it("keeps a failing script's notification up while it is not due", async () => {
+    const setup = createSetup();
+    const ws = setup.add("pr-12");
+    await setup.call("workspace.hibernate", ws.ref, { wakeup: "check", timeout: "never" });
+    vi.setSystemTime(Date.parse(ws.metadata["hibernated-at"]!) + 2 * DAY_SECONDS * 1000);
+    setup.prints["check"] = { exitCode: 75 };
+    await setup.start();
+    await setup.tick();
+
+    expect(setup.requests).toHaveLength(1);
+    await expect(setup.call("workspace.wakeup.show", ws.ref)).resolves.toMatchObject({
+      error: { message: "temporary failure (exit 75), retrying" },
+    });
+  });
+
+  it("runs a script just set on the next tick, however long the workspace slept", async () => {
+    const setup = createSetup();
+    const ws = setup.add("pr-12");
+    await setup.call("workspace.hibernate", ws.ref, { wakeup: "old", timeout: "never" });
+    vi.setSystemTime(Date.parse(ws.metadata["hibernated-at"]!) + 8 * DAY_SECONDS * 1000);
+    await setup.start();
+
+    await setup.call("workspace.wakeup.set", ws.ref, { script: "new", timeout: "never" });
+    await setup.tick();
+    expect(setup.requests.map((request) => request.script)).toEqual(["old", "new"]);
   });
 });

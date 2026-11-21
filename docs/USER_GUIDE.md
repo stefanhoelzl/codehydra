@@ -491,10 +491,12 @@ ch ws hibernate --until-deleted feature-x --timeout 10d  # …or after 10 days
   there stays counted even if it leaves that state again (it wakes again, say)
   before the others get there. The message to the agent says which workspace
   woke it, and how.
-- **When the script runs** — on every poll (`poll.interval`, default 60
-  seconds) while the workspace is hibernated, never while it is awake; the
-  first run is on the next poll after hibernating, and every hibernated
-  workspace's script runs once the app has opened its projects. It is killed
+- **When the script runs** — while the workspace is hibernated, never while
+  it is awake: on every poll (`poll.interval`, default 60 seconds) for its
+  first day asleep, then every 15 minutes, and every 2 hours once it has slept
+  a week. The first run is on the next poll after hibernating (or after a
+  script is set), and every hibernated workspace's script runs once the app
+  has opened its projects. It is killed
   after `poll.timeout` (default 30 seconds). It runs in the worktree, with
   `ch` on `PATH` (so `ch ws …` acts on that workspace), `CH_WORKSPACE_DIR` and
   its own variables set, and

@@ -86,7 +86,7 @@ Default `null` · `scripts/scripts.ts`. bash for plugin and wakeup scripts on Wi
 
 #### `poll.interval`
 
-Default `60` · `poll-module.ts`. Seconds between the **end** of one poll (`poll:tick`: automations, wakeup scripts) and the **start** of the next (a chained timer — a slow tick never stacks). Minimum 1. Re-read when each wait is armed.
+Default `60` · `poll-module.ts`. Seconds between the **end** of one poll (`poll:tick`: automations, wakeup scripts) and the **start** of the next (a chained timer — a slow tick never stacks). Minimum 1. Re-read when each wait is armed. A wakeup script runs on every poll only for its workspace's first day asleep, then every 15 minutes, then every 2 hours after a week.
 
 #### `poll.timeout`
 
