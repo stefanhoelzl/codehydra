@@ -248,8 +248,48 @@ export interface WakeupScript {
   readonly env: Readonly<Record<string, string>>;
 }
 
-/** A wakeup script, with how it last went. */
-export interface WakeupStatus extends WakeupScript {
+/** The states a hibernated workspace can wait for another workspace to reach. */
+export const WATCH_STATES = ["deleted", "hibernated", "woken"] as const;
+export type WatchState = (typeof WATCH_STATES)[number];
+
+/** One workspace a hibernated workspace waits on, and the state it waits for. */
+export interface WorkspaceWatch {
+  readonly workspace: WorkspaceRef;
+  readonly until: WatchState;
+  /** With `all`: when it reached its state (it stays counted). */
+  readonly reachedAt?: string;
+}
+
+/**
+ * What wakes a hibernated workspace: its script says so, or its watched
+ * workspaces reach their states (any of them; every one with `all`) —
+ * whichever comes first. At least one of the two is set.
+ */
+export interface Wakeup {
+  /** The script, its shell and variables; absent when only workspaces are watched. */
+  readonly script?: string;
+  readonly shell?: ScriptShell;
+  readonly env?: Readonly<Record<string, string>>;
+  /** The workspaces it waits on; absent when it has none. */
+  readonly watch?: readonly WorkspaceWatch[];
+  /** Wake only once every watched workspace has reached its state (default: any). */
+  readonly all?: boolean;
+  /**
+   * How long it may sleep at most, counted from when it hibernated: seconds,
+   * or null for no limit. Absent: {@link DEFAULT_WAKEUP_TIMEOUT_SECONDS}.
+   */
+  readonly timeoutSeconds?: number | null;
+}
+
+/** How long a workspace with a wakeup sleeps at most, unless told otherwise: 14 days. */
+export const DEFAULT_WAKEUP_TIMEOUT_SECONDS = 14 * 24 * 60 * 60;
+
+/** A wakeup, with how its script last went. */
+export interface WakeupStatus extends Omit<Wakeup, "timeoutSeconds"> {
+  /** The timeout in effect (the default when none was given); null for none. */
+  readonly timeoutSeconds: number | null;
+  /** While hibernated with a timeout: when it wakes at the latest (ISO time). */
+  readonly deadline?: string;
   /** The last run since it was set, if it has run (one that woke it cleared the script). */
   readonly lastRun?: {
     /** ISO time it finished. */
@@ -262,11 +302,11 @@ export interface WakeupStatus extends WakeupScript {
   readonly error?: { readonly message: string; readonly logPath?: string };
 }
 
-/** The wakeup scripts, owned by the wakeup module. */
+/** The wakeups, owned by the wakeup module. */
 export interface Wakeups {
-  /** Set a workspace's script, replacing any it had; null clears it. */
-  set(workspace: WorkspaceRef, script: WakeupScript | null): Promise<void>;
-  /** A workspace's script and how it last went; null when it has none. */
+  /** Set a workspace's wakeup, replacing any it had; null clears it. */
+  set(workspace: WorkspaceRef, wakeup: Wakeup | null): Promise<void>;
+  /** A workspace's wakeup and how its script last went; null when it has none. */
   show(workspace: WorkspaceRef): Promise<WakeupStatus | null>;
 }
 

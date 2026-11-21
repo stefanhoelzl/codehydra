@@ -164,7 +164,7 @@ Per-agent behavior is supplied via `AgentModuleSpec<P>` (generic over the concre
 | `initialStatus`          | always `"none"` (status arrives via hooks)                          | derived from `getEffectiveCounts()`                      |
 | `onProviderRegistered`   | —                                                                   | queues the pending initial prompt on the primary session |
 | `startServer`            | `startServer(ref)`                                                  | `startServer(ref, path, {initialPrompt, ...})`           |
-| `afterProviderReady`     | writes prompt file + no-session marker                              | reports the prompt delivered (if accepted)               |
+| `afterProviderReady`     | writes prompt file + no-session marker; tracks the permission mode  | reports the prompt delivered (if accepted)               |
 | `applyTerminalLifecycle` | WrapperStart/WrapperEnd via server manager                          | `triggerWrapperStart` / TUI detach                       |
 | `wireExtraCallbacks`     | —                                                                   | `setMarkActiveHandler` (TUI-attached tracking)           |
 | `clearWorkspaceTracking` | — (no per-workspace tracking)                                       | clears the TUI-attached entry                            |
@@ -562,6 +562,8 @@ The Claude wrapper automatically attempts to resume previous sessions using the 
 2. If not, prepends `--continue` to attempt resuming the most recent session for this directory (unless the no-session marker for a brand-new workspace is present)
 3. If continuation fails (no session exists), automatically retries without `--continue`
 4. This enables seamless session continuity across CodeHydra restarts
+
+**Permission mode**: Claude does not restore `--permission-mode` across `--continue`, so CodeHydra does. Every hook payload carries the session's `permission_mode`; the server manager records each change a main-agent hook reports (sub-agent hooks, with `agent_id`, are left out) in a `permission-mode` file in the workspace's config dir (`_CH_CLAUDE_PERMISSION_MODE_FILE`) and reports it through `onPermissionModeChange` in `WorkspaceStartOptions`. The agent module stores it in the internal `agent.permission-mode` metadata key; a reopen (wake, startup) hands it back as `permissionMode`, which `trackPermissionMode` writes to the file again (the config dir is temp, cleared each app start). The wrapper passes the file's mode as `--permission-mode` on every launch; an initial prompt's own mode wins over it.
 
 **Transcript retention**: Claude Code deletes transcripts older than `cleanupPeriodDays` (default 30) in a sweep after any session starts, so a workspace hibernated longer would wake to an empty session. `claude/session-retention-module.ts` recomputes, on project open/close and workspace hibernate/wake/delete, the oldest `hibernated-at` among the open projects' hibernated workspaces, and `setCleanupPeriodDays` writes that age plus 60 days into every workspace's `codehydra-hooks.json` (rewriting the running ones). Workspaces without `hibernated-at` are not counted.
 

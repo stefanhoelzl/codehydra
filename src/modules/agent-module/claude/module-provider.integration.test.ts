@@ -69,6 +69,7 @@ function createMockServerManager(): ClaudeCodeServerManager {
   return createServerManagerBase({
     setInitialPrompt: vi.fn().mockResolvedValue(undefined),
     setNoSessionMarker: vi.fn().mockResolvedValue(undefined),
+    trackPermissionMode: vi.fn().mockResolvedValue(undefined),
   }) as unknown as ClaudeCodeServerManager;
 }
 
@@ -955,6 +956,24 @@ describe("createClaudeModuleProvider", () => {
       await provider.startWorkspace(WS_REF, new Path(WS_PATH), { isNewWorkspace: true });
 
       expect(mockServerManager.setNoSessionMarker).toHaveBeenCalledWith(WS_REF);
+    });
+
+    it("tracks the permission mode with the one to restore and the change callback", async () => {
+      const provider = createInitializedProvider();
+      const onPermissionModeChange = vi.fn();
+
+      startServerFiresStarted();
+
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH), {
+        permissionMode: "bypassPermissions",
+        onPermissionModeChange,
+      });
+
+      expect(mockServerManager.trackPermissionMode).toHaveBeenCalledWith(
+        WS_REF,
+        "bypassPermissions",
+        onPermissionModeChange
+      );
     });
 
     it("does not call setInitialPrompt or setNoSessionMarker without options", async () => {

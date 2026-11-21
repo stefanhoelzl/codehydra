@@ -36,7 +36,13 @@ import type { DeleteWorkspaceIntent } from "../../intents/delete-workspace";
 import { INTENT_SWITCH_WORKSPACE } from "../../intents/switch-workspace";
 import type { SwitchWorkspaceIntent } from "../../intents/switch-workspace";
 import { projectRefOf } from "../../utils/ref";
-import { WAKEUP_INSTRUCTIONS, toWakeupScript, wakeupOptionFields } from "./wakeup";
+import {
+  WAKEUP_INSTRUCTIONS,
+  createWakeupBuilder,
+  hasWakeupFields,
+  wakeupOptionFields,
+  wakeupWatchFields,
+} from "./wakeup";
 
 /** `workspace.switch`'s `reason` when the user's New workspace form kept the view. */
 export const SWITCH_BLOCKED_BY_CREATION_FORM =
@@ -149,6 +155,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
   const { dispatcher } = deps;
   const projectTypes = deps.projectTypes;
   const targetOf = createTargetResolver(dispatcher);
+  const toWakeup = createWakeupBuilder(dispatcher);
 
   /**
    * Turn a workspace reference into a path. A name is the ergonomic form —
@@ -209,8 +216,9 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       "Tears down the workspace's view and agent server to free resources while keeping the " +
       "git worktree on disk. The workspace stays listed and can be brought back with wake. " +
       "Returns { started: true } once hibernation has begun; teardown completes in the background. " +
-      "Pass wakeup to set the workspace's wakeup script first (without it, a script it already " +
-      "has stays). " +
+      "Pass wakeup (a script) and/or the workspaces to wait for to set the workspace's wakeup " +
+      "first, replacing the one it had as a whole; without any of them, a wakeup it already " +
+      "has stays. " +
       WAKEUP_INSTRUCTIONS,
     input: z.object({
       ...targetFields,
@@ -221,15 +229,14 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
           "Wakeup script, run every poll tick while hibernated, that decides when it wakes"
         ),
       ...wakeupOptionFields,
+      ...wakeupWatchFields,
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const workspaceRef = await targetOf(ctx, input);
-      if (input.wakeup === undefined && (input.shell !== undefined || input.env !== undefined)) {
-        throw new ApiError("usage", "shell and env describe a wakeup script: pass wakeup too");
-      }
-      if (input.wakeup !== undefined) {
-        await deps.wakeups.set(workspaceRef, toWakeupScript({ ...input, script: input.wakeup }));
+      const wakeupInput = { ...input, script: input.wakeup };
+      if (hasWakeupFields(wakeupInput)) {
+        await deps.wakeups.set(workspaceRef, await toWakeup(ctx, workspaceRef, wakeupInput));
       }
       const intent: HibernateWorkspaceIntent = {
         type: INTENT_HIBERNATE_WORKSPACE,

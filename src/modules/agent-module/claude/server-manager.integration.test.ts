@@ -1612,6 +1612,108 @@ describe("ClaudeCodeServerManager integration", () => {
     });
   });
 
+  describe("permission mode", () => {
+    /** The permission-mode file's content, once a write has landed. */
+    async function modeFile(workspace: WorkspaceRef): Promise<string> {
+      return vi.waitFor(() =>
+        mockFileSystem.readFile(serverManager.getPermissionModePath(workspace))
+      );
+    }
+
+    it("writes a restored mode to the file the wrapper reads", async () => {
+      await serverManager.startServer(FEATURE_A);
+
+      await serverManager.trackPermissionMode(FEATURE_A, "bypassPermissions", undefined);
+
+      expect(await mockFileSystem.readFile(serverManager.getPermissionModePath(FEATURE_A))).toBe(
+        "bypassPermissions"
+      );
+    });
+
+    it("writes no file while no mode is known", async () => {
+      await serverManager.startServer(FEATURE_A);
+
+      await serverManager.trackPermissionMode(FEATURE_A, undefined, vi.fn());
+
+      await expect(
+        mockFileSystem.readFile(serverManager.getPermissionModePath(FEATURE_A))
+      ).rejects.toThrow();
+    });
+
+    it("records a mode a hook reports and passes it on", async () => {
+      const port = await serverManager.startServer(FEATURE_A);
+      const onChange = vi.fn();
+      await serverManager.trackPermissionMode(FEATURE_A, undefined, onChange);
+
+      await sendHook(port, "UserPromptSubmit", {
+        workspaceRef: FEATURE_A,
+        permission_mode: "plan",
+      });
+
+      expect(onChange).toHaveBeenCalledWith("plan");
+      expect(await modeFile(FEATURE_A)).toBe("plan");
+    });
+
+    it("follows a switch to another mode (Shift+Tab), the last one winning", async () => {
+      const port = await serverManager.startServer(FEATURE_A);
+      const onChange = vi.fn();
+      await serverManager.trackPermissionMode(FEATURE_A, "bypassPermissions", onChange);
+
+      await sendHook(port, "PreToolUse", {
+        workspaceRef: FEATURE_A,
+        permission_mode: "acceptEdits",
+      });
+      await sendHook(port, "Stop", { workspaceRef: FEATURE_A, permission_mode: "plan" });
+
+      expect(onChange.mock.calls).toEqual([["acceptEdits"], ["plan"]]);
+      await vi.waitFor(async () => expect(await modeFile(FEATURE_A)).toBe("plan"));
+    });
+
+    it("passes on only a change: the restored mode reported again is not one", async () => {
+      const port = await serverManager.startServer(FEATURE_A);
+      const onChange = vi.fn();
+      await serverManager.trackPermissionMode(FEATURE_A, "bypassPermissions", onChange);
+
+      await sendHook(port, "UserPromptSubmit", {
+        workspaceRef: FEATURE_A,
+        permission_mode: "bypassPermissions",
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("ignores the mode a sub-agent's hook reports", async () => {
+      const port = await serverManager.startServer(FEATURE_A);
+      const onChange = vi.fn();
+      await serverManager.trackPermissionMode(FEATURE_A, "bypassPermissions", onChange);
+
+      await sendHook(port, "PreToolUse", {
+        workspaceRef: FEATURE_A,
+        agent_id: "sub-1",
+        permission_mode: "plan",
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+      expect(await modeFile(FEATURE_A)).toBe("bypassPermissions");
+    });
+
+    it("keeps tracking the mode across restartServer", async () => {
+      const port = await serverManager.startServer(FEATURE_A);
+      const onChange = vi.fn();
+      await serverManager.trackPermissionMode(FEATURE_A, "plan", onChange);
+
+      await serverManager.restartServer(FEATURE_A);
+      await sendHook(port, "UserPromptSubmit", {
+        workspaceRef: FEATURE_A,
+        permission_mode: "plan",
+      });
+      await sendHook(port, "Stop", { workspaceRef: FEATURE_A, permission_mode: "default" });
+
+      expect(onChange.mock.calls).toEqual([["default"]]);
+      await vi.waitFor(async () => expect(await modeFile(FEATURE_A)).toBe("default"));
+    });
+  });
+
   describe("background sub-agents (via Stop.background_tasks)", () => {
     const WS = testPath("/workspace/feature-a").toNative();
 

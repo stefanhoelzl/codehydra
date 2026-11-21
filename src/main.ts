@@ -700,6 +700,7 @@ const wakeupModule = createWakeupModule({
   logger: loggingService.createLogger("plugins"),
   pathProvider,
   pollErrors: (owner) => pollModule.errors(owner),
+  markWaiting: (job) => pollModule.markWaiting(job),
 });
 
 // Every project type's workspace create/delete options. Empty until app:start's

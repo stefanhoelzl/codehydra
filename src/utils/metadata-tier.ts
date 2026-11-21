@@ -19,6 +19,7 @@ export type MetadataTier = "internal" | "protected" | "public";
 /** Every key that is not public. Anything absent here is public. */
 const RESTRICTED_KEYS: Readonly<Record<string, Exclude<MetadataTier, "public">>> = {
   "agent.pending-prompt": "internal",
+  "agent.permission-mode": "internal",
   agent: "protected",
   base: "protected",
   hibernated: "protected",

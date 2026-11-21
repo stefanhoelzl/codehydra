@@ -18,6 +18,8 @@
  * - _CH_WORKSPACE: Workspace ref for MCP header
  * - _CH_INITIAL_PROMPT_FILE: Path to initial prompt JSON file (optional)
  * - _CH_CLAUDE_NO_SESSION_MARKER_PATH: Path to no-session marker (optional, new workspaces only)
+ * - _CH_CLAUDE_PERMISSION_MODE_FILE: Path to the file holding the permission mode
+ *   the workspace's session last ran in (optional; the file exists once known)
  */
 
 import { spawnSync } from "node:child_process";
@@ -112,15 +114,40 @@ function getInitialPromptConfig(
 }
 
 /**
- * Build permission flags from the selected permission mode.
+ * Read the permission mode the workspace's session last ran in, from the file
+ * `_CH_CLAUDE_PERMISSION_MODE_FILE` names. CodeHydra keeps it current from the
+ * mode every hook reports, and restores it when a workspace is reopened (wake,
+ * app restart). Not deleted: every launch starts in the last mode.
+ *
+ * Returns undefined when no file is configured, none exists yet, or it holds
+ * something that is not a mode name.
+ */
+function getSavedPermissionMode(
+  readFile: (path: string, encoding: "utf-8") => string = readFileSync
+): string | undefined {
+  const filePath = process.env._CH_CLAUDE_PERMISSION_MODE_FILE;
+  if (!filePath) return undefined;
+  try {
+    const mode = readFile(filePath, "utf-8").trim();
+    return /^[A-Za-z]+$/.test(mode) ? mode : undefined;
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") {
+      console.warn(`Warning: Failed to read permission mode file: ${getErrorMessage(error)}`);
+    }
+    return undefined;
+  }
+}
+
+/**
+ * Build permission flags from the permission mode to start in.
  *
  * Always passes --allow-dangerously-skip-permissions so bypass stays reachable
  * via Shift+Tab without forcing it. The starting mode is set with
- * --permission-mode when a mode is chosen; omitting it lets Claude use its
- * default (normal prompting). On resume (no initial-prompt config) the mode is
- * not re-applied — Claude does not restore --permission-mode across --continue.
+ * --permission-mode when one is known: the mode chosen for a new workspace's
+ * first launch, else the mode its session last ran in (Claude does not restore
+ * the mode across --continue itself). Omitting it lets Claude use its default.
  *
- * @param permissionMode - The permission mode from initial prompt config
+ * @param permissionMode - The permission mode to start in
  * @returns Array of CLI permission flags
  */
 function buildPermissionArgs(permissionMode?: string): string[] {
@@ -129,6 +156,12 @@ function buildPermissionArgs(permissionMode?: string): string[] {
     args.push("--permission-mode", permissionMode);
   }
   return args;
+}
+
+/** The mode to start in: the initial prompt's, else the one last run in. */
+function startPermissionMode(config: InitialPromptConfig | undefined): string | undefined {
+  const chosen = config?.permissionMode;
+  return chosen !== undefined && chosen !== "" ? chosen : getSavedPermissionMode();
 }
 
 /**
@@ -388,7 +421,7 @@ async function main(): Promise<never> {
   // User args can override these if they come after
   const args = [
     ...initialPromptArgs,
-    ...buildPermissionArgs(initialPromptConfig?.permissionMode),
+    ...buildPermissionArgs(startPermissionMode(initialPromptConfig)),
     "--disallowedTools=Artifact",
     "--ide",
     "--settings",
@@ -447,5 +480,6 @@ export {
   getInitialPromptConfig,
   buildInitialPromptArgs,
   buildPermissionArgs,
+  getSavedPermissionMode,
   consumeNoSessionMarker,
 };

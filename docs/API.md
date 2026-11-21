@@ -503,51 +503,51 @@ socket.on("connect_error", (error) => {
 
 All events use acknowledgment callbacks for request/response pattern.
 
-| Event                              | Request Payload                        | Response                             |
-| ---------------------------------- | -------------------------------------- | ------------------------------------ |
-| `api:workspace:getStatus`          | `GetWorkspaceStatusRequest` (optional) | `ApiResult<WorkspaceStatus>`         |
-| `api:workspace:getAgentSession`    | None                                   | `ApiResult<AgentSession \| null>`    |
-| `api:workspace:restartAgentServer` | None                                   | `ApiResult<number>`                  |
-| `api:workspace:getMetadata`        | None                                   | `ApiResult<Record<string, string>>`  |
-| `api:workspace:setMetadata`        | `SetMetadataRequest`                   | `ApiResult<void>`                    |
-| `api:workspace:executeCommand`     | `ExecuteCommandRequest`                | `ApiResult<unknown>`                 |
-| `api:workspace:openSystemPath`     | `OpenSystemPathRequest`                | `ApiResult<void>`                    |
-| `api:workspace:delete`             | `DeleteWorkspaceRequest` (optional)    | `ApiResult<DeleteWorkspaceResponse>` |
-| `api:workspace:create`             | `WorkspaceCreateRequest`               | `ApiResult<Workspace>`               |
-| `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                | (none, fire-and-forget)              |
-| `api:log`                          | `LogRequest`                           | (none, fire-and-forget)              |
-| `api:workspace:hibernate`          | `{ wakeup?, shell?, env? }`            | `ApiResult<{ started: boolean }>`    |
-| `api:workspace:wake`               | None                                   | `ApiResult<Workspace>`               |
-| `api:workspace:setWakeup`          | `{ script, shell?, env? }`             | `ApiResult<WakeupStatus>`            |
-| `api:workspace:clearWakeup`        | None                                   | `ApiResult<null>`                    |
-| `api:workspace:getWakeup`          | None                                   | `ApiResult<WakeupStatus \| null>`    |
-| `api:workspace:processes`          | None                                   | `ApiResult<WorkspaceProcesses>`      |
-| `api:workspace:setTitle`           | `{ title: string \| null }`            | `ApiResult<void>`                    |
-| `api:workspace:listTags`           | None                                   | `ApiResult<WorkspaceTag[]>`          |
-| `api:workspace:setTag`             | `{ name: string } & TagOptions`        | `ApiResult<void>`                    |
-| `api:workspace:removeTag`          | `{ name: string }`                     | `ApiResult<void>`                    |
-| `api:workspace:openAgent`          | None                                   | `ApiResult<unknown>`                 |
-| `api:workspace:closeAgent`         | None                                   | `ApiResult<{ closed: boolean }>`     |
-| `api:workspace:sendAgentMessage`   | `SendAgentMessageRequest`              | `ApiResult<null>`                    |
-| `api:workspace:setAgentStatus`     | `{ status: "idle" \| "busy" }`         | `ApiResult<void>`                    |
-| `api:workspace:showMessage`        | `ShowMessageRequest`                   | `ApiResult<null>`                    |
-| `api:workspace:ask`                | `AskRequest`                           | `ApiResult<{ answer }>`              |
-| `api:workspace:select`             | `SelectRequest`                        | `ApiResult<{ answer }>`              |
-| `api:workspace:input`              | `InputRequest`                         | `ApiResult<{ answer }>`              |
-| `api:workspace:pickFile`           | `PickFileRequest`                      | `ApiResult<{ answer }>`              |
-| `api:workspace:openBrowser`        | `{ url: string }`                      | `ApiResult<unknown>`                 |
-| `api:workspace:openDiff`           | `{ left, right, title? }`              | `ApiResult<unknown>`                 |
-| `api:workspace:goto`               | `{ location: string }`                 | `ApiResult<unknown>`                 |
-| `api:workspace:previewMarkdown`    | `{ path: string }`                     | `ApiResult<unknown>`                 |
-| `api:project:list`                 | None                                   | `ApiResult<Project[]>`               |
-| `api:reportIssue`                  | `{ description: string }`              | `ApiResult<{ submitted: true }>`     |
-| `api:config:get`                   | `{ key: string }`                      | `ApiResult<unknown>`                 |
-| `api:config:list`                  | None                                   | `ApiResult<ConfigRow[]>`             |
-| `api:config:set`                   | `{ key: string, value: string }`       | `ApiResult<ConfigRow>`               |
-| `api:config:reset`                 | `{ key: string }`                      | `ApiResult<ConfigRow>`               |
-| `api:notification:show`            | `NotificationShowRequest`              | `ApiResult<{ id }>`                  |
-| `api:notification:close`           | `{ id: string }`                       | `ApiResult<{ closed: true }>`        |
-| `api:registry:describe`            | `{ target: "mcp" \| "cli" }`           | `ApiResult<OperationDescriptor[]>`   |
+| Event                              | Request Payload                                                                           | Response                             |
+| ---------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------ |
+| `api:workspace:getStatus`          | `GetWorkspaceStatusRequest` (optional)                                                    | `ApiResult<WorkspaceStatus>`         |
+| `api:workspace:getAgentSession`    | None                                                                                      | `ApiResult<AgentSession \| null>`    |
+| `api:workspace:restartAgentServer` | None                                                                                      | `ApiResult<number>`                  |
+| `api:workspace:getMetadata`        | None                                                                                      | `ApiResult<Record<string, string>>`  |
+| `api:workspace:setMetadata`        | `SetMetadataRequest`                                                                      | `ApiResult<void>`                    |
+| `api:workspace:executeCommand`     | `ExecuteCommandRequest`                                                                   | `ApiResult<unknown>`                 |
+| `api:workspace:openSystemPath`     | `OpenSystemPathRequest`                                                                   | `ApiResult<void>`                    |
+| `api:workspace:delete`             | `DeleteWorkspaceRequest` (optional)                                                       | `ApiResult<DeleteWorkspaceResponse>` |
+| `api:workspace:create`             | `WorkspaceCreateRequest`                                                                  | `ApiResult<Workspace>`               |
+| `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                                                                   | (none, fire-and-forget)              |
+| `api:log`                          | `LogRequest`                                                                              | (none, fire-and-forget)              |
+| `api:workspace:hibernate`          | `{ wakeup?, shell?, env?, untilDeleted?, untilHibernated?, untilWoken?, all?, timeout? }` | `ApiResult<{ started: boolean }>`    |
+| `api:workspace:wake`               | None                                                                                      | `ApiResult<Workspace>`               |
+| `api:workspace:setWakeup`          | `{ script?, shell?, env?, untilDeleted?, untilHibernated?, untilWoken?, all?, timeout? }` | `ApiResult<WakeupStatus>`            |
+| `api:workspace:clearWakeup`        | None                                                                                      | `ApiResult<null>`                    |
+| `api:workspace:getWakeup`          | None                                                                                      | `ApiResult<WakeupStatus \| null>`    |
+| `api:workspace:processes`          | None                                                                                      | `ApiResult<WorkspaceProcesses>`      |
+| `api:workspace:setTitle`           | `{ title: string \| null }`                                                               | `ApiResult<void>`                    |
+| `api:workspace:listTags`           | None                                                                                      | `ApiResult<WorkspaceTag[]>`          |
+| `api:workspace:setTag`             | `{ name: string } & TagOptions`                                                           | `ApiResult<void>`                    |
+| `api:workspace:removeTag`          | `{ name: string }`                                                                        | `ApiResult<void>`                    |
+| `api:workspace:openAgent`          | None                                                                                      | `ApiResult<unknown>`                 |
+| `api:workspace:closeAgent`         | None                                                                                      | `ApiResult<{ closed: boolean }>`     |
+| `api:workspace:sendAgentMessage`   | `SendAgentMessageRequest`                                                                 | `ApiResult<null>`                    |
+| `api:workspace:setAgentStatus`     | `{ status: "idle" \| "busy" }`                                                            | `ApiResult<void>`                    |
+| `api:workspace:showMessage`        | `ShowMessageRequest`                                                                      | `ApiResult<null>`                    |
+| `api:workspace:ask`                | `AskRequest`                                                                              | `ApiResult<{ answer }>`              |
+| `api:workspace:select`             | `SelectRequest`                                                                           | `ApiResult<{ answer }>`              |
+| `api:workspace:input`              | `InputRequest`                                                                            | `ApiResult<{ answer }>`              |
+| `api:workspace:pickFile`           | `PickFileRequest`                                                                         | `ApiResult<{ answer }>`              |
+| `api:workspace:openBrowser`        | `{ url: string }`                                                                         | `ApiResult<unknown>`                 |
+| `api:workspace:openDiff`           | `{ left, right, title? }`                                                                 | `ApiResult<unknown>`                 |
+| `api:workspace:goto`               | `{ location: string }`                                                                    | `ApiResult<unknown>`                 |
+| `api:workspace:previewMarkdown`    | `{ path: string }`                                                                        | `ApiResult<unknown>`                 |
+| `api:project:list`                 | None                                                                                      | `ApiResult<Project[]>`               |
+| `api:reportIssue`                  | `{ description: string }`                                                                 | `ApiResult<{ submitted: true }>`     |
+| `api:config:get`                   | `{ key: string }`                                                                         | `ApiResult<unknown>`                 |
+| `api:config:list`                  | None                                                                                      | `ApiResult<ConfigRow[]>`             |
+| `api:config:set`                   | `{ key: string, value: string }`                                                          | `ApiResult<ConfigRow>`               |
+| `api:config:reset`                 | `{ key: string }`                                                                         | `ApiResult<ConfigRow>`               |
+| `api:notification:show`            | `NotificationShowRequest`                                                                 | `ApiResult<{ id }>`                  |
+| `api:notification:close`           | `{ id: string }`                                                                          | `ApiResult<{ closed: true }>`        |
+| `api:registry:describe`            | `{ target: "mcp" \| "cli" }`                                                              | `ApiResult<OperationDescriptor[]>`   |
 
 Everything below `api:log` is new: these operations existed only as MCP tools
 before the registry, and are now on both surfaces. Purely additive — no existing

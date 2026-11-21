@@ -326,6 +326,47 @@ describe("ch claude boundary tests", () => {
       expect(output.args).toContain("plan");
       expect(output.args).not.toContain("--dangerously-skip-permissions");
     });
+
+    it("resumes in the mode the session last ran in, keeping the file", async () => {
+      const modeFile = join(tempDir.path, "permission-mode");
+      await writeFile(modeFile, "bypassPermissions");
+
+      const result = await run({ _CH_CLAUDE_PERMISSION_MODE_FILE: modeFile });
+
+      const output = expectLaunched(result);
+      expect(output.args[0]).toBe("--continue");
+      const flag = output.args.indexOf("--permission-mode");
+      expect(output.args[flag + 1]).toBe("bypassPermissions");
+      expect(existsSync(modeFile)).toBe(true);
+    });
+
+    it("starts in the initial prompt's mode over the last one", async () => {
+      const modeFile = join(tempDir.path, "permission-mode");
+      await writeFile(modeFile, "bypassPermissions");
+      const promptFile = await writePromptFile(tempDir.path, {
+        prompt: "test",
+        permissionMode: "plan",
+      });
+
+      const result = await run({
+        _CH_INITIAL_PROMPT_FILE: promptFile,
+        _CH_CLAUDE_PERMISSION_MODE_FILE: modeFile,
+      });
+
+      const output = expectLaunched(result);
+      const flag = output.args.indexOf("--permission-mode");
+      expect(output.args[flag + 1]).toBe("plan");
+      expect(output.args.filter((a) => a === "--permission-mode")).toHaveLength(1);
+    });
+
+    it("sets no mode while no mode file exists yet", async () => {
+      const result = await run({
+        _CH_CLAUDE_PERMISSION_MODE_FILE: join(tempDir.path, "permission-mode"),
+      });
+
+      const output = expectLaunched(result);
+      expect(output.args).not.toContain("--permission-mode");
+    });
   });
 
   describe("session resume (--continue)", () => {

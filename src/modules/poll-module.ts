@@ -65,7 +65,7 @@ const DEFAULT_TIMEOUT_SECONDS = 30;
 export const TEMPORARY_FAILURE_EXIT = 75;
 
 /** How long temporary failures may go on before they are worth a card. */
-const TEMPORARY_FAILURE_GRACE_MS = 10 * 60_000;
+export const TEMPORARY_FAILURE_GRACE_MS = 10 * 60_000;
 
 /** One job's last failure. */
 export interface PollError {

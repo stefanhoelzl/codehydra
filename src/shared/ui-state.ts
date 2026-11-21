@@ -140,8 +140,10 @@ export type UiRowHibernation =
       /** When the workspace was hibernated (ISO-8601). The renderer derives the age it shows. */
       readonly hibernatedAt: string;
       /**
-       * The wakeup script of a hibernated workspace that has one (an
-       * "automated" workspace: it wakes by itself). The sidebar lists these
+       * What wakes a hibernated workspace that has a wakeup (an "automated"
+       * workspace: it wakes by itself), described in one line — its script
+       * alone when that is all it has, else each condition (the workspaces it
+       * waits for, the script). The sidebar lists these
        * after the other hibernated workspaces, in their own color.
        */
       readonly wakeupScript?: string;

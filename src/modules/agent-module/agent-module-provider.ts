@@ -35,6 +35,17 @@ export interface WorkspaceStartOptions {
   readonly onInitialPromptDelivered?: () => void;
   readonly isNewWorkspace?: boolean;
   /**
+   * The permission mode the workspace's agent last ran in, to start it in again
+   * (Claude; ignored by agents without permission modes). `initialPrompt`'s own
+   * mode, when it has one, takes precedence.
+   */
+  readonly permissionMode?: string;
+  /**
+   * Called when the agent reports running in a new permission mode, so it can
+   * be persisted and handed back as `permissionMode` at the next start.
+   */
+  readonly onPermissionModeChange?: (mode: string) => void;
+  /**
    * The workspace environment (from the repository's `before-workspace-opened`
    * hook). An agent whose tools run in a process CodeHydra spawns — OpenCode's
    * server — starts that process with it; Claude's tools run in the agent

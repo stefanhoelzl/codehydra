@@ -19,7 +19,7 @@ import type {
   WorkspaceRef,
 } from "../../intents/contract";
 import { asWorkspaceRef } from "../../utils/ref";
-import { decodeWakeup, WAKEUP_METADATA_KEY } from "../wakeup-module";
+import { decodeWakeup, describeWakeup, WAKEUP_METADATA_KEY } from "../wakeup-module";
 import {
   HIBERNATED_AT_METADATA_KEY,
   HIBERNATED_METADATA_KEY,
@@ -71,7 +71,8 @@ export interface WorkspaceModel {
    */
   hibernation: Hibernation | undefined;
   /**
-   * The wakeup script (metadata `wakeup`, its `script` field); undefined when
+   * What wakes the workspace (metadata `wakeup`), described in one line: its
+   * script alone when that is all it has, else each condition. Undefined when
    * there is none or it is unreadable. Only shown while `hibernated`.
    */
   wakeupScript: string | undefined;
@@ -134,9 +135,10 @@ export function fromMetadata(
   };
 }
 
-/** A stored `wakeup` metadata value's script, or undefined. */
+/** A stored `wakeup` metadata value, described for the sidebar, or undefined. */
 export function readWakeupScript(value: string | null | undefined): string | undefined {
-  return decodeWakeup(value ?? undefined)?.script;
+  const wakeup = decodeWakeup(value ?? undefined);
+  return wakeup === undefined ? undefined : describeWakeup(wakeup);
 }
 
 /** The tags a row shows: every tag but the legacy wakeup one. */

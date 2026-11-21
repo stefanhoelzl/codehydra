@@ -82,6 +82,7 @@ describe("metadata entries", () => {
     const { call, workspaces } = await setup();
     await workspaces.setMetadata(FEATURE, "hibernated", "true");
     await workspaces.setMetadata(FEATURE, "agent.pending-prompt", "{}");
+    await workspaces.setMetadata(FEATURE, "agent.permission-mode", "plan");
     await workspaces.setMetadata(FEATURE, "title", "Login flow");
 
     expect(await call("metadata.get", {})).toEqual({
@@ -107,6 +108,7 @@ describe("metadata entries", () => {
     "name",
     "source",
     "agent.pending-prompt",
+    "agent.permission-mode",
   ])("refuses to write %s, a key CodeHydra manages", async (key) => {
     const { call, workspaces } = await setup();
 

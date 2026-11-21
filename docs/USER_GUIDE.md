@@ -80,7 +80,7 @@ A workspace you're not using can be put to sleep to free its editor and agent
 server. Hibernating stops every [process](#processes) the workspace started.
 A hibernated workspace keeps its branch and files and shows a
 screenshot of where you left it — wake it any time to pick up where you left
-off, or give it a [wakeup script](#wakeup-scripts) that wakes it when
+off, or give it a [wakeup](#wakeups) that wakes it when
 something happens.
 
 Waking resumes the workspace's Claude conversation (`claude --continue`).
@@ -197,7 +197,7 @@ projects open, colors repeat.
   close what you were on, you land in an expanded project or on the form.
 - Its **hibernated workspaces** are folded away. In an expanded project, a
   button in the header counts the hibernated and the **automated** ones (with a
-  [wakeup script](#wakeup-scripts), they wake by themselves; see
+  [wakeup](#wakeups), they wake by themselves; see
   [status](#status-indicators)); it is a bare moon while every one of them is
   being deleted or failed to delete, which it does not count. Click it to show
   them at the top of the card: the hibernated ones, most recently hibernated
@@ -274,7 +274,7 @@ counts as loading, not as hibernated.
 | Hollow dot                                              | No agent running (also while its agent is still starting)         | footer, project header |
 | Red warning                                             | Could not be opened (the reason on hover), or its deletion failed | —                      |
 | Moon                                                    | Hibernated                                                        | footer, project header |
-| Moon in the automated color (alarm clock in the counts) | Hibernated with a [wakeup script](#wakeup-scripts): automated     | footer, project header |
+| Moon in the automated color (alarm clock in the counts) | Hibernated with a [wakeup](#wakeups): automated                   | footer, project header |
 
 A row also turns green while a question or dialog about that workspace is
 waiting for you — a question open in its editor, a hook trust question, a failed
@@ -429,57 +429,107 @@ is easy to spot. Turn this off with `auto-tag.new`.
   still running, CodeHydra stops it, so a workspace never runs two. If the
   reload does not help, hibernate and wake the workspace.
 
-### Wakeup scripts
+### Wakeups
 
-A workspace can carry one **wakeup script**: a script that runs every poll
-while the workspace is hibernated and decides when it wakes. It is usually
-set by the workspace's own agent before it goes to sleep — "wake me when CI on
-PR #12 finishes":
+A workspace can carry one **wakeup**: what decides when it wakes from
+hibernation. It is usually set by the workspace's own agent before it goes to
+sleep, and it wakes the workspace on whichever of its conditions comes first:
+
+- a **wakeup script** that runs every poll and says when to wake — "wake me
+  when CI on PR #12 finishes";
+- **other workspaces** it waits for, each to be deleted, to hibernate or to
+  wake — "wake me when `feature-x` is deleted";
+- its **timeout**: whatever it waits for, it wakes at the latest this long
+  after it hibernated — 14 days unless given another (`--timeout 10d`) or none
+  (`--timeout never`), so a wakeup that never comes (a buggy script, a
+  workspace nobody deletes) cannot leave it asleep and forgotten. A timeout
+  alone is a wakeup too: `ch ws hibernate --timeout 2h` naps for two hours. A
+  workspace you hibernate without any wakeup has no timeout.
 
 ```sh
 ch ws hibernate --wakeup 'gh pr checks 12 >/dev/null && echo "{\"action\":\"wake\",\"message\":\"CI on #12 passed\"}" || true'
+ch ws hibernate --until-deleted feature-x
+ch ws hibernate --until-deleted feature-x --wakeup '…'   # whichever comes first
+ch ws hibernate --until-deleted feature-x --timeout 10d  # …or after 10 days
 ```
 
-- **Setting it** — `ch ws hibernate --wakeup <script>` sets it and hibernates
-  in one call; `ch ws wakeup set <script>` sets it on its own (on an awake
-  workspace it arms the next hibernation; `-` reads the script from stdin).
-  Both take `--shell bash|powershell|cmd` (default `bash`, Git Bash on
-  Windows) and `--env KEY=VALUE`, repeated for several variables of the
-  script's own. A workspace has at most one; setting another replaces it, and
-  hibernating without `--wakeup` keeps the one it has. `ch ws wakeup clear`
-  removes it, `ch ws wakeup show` shows it with how it last ran (also in
-  `ch ws status`). From MCP: `workspace_hibernate` (`wakeup`),
-  `workspace_set_wakeup`, `workspace_clear_wakeup`, `workspace_get_wakeup`;
-  from an automation: `workspace.wakeup.set` / `workspace.wakeup.clear` items,
-  or `wakeup` on a `workspace.hibernate` item.
-- **When it runs** — on every poll (`poll.interval`, default 60 seconds) while
-  the workspace is hibernated, never while it is awake; the first run is on the
-  next poll after hibernating, and every hibernated workspace's script runs
-  once the app has opened its projects. It is killed after `poll.timeout`
-  (default 30 seconds). It runs in the worktree, with `ch` on `PATH` (so
-  `ch ws …` acts on that workspace), `CH_WORKSPACE_DIR` and its own variables
-  set, and `{"workspace": <ref>, "project": <ref>, "workspacePath": …}` on
-  stdin. `plugins.enabled` does not stop it.
-- **What it prints** — nothing, or `{"action":"keep"}`, keeps the workspace
-  asleep. `{"action":"wake","message":"…"}` wakes it in place (you stay where
-  you are) and sends the message, if any, to its agent as a
-  [message](#messages-to-a-running-agent) signed `CodeHydra · wakeup`. Woken
-  with a message, it goes from loading straight to busy and stays busy until
-  its agent has handled the message, so it chimes once, when that is done.
-  There is no delete: to have a workspace deleted, wake it with a message asking its
-  agent to delete it.
-- **Any wake clears it** — the script's own, yours, an automation's. It is
+- **Setting it** — `ch ws hibernate` with any of the options below sets it
+  and hibernates in one call; `ch ws wakeup set` sets it on its own (on an
+  awake workspace it arms the next hibernation). A workspace has at most one
+  wakeup; setting one replaces the old one as a whole, and hibernating without
+  any of these options keeps the one it has. `ch ws wakeup clear` removes it,
+  `ch ws wakeup show` shows it, with how its script last ran (also in
+  `ch ws status`). From MCP: `workspace_hibernate`, `workspace_set_wakeup`,
+  `workspace_clear_wakeup`, `workspace_get_wakeup`, with the same fields in
+  camelCase (`untilDeleted`, …); from an automation: `workspace.wakeup.set` /
+  `workspace.wakeup.clear` items, or the same fields on a `workspace.hibernate`
+  item.
+
+  | Option                                         | Meaning                                                                                                                |
+  | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+  | `--wakeup <script>` (`ws wakeup set <script>`) | The wakeup script (`-` reads it from stdin)                                                                            |
+  | `--shell bash\|powershell\|cmd`                | The script's shell (default `bash`, Git Bash on Windows)                                                               |
+  | `--env KEY=VALUE`                              | A variable of the script's own; repeat for several                                                                     |
+  | `--until-deleted <workspace>`                  | Wake once that workspace is deleted, or closed with its project                                                        |
+  | `--until-hibernated <workspace>`               | Wake once that awake workspace hibernates                                                                              |
+  | `--until-woken <workspace>`                    | Wake once that hibernated workspace wakes                                                                              |
+  | `--all`                                        | With several workspaces to wait for: wake only once every one of them has got there (default: the first one that does) |
+  | `--timeout <duration>`                         | Wake at the latest this long after hibernating: `90s`, `30m`, `12h`, `10d`, `2w`, or `never` (default `14d`)           |
+
+  The `--until-*` options repeat, for several workspaces, and mix. A workspace
+  is named as for `--workspace`: its name (your own project first),
+  `<project>::<name>` or its ref. A wakeup that waits for nothing (`--timeout never` alone) is refused,
+  and so is one that could never mean what was asked: a workspace waiting for
+  itself, for one that is not open, or for a state its workspace is already
+  in (`--until-hibernated` on a hibernated one, `--until-woken` on an awake
+  one).
+
+- **Waiting for workspaces** — checked the moment any workspace is deleted,
+  hibernates or wakes, and on every poll (what notices a project you closed).
+  A watched workspace that is gone — deleted, or its project closed — counts
+  as having got to any state: it never will now. With `--all`, one that got
+  there stays counted even if it leaves that state again (it wakes again, say)
+  before the others get there. The message to the agent says which workspace
+  woke it, and how.
+- **When the script runs** — while the workspace is hibernated, never while
+  it is awake: on every poll (`poll.interval`, default 60 seconds) for its
+  first day asleep, then every 15 minutes, and every 2 hours once it has slept
+  a week. The first run is on the next poll after hibernating (or after a
+  script is set), and every hibernated workspace's script runs once the app
+  has opened its projects. It is killed
+  after `poll.timeout` (default 30 seconds). It runs in the worktree, with
+  `ch` on `PATH` (so `ch ws …` acts on that workspace), `CH_WORKSPACE_DIR` and
+  its own variables set, and
+  `{"workspace": <ref>, "project": <ref>, "workspacePath": …}` on stdin.
+  `plugins.enabled` does not stop it. As every script does
+  ([How scripts run](#how-scripts-run)), a bash script runs with `-eo pipefail`: a command that fails stops it, so
+  catch the failures you expect (`… || rc=$?`).
+- **What the script prints** — nothing, or `{"action":"keep"}`, keeps the
+  workspace asleep. `{"action":"wake","message":"…"}` wakes it in place (you
+  stay where you are).
+- **Woken** — by its wakeup, a workspace wakes in place and its agent gets a
+  [message](#messages-to-a-running-agent) signed `CodeHydra · wakeup`: the
+  script's message, or why it woke (which workspace got where, or that its
+  timeout passed and what it was still waiting for). `ch ws wakeup show`
+  gives the timeout in effect and, while hibernated, the `deadline`. Woken with a message, it goes from loading
+  straight to busy and stays busy until its agent has handled the message, so
+  it chimes once, when that is done. There is no delete: to have a workspace
+  deleted, wake it with a message asking its agent to delete it.
+- **Any wake clears it** — the wakeup's own, yours, an automation's. It is
   one-shot, so a condition that is still true cannot wake the workspace again
   the moment you hibernate it.
-- **Failures** — an exit other than 0 (or 75, a temporary failure) or output
-  that is not one of the above never wakes the workspace; it raises **Wakeup
-  script failed**, once per distinct message, with an **Open log** button, and
-  the script runs again next poll. The notification closes by itself once a
-  run succeeds or the workspace is woken. `ch ws wakeup show` lists the failure with its run log, kept under
-  `<data directory>/logs/wakeup/`.
-- A hibernated workspace with a wakeup script is **automated**: the sidebar
-  lists it apart, in its own color, after the project's other hibernated
-  workspaces; hover its row to see the script.
+- **Failures** — a script that exits other than 0, or prints something that
+  is not one of the above, wakes the workspace: its agent is told what went
+  wrong (the failure, the end of the script's output and where its run logs
+  are), so a broken script never leaves a workspace asleep for good. Exit 75
+  is a temporary failure: the script runs again next poll, and only once its
+  failures have gone on for ten minutes does it wake the workspace. A failure
+  also raises **Wakeup script failed**, with an **Open log** button; it closes
+  by itself once the workspace is woken. `ch ws wakeup show` lists the failure
+  with its run log, kept under `<data directory>/logs/wakeup/`.
+- A hibernated workspace with a wakeup is **automated**: the sidebar lists it
+  apart, in its own color, after the project's other hibernated workspaces;
+  hover its row to see what wakes it.
 
 ### Deleting a workspace
 
@@ -1459,7 +1509,7 @@ The first poll runs at startup, once CodeHydra has opened your projects; after
 that, `poll.interval` is the number of seconds between the end of one poll and
 the start of the next (default 60, minimum 1; a change applies once the current
 wait ends). The same poll runs
-[wakeup scripts](#wakeup-scripts). Every automation runs each poll, all at
+[wakeup scripts](#wakeups). Every automation runs each poll, all at
 once, and each one's items are acted on as soon as its script ends. The script
 gets `{}` on stdin and is killed after `poll.timeout` seconds (default 30). A
 failed or timed-out script, or output that is not a JSON array, skips that
@@ -1780,7 +1830,11 @@ hooks, the CodeHydra MCP server, the system prompt below,
 `--allow-dangerously-skip-permissions` (so bypass mode is available through
 Shift+Tab, not switched on), and `--disallowedTools=Artifact` (see
 [Pages and browsers](#pages-and-browsers)). It resumes the workspace's last conversation
-(`--continue`) unless the workspace is new.
+(`--continue`) unless the workspace is new, in the permission mode that
+conversation was last in — the one chosen at creation, or one you switched to
+with Shift+Tab — across reopening the agent terminal, hibernation and app
+restarts. CodeHydra learns a switch from the agent's next hook (prompt, tool
+call or turn end).
 
 Claude Code 2.1.63 or newer is needed: its status hooks are HTTP hooks that
 report straight to CodeHydra, which older versions do not have. With an older
@@ -1940,8 +1994,8 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `ws processes`                                                     | The [processes](#processes) running in the workspace, as a tree with CPU, memory and ports                                                                                                                             |
 | `ws create <name> [base]`                                          | New workspace (`--project`, `--tracking`, `--prompt`, `--agent`, `--model`, `--permission-mode`, `--agent-name`)                                                                                                       |
 | `ws delete`                                                        | Delete the workspace (`--keep-branch`, `--ignore-warnings`, `--no-wait`)                                                                                                                                               |
-| `ws hibernate`, `ws wake`                                          | Hibernate (`--wakeup <script>`, `--shell`, `--env`) / wake                                                                                                                                                             |
-| `ws wakeup set <script>\|clear\|show`                              | The [wakeup script](#wakeup-scripts) (`--shell`, `--env KEY=VALUE`; `-` reads stdin)                                                                                                                                   |
+| `ws hibernate`, `ws wake`                                          | Hibernate (with a [wakeup](#wakeups): `--wakeup <script>`, `--until-deleted` …) / wake                                                                                                                                 |
+| `ws wakeup set [<script>]\|clear\|show`                            | The [wakeup](#wakeups) (`--shell`, `--env KEY=VALUE`, `--until-deleted\|hibernated\|woken <workspace>`, `--all`, `--timeout`; `-` reads the script from stdin)                                                         |
 | `ws switch <workspace>`                                            | Make a workspace the active one (`switched: false` while the New workspace form has input)                                                                                                                             |
 | `ws title [title]`                                                 | Sidebar title; with no title, clears it and the row shows the branch again                                                                                                                                             |
 | `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                                                                                                                             |
@@ -2059,7 +2113,7 @@ Some keys are CodeHydra's own, and `ws metadata get` shows them read-only:
 | `agent`      | The agent the workspace runs (`claude` or `opencode`)       |
 | `hibernated` | `true` while the workspace is hibernated                    |
 | `source`     | The `<plugin>/<automation>` that created or last matched it |
-| `wakeup`     | The [wakeup script](#wakeup-scripts), as JSON               |
+| `wakeup`     | The [wakeup](#wakeups), as JSON                             |
 
 Setting one of those — or a key CodeHydra keeps to itself and does not show —
 is refused, from `ch`, MCP, the extension API, plugin actions and automation
