@@ -222,11 +222,12 @@ function createSetup() {
     },
     { [EVENT_WORKSPACE_WOKEN]: z.custom() }
   );
+  const messages = { held: false };
   const messageOp = fakeOperation<SendAgentMessageIntent, SendAgentMessageResult>(
     INTENT_SEND_AGENT_MESSAGE,
     "send-agent-message",
     // A send with `wake` wakes a hibernated workspace first, as the real one does.
-    (intent, emit) => {
+    async (intent, emit) => {
       const workspace = get(intent.payload.workspaceRef);
       if (intent.payload.wake === true && workspace.metadata["hibernated"] === "true") {
         delete workspace.metadata["hibernated"];
@@ -240,6 +241,8 @@ function createSetup() {
           },
         });
       }
+      // Held: the woken agent has not come up yet (the real send waits for it).
+      if (messages.held) await new Promise(() => {});
       return { sent: true };
     }
   );
@@ -339,6 +342,7 @@ function createSetup() {
     requests,
     wakeOp,
     messageOp,
+    messages,
     hibernateOp,
     get cards() {
       return cards.notifications.map((card) => card.opened);
@@ -612,6 +616,32 @@ describe("wakeup scripts: polling", () => {
     ]);
   });
 
+  it("keeps polling while a woken agent comes up", async () => {
+    const setup = createSetup();
+    const waking = setup.add("waking");
+    const other = setup.add("other");
+    await setup.call("workspace.hibernate", waking.ref, { wakeup: "fails" });
+    await setup.call("workspace.hibernate", other.ref, { wakeup: "check", timeout: "never" });
+    setup.prints["fails"] = { exitCode: 1 };
+    setup.messages.held = true;
+
+    await setup.start(); // resolves although the send never does
+    await setup.tick();
+    expect(setup.requests.filter((request) => request.script === "check")).toHaveLength(2);
+  });
+
+  it("shows no failure of a script it replaced", async () => {
+    const setup = createSetup();
+    const ws = setup.add("pr-12");
+    await setup.call("workspace.hibernate", ws.ref, { wakeup: "old", timeout: "never" });
+    setup.prints["old"] = { exitCode: 75 };
+    await setup.start();
+    await expect(setup.call("workspace.wakeup.show", ws.ref)).resolves.toHaveProperty("error");
+
+    await setup.call("workspace.wakeup.set", ws.ref, { script: "new" });
+    await expect(setup.call("workspace.wakeup.show", ws.ref)).resolves.not.toHaveProperty("error");
+  });
+
   it("includes the script in the workspace's status", async () => {
     const setup = createSetup();
     const ws = setup.add("pr-12");
@@ -677,6 +707,18 @@ describe("wakeup: waiting for other workspaces", () => {
     expect(setup.sent()).toEqual([
       { name: "sleeper", text: "Woken because closer was deleted (or its project closed)." },
     ]);
+  });
+
+  it("never holds up the deletion while the woken agent comes up", async () => {
+    const setup = createSetup();
+    const sleeper = setup.add("sleeper");
+    const closer = setup.add("closer");
+    await setup.call("workspace.hibernate", sleeper.ref, { untilDeleted: ["closer"] });
+    await setup.start();
+    setup.messages.held = true;
+
+    await setup.remove(closer); // resolves although the send never does
+    expect(setup.sent()).toHaveLength(1);
   });
 
   it("leaves a project's teardown to the next tick", async () => {

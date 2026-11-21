@@ -339,7 +339,12 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
     const wakeup = decodeWakeup(metadata?.[WAKEUP_METADATA_KEY]);
     if (wakeup === undefined) return null;
     const lastRun = lastRuns.get(workspaceRef);
-    const error = deps.pollErrors(WAKEUP_OWNER).find((entry) => entry.id === workspaceRef);
+    // Only this wakeup's own failure: one recorded for a script it replaced
+    // (set clears the last run) stays with the poll module until its next tick.
+    const error =
+      lastRun?.outcome === "failed"
+        ? deps.pollErrors(WAKEUP_OWNER).find((entry) => entry.id === workspaceRef)
+        : undefined;
     const deadline =
       metadata?.[HIBERNATED_METADATA_KEY] === "true"
         ? deadlineOf(wakeup, readHibernatedAt(metadata[HIBERNATED_AT_METADATA_KEY]))
@@ -373,6 +378,17 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
   // ---------------------------------------------------------------------------
   // Waking
   // ---------------------------------------------------------------------------
+
+  /**
+   * Run a wake without waiting for it. A wake with a message waits for the
+   * woken agent to come up, which can take a minute or more: the deletion,
+   * hibernation or wake whose event set it off, and the poll tick (every other
+   * script, every timeout), must not wait with it. `wake` catches and logs its
+   * own failures, so a wake that fails is in the log, not on a card.
+   */
+  function detach(waking: Promise<unknown>): void {
+    void waking;
+  }
 
   /**
    * Wake a workspace in place, sending `message` to its agent. Returns what went
@@ -487,7 +503,6 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
     if (overrides.hibernated !== undefined) hibernated.set(overrides.hibernated, true);
     if (overrides.woken !== undefined) hibernated.set(overrides.woken, false);
 
-    const wakes: Promise<unknown>[] = [];
     for (const project of projects ?? []) {
       for (const workspace of project.workspaces) {
         if (hibernated.get(workspace.ref) !== true) continue;
@@ -512,7 +527,7 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
           const reasons = outcomes.map(
             ({ watch: w, reason }) => reason ?? `${nameOf(w.workspace)} ${PAST_WORDS[w.until]}`
           );
-          wakes.push(
+          detach(
             wake(
               workspace.ref,
               "every watched workspace reached its state",
@@ -523,11 +538,10 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
         } else {
           const first = outcomes.find((o) => o.reason !== undefined);
           if (first?.reason === undefined) continue;
-          wakes.push(wake(workspace.ref, first.reason, `Woken because ${first.reason}.`));
+          detach(wake(workspace.ref, first.reason, `Woken because ${first.reason}.`));
         }
       }
     }
-    await Promise.all(wakes);
   }
 
   /** Check the watches without failing the caller: an event handler or a tick. */
@@ -550,7 +564,6 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
       payload: {},
     });
     const jobs: PollJob[] = [];
-    const timedOut: Promise<unknown>[] = [];
     for (const project of projects ?? []) {
       for (const workspace of project.workspaces) {
         if (workspace.metadata[HIBERNATED_METADATA_KEY] !== "true") continue;
@@ -559,7 +572,7 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
         const hibernatedAt = readHibernatedAt(workspace.metadata[HIBERNATED_AT_METADATA_KEY]);
         const deadline = deadlineOf(wakeup, hibernatedAt);
         if (deadline !== null && now() >= deadline) {
-          timedOut.push(wakeOnTimeout(workspace.ref, wakeup, hibernatedAt));
+          detach(wakeOnTimeout(workspace.ref, wakeup, hibernatedAt));
           continue;
         }
         if (wakeup.script === undefined) continue;
@@ -586,7 +599,6 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
         });
       }
     }
-    await Promise.all(timedOut);
     return jobs;
   }
 
@@ -627,8 +639,8 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
         if (now() - since < TEMPORARY_FAILURE_GRACE_MS) return [];
       }
       temporarySince.delete(workspaceRef);
-      const error = await wakeOnFailure(job, run, run.failure);
-      return error === undefined ? [] : [error];
+      detach(wakeOnFailure(job, run, run.failure));
+      return [];
     }
     temporarySince.delete(workspaceRef);
     let output: z.infer<typeof outputSchema>;
@@ -637,15 +649,15 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
     } catch (error) {
       const reason = getErrorMessage(error);
       record(workspaceRef, "failed", reason);
-      const wakeError = await wakeOnFailure(job, run, reason);
-      return wakeError === undefined ? [reason] : [reason, wakeError];
+      detach(wakeOnFailure(job, run, reason));
+      return [reason];
     }
     if (output.action === "keep") {
       record(workspaceRef, "keep");
       return [];
     }
-    const error = await wake(workspaceRef, "its script said so", output.message);
-    return error === undefined ? [] : [error];
+    detach(wake(workspaceRef, "its script said so", output.message));
+    return [];
   }
 
   const hooks = defineHooks({
