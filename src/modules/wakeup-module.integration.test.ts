@@ -37,9 +37,11 @@ import {
   type WakeWorkspaceIntent,
 } from "../intents/wake-workspace";
 import {
+  EVENT_WORKSPACE_HIBERNATED,
   INTENT_HIBERNATE_WORKSPACE,
   type HibernateWorkspaceIntent,
 } from "../intents/hibernate-workspace";
+import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import {
   INTENT_SEND_AGENT_MESSAGE,
   type SendAgentMessageIntent,
@@ -55,7 +57,13 @@ import type { WorkspaceRef } from "../intents/contract";
 import { projPath, wsPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
 import { gitProjectRef } from "./git/ref";
 import { createPollModule } from "./poll-module";
-import { createWakeupModule, WAKEUP_METADATA_KEY, WAKEUP_TAG_KEY } from "./wakeup-module";
+import {
+  createWakeupModule,
+  decodeWakeup,
+  describeWakeup,
+  WAKEUP_METADATA_KEY,
+  WAKEUP_TAG_KEY,
+} from "./wakeup-module";
 import type { ScriptRequest, ScriptRunner } from "./scripts/script-runner";
 import { createRegistry } from "../api/entries";
 import type { OperationName } from "../api/names";
@@ -178,9 +186,20 @@ function createSetup() {
   const hibernateOp = fakeOperation<HibernateWorkspaceIntent, void>(
     INTENT_HIBERNATE_WORKSPACE,
     "hibernate-workspace",
-    (intent) => {
-      get(intent.payload.workspaceRef).metadata["hibernated"] = "true";
-    }
+    (intent, emit) => {
+      const workspace = get(intent.payload.workspaceRef);
+      workspace.metadata["hibernated"] = "true";
+      emit({
+        type: EVENT_WORKSPACE_HIBERNATED,
+        payload: {
+          projectId: "project-1",
+          workspaceName: workspace.name,
+          workspaceRef: workspace.ref,
+          projectRef: PROJECT_REF,
+        },
+      });
+    },
+    { [EVENT_WORKSPACE_HIBERNATED]: z.custom() }
   );
   const wakeOp = fakeOperation<WakeWorkspaceIntent, unknown>(
     INTENT_WAKE_WORKSPACE,
@@ -204,7 +223,23 @@ function createSetup() {
   const messageOp = fakeOperation<SendAgentMessageIntent, SendAgentMessageResult>(
     INTENT_SEND_AGENT_MESSAGE,
     "send-agent-message",
-    () => ({ sent: true })
+    // A send with `wake` wakes a hibernated workspace first, as the real one does.
+    (intent, emit) => {
+      const workspace = get(intent.payload.workspaceRef);
+      if (intent.payload.wake === true && workspace.metadata["hibernated"] === "true") {
+        delete workspace.metadata["hibernated"];
+        emit({
+          type: EVENT_WORKSPACE_WOKEN,
+          payload: {
+            projectId: "project-1",
+            workspaceName: workspace.name,
+            workspaceRef: workspace.ref,
+            projectRef: PROJECT_REF,
+          },
+        });
+      }
+      return { sent: true };
+    }
   );
   const statusOp = fakeOperation<GetWorkspaceStatusIntent, { isDirty: boolean }>(
     INTENT_GET_WORKSPACE_STATUS,
@@ -221,7 +256,7 @@ function createSetup() {
   dispatcher.registerOperation(statusOp);
 
   /** What each script prints, by script body. Unset: nothing (keep). */
-  const prints: Record<string, { stdout?: string; exitCode?: number }> = {};
+  const prints: Record<string, { stdout?: string; stderr?: string; exitCode?: number }> = {};
   const requests: ScriptRequest[] = [];
   const runner: ScriptRunner = {
     async run(request) {
@@ -232,7 +267,7 @@ function createSetup() {
           status: "exited",
           exitCode: outcome.exitCode ?? 0,
           stdout: outcome.stdout ?? "",
-          stderr: "",
+          stderr: outcome.stderr ?? "",
         },
         finish: async () => new Path(request.logDir, "run.log"),
       };
@@ -310,6 +345,26 @@ function createSetup() {
       await poll.events![EVENT_APP_STARTED]!.handler({ type: EVENT_APP_STARTED, payload: {} });
     },
     tick: () => vi.advanceTimersByTimeAsync(MINUTE),
+    /** Delete a workspace: gone from the list, then the event (a real deletion, or a project's teardown). */
+    remove: async (workspace: StoredWorkspace, worktreeRemoved = true): Promise<void> => {
+      workspaces.delete(workspace.ref);
+      await wakeup.events![EVENT_WORKSPACE_DELETED]!.handler({
+        type: EVENT_WORKSPACE_DELETED,
+        payload: {
+          projectId: "project-1" as ProjectId,
+          workspaceName: workspace.name as WorkspaceName,
+          workspaceRef: workspace.ref,
+          projectRef: PROJECT_REF,
+          worktreeRemoved,
+        },
+      });
+    },
+    /** The texts sent to agents, by workspace name. */
+    sent: (): { name: string; text: string }[] =>
+      messageOp.dispatched.map((intent) => ({
+        name: get(intent.payload.workspaceRef).name,
+        text: intent.payload.text,
+      })),
   };
 }
 
@@ -491,30 +546,28 @@ describe("wakeup scripts: polling", () => {
     expect(ws.metadata[WAKEUP_TAG_KEY]).toBeUndefined();
   });
 
-  it("never wakes on a failed run, and announces it once with its log", async () => {
+  it("wakes on a failed run, telling its agent what went wrong, and announces it", async () => {
     const setup = createSetup();
     const ws = setup.add("pr-12");
     await setup.call("workspace.hibernate", ws.ref, { wakeup: "check" });
-    setup.prints["check"] = { exitCode: 1, stdout: '{"action":"wake"}' };
+    setup.prints["check"] = { exitCode: 6, stderr: "gh: not logged in" };
 
     await setup.start();
-    await setup.tick();
     await setup.settle();
 
-    expect(setup.wakeOp.dispatched).toHaveLength(0);
+    const [sent] = setup.messageOp.dispatched;
+    expect(sent?.payload).toMatchObject({ workspaceRef: ws.ref, wake: true });
+    expect(sent?.payload.text).toContain("Your wakeup script failed (exit 6)");
+    expect(sent?.payload.text).toContain("gh: not logged in");
     expect(setup.cards).toEqual([
       expect.objectContaining({
         title: "Wakeup script failed",
-        message: "wakeup pr-12: exit 1 — see ch ws wakeup show",
+        message: "wakeup pr-12: exit 6 — see ch ws wakeup show",
       }),
     ]);
-    await expect(setup.call("workspace.wakeup.show", ws.ref)).resolves.toMatchObject({
-      lastRun: { outcome: "failed", message: "exit 1" },
-      error: { message: "exit 1", logPath: expect.any(String) },
-    });
   });
 
-  it("reports output that is not a verdict, and stays asleep", async () => {
+  it("wakes on output that is not a verdict, showing its agent the output", async () => {
     const setup = createSetup();
     const ws = setup.add("pr-12");
     await setup.call("workspace.hibernate", ws.ref, { wakeup: "check" });
@@ -523,9 +576,31 @@ describe("wakeup scripts: polling", () => {
     await setup.start();
     await setup.settle();
 
-    expect(setup.wakeOp.dispatched).toHaveLength(0);
+    const text = setup.messageOp.dispatched[0]?.payload.text ?? "";
+    expect(text).toContain('printed JSON that is not {"action": "wake" | "keep"');
+    expect(text).toContain('{"action":"delete"}');
     expect(setup.cards.map((card) => card.message)).toEqual([
       'wakeup pr-12: printed JSON that is not {"action": "wake" | "keep", "message"?: string} — see ch ws wakeup show',
+    ]);
+  });
+
+  it("stays asleep through temporary failures until they have gone on for ten minutes", async () => {
+    const setup = createSetup();
+    const ws = setup.add("pr-12");
+    await setup.call("workspace.hibernate", ws.ref, { wakeup: "check" });
+    setup.prints["check"] = { exitCode: 75 };
+
+    await setup.start();
+    for (let minute = 0; minute < 9; minute++) await setup.tick();
+    expect(setup.messageOp.dispatched).toHaveLength(0);
+    await expect(setup.call("workspace.wakeup.show", ws.ref)).resolves.toMatchObject({
+      lastRun: { outcome: "failed" },
+    });
+
+    await setup.tick();
+    await setup.tick();
+    expect(setup.messageOp.dispatched.map((intent) => intent.payload.text)).toEqual([
+      expect.stringContaining("Your wakeup script failed (temporary failure (exit 75))"),
     ]);
   });
 
@@ -573,5 +648,194 @@ describe("wakeup scripts: polling", () => {
       hibernated: false,
       hibernatedAt: null,
     });
+  });
+});
+
+describe("wakeup: waiting for other workspaces", () => {
+  it("wakes the moment a watched workspace is deleted, telling its agent why", async () => {
+    const setup = createSetup();
+    const sleeper = setup.add("sleeper");
+    const closer = setup.add("closer");
+    await setup.call("workspace.hibernate", sleeper.ref, { untilDeleted: ["closer"] });
+    expect(JSON.parse(sleeper.metadata[WAKEUP_METADATA_KEY]!)).toEqual({
+      watch: [{ workspace: closer.ref, until: "deleted" }],
+    });
+
+    await setup.start();
+    expect(setup.sent()).toEqual([]);
+    expect(setup.requests).toEqual([]); // no script, nothing to run
+
+    await setup.remove(closer);
+    expect(setup.sent()).toEqual([
+      { name: "sleeper", text: "Woken because closer was deleted (or its project closed)." },
+    ]);
+  });
+
+  it("leaves a project's teardown to the next tick", async () => {
+    const setup = createSetup();
+    const sleeper = setup.add("sleeper");
+    const closer = setup.add("closer");
+    await setup.call("workspace.hibernate", sleeper.ref, { untilDeleted: ["closer"] });
+    await setup.start();
+
+    await setup.remove(closer, false);
+    expect(setup.sent()).toEqual([]);
+    await setup.tick();
+    expect(setup.sent()).toHaveLength(1);
+  });
+
+  it("wakes when a watched workspace hibernates, or a hibernated one wakes", async () => {
+    const setup = createSetup();
+    const a = setup.add("a");
+    const b = setup.add("b");
+    const other = setup.add("other");
+    const sleeping = setup.add("sleeping", { hibernated: "true" });
+    await setup.call("workspace.hibernate", a.ref, { untilHibernated: ["other"] });
+    await setup.call("workspace.hibernate", b.ref, { untilWoken: ["sleeping"] });
+    await setup.start();
+
+    await setup.call("workspace.hibernate", other.ref);
+    await setup.settle();
+    expect(setup.sent()).toEqual([{ name: "a", text: "Woken because other hibernated." }]);
+
+    await setup.call("workspace.wake", sleeping.ref);
+    await setup.settle();
+    expect(setup.sent()).toContainEqual({ name: "b", text: "Woken because sleeping woke." });
+  });
+
+  it("with all, waits for every watched workspace, counting one that left its state again", async () => {
+    const setup = createSetup();
+    const sleeper = setup.add("sleeper");
+    const a = setup.add("a");
+    const b = setup.add("b");
+    await setup.call("workspace.hibernate", sleeper.ref, {
+      untilHibernated: ["a", "b"],
+      all: true,
+    });
+    await setup.start();
+
+    await setup.call("workspace.hibernate", a.ref);
+    await setup.settle();
+    await setup.call("workspace.wake", a.ref);
+    await setup.settle();
+    expect(setup.sent()).toEqual([]);
+    await expect(setup.call("workspace.wakeup.show", sleeper.ref)).resolves.toMatchObject({
+      all: true,
+      watch: [
+        { workspace: a.ref, until: "hibernated", reachedAt: expect.any(String) },
+        { workspace: b.ref, until: "hibernated" },
+      ],
+    });
+
+    await setup.call("workspace.hibernate", b.ref);
+    await setup.settle();
+    expect(setup.sent()).toEqual([
+      {
+        name: "sleeper",
+        text: "Woken because every workspace this one waited for reached its state: a hibernated; b hibernated.",
+      },
+    ]);
+  });
+
+  it("counts a watched workspace that is gone as having reached any state", async () => {
+    const setup = createSetup();
+    const sleeper = setup.add("sleeper");
+    const other = setup.add("other");
+    await setup.call("workspace.hibernate", sleeper.ref, { untilHibernated: ["other"] });
+    await setup.start();
+
+    await setup.remove(other);
+    expect(setup.sent()[0]?.text).toContain("other is gone");
+  });
+
+  it("combines with a script: whichever comes first wakes it", async () => {
+    const setup = createSetup();
+    const sleeper = setup.add("sleeper");
+    const closer = setup.add("closer");
+    await setup.call("workspace.hibernate", sleeper.ref, {
+      wakeup: "check",
+      untilDeleted: ["closer"],
+    });
+    await setup.start();
+    expect(setup.requests).toHaveLength(1);
+    expect(setup.sent()).toEqual([]);
+
+    await setup.remove(closer);
+    await setup.settle();
+    expect(setup.sent()).toHaveLength(1);
+    expect(sleeper.metadata[WAKEUP_METADATA_KEY]).toBeUndefined();
+    await setup.tick();
+    expect(setup.requests).toHaveLength(1); // cleared with the wake
+  });
+
+  it("wakes at hibernation when a condition armed while awake is met by then", async () => {
+    const setup = createSetup();
+    const sleeper = setup.add("sleeper");
+    const closer = setup.add("closer");
+    await setup.start();
+    await setup.call("workspace.wakeup.set", sleeper.ref, { untilDeleted: ["closer"] });
+    await setup.remove(closer);
+    expect(setup.sent()).toEqual([]); // awake: nothing to wake
+
+    await setup.call("workspace.hibernate", sleeper.ref);
+    await setup.settle();
+    expect(setup.sent()).toHaveLength(1);
+  });
+
+  it("refuses what could never mean what was asked", async () => {
+    const setup = createSetup();
+    const ws = setup.add("ws");
+    setup.add("awake");
+    setup.add("asleep", { hibernated: "true" });
+    const set = (input: Record<string, unknown>) =>
+      setup.call("workspace.wakeup.set", ws.ref, input);
+
+    await expect(set({ untilDeleted: ["ws"] })).rejects.toMatchObject({ category: "usage" });
+    await expect(set({ untilDeleted: ["nope"] })).rejects.toMatchObject({
+      category: "not-found",
+    });
+    await expect(set({ untilHibernated: ["asleep"] })).rejects.toMatchObject({
+      category: "conflict",
+    });
+    await expect(set({ untilWoken: ["awake"] })).rejects.toMatchObject({ category: "conflict" });
+    await expect(set({ all: true })).rejects.toMatchObject({ category: "usage" });
+    await expect(set({})).rejects.toMatchObject({ category: "usage" });
+    await expect(set({ shell: "bash", untilDeleted: ["awake"] })).rejects.toMatchObject({
+      category: "usage",
+    });
+    await expect(
+      setup.call("workspace.hibernate", ws.ref, { untilHibernated: ["asleep"] })
+    ).rejects.toMatchObject({ category: "conflict" });
+    expect(setup.hibernateOp.dispatched).toHaveLength(0);
+    expect(ws.metadata[WAKEUP_METADATA_KEY]).toBeUndefined();
+  });
+});
+
+describe("wakeup: sidebar description", () => {
+  it("is the script alone when that is all, else each condition", () => {
+    const ref = (name: string) => workspaceRefIn(PROJECT_PATH, name);
+    const describe = (value: object) => describeWakeup(decodeWakeup(JSON.stringify(value))!);
+
+    expect(describe({ script: "check", shell: "bash", env: {} })).toBe("check");
+    expect(
+      describe({
+        script: "check",
+        shell: "bash",
+        env: {},
+        watch: [
+          { workspace: ref("a"), until: "deleted" },
+          { workspace: ref("b"), until: "woken" },
+        ],
+      })
+    ).toBe("when a is deleted or b wakes · or script: check");
+    expect(
+      describe({
+        watch: [
+          { workspace: ref("a"), until: "hibernated" },
+          { workspace: ref("b"), until: "hibernated" },
+        ],
+        all: true,
+      })
+    ).toBe("when a hibernates and b hibernates");
   });
 });
