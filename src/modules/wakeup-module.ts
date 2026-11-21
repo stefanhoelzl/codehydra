@@ -25,6 +25,13 @@
  *   stored watch), even if it leaves that state again before the others get
  *   there.
  *
+ * - **its timeout**: whatever it waits for, it wakes once this long has passed
+ *   since it hibernated (`timeoutSeconds`; 14 days when none was given, never
+ *   with null), so a condition that never comes — a buggy script, a workspace
+ *   nobody deletes — cannot leave it asleep for good. A wakeup may also be a
+ *   timeout alone: "wake me in 2 hours". Checked on every poll tick. A
+ *   workspace hibernated without any wakeup has none.
+ *
  * There is deliberately no "delete": a script that decides a workspace is done
  * wakes it with a message asking its agent to delete it, so the deletion goes
  * through someone who can see what would be lost.
@@ -64,7 +71,9 @@ import {
 } from "../intents/wake-workspace";
 import {
   EVENT_WORKSPACE_HIBERNATED,
+  HIBERNATED_AT_METADATA_KEY,
   HIBERNATED_METADATA_KEY,
+  readHibernatedAt,
 } from "../intents/hibernate-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import {
@@ -76,7 +85,9 @@ import { tagKey } from "../shared/api/types";
 import { getErrorMessage } from "../shared/error-utils";
 import { Path } from "../utils/path/path";
 import { parseWorkspaceRef } from "../utils/ref";
+import { formatDuration } from "../api/entries/wakeup";
 import {
+  DEFAULT_WAKEUP_TIMEOUT_SECONDS,
   WATCH_STATES,
   type Wakeup,
   type WakeupStatus,
@@ -111,8 +122,15 @@ const storedWakeupSchema = z
     env: z.record(z.string(), z.string()).optional(),
     watch: z.array(storedWatchSchema).min(1).optional(),
     all: z.boolean().optional(),
+    /** Seconds; null for none; absent for the default. */
+    timeoutSeconds: z.number().int().positive().nullable().optional(),
   })
-  .refine((wakeup) => wakeup.script !== undefined || wakeup.watch !== undefined);
+  .refine(
+    (wakeup) =>
+      wakeup.script !== undefined ||
+      wakeup.watch !== undefined ||
+      typeof wakeup.timeoutSeconds === "number"
+  );
 
 type StoredWakeup = z.infer<typeof storedWakeupSchema>;
 type StoredWatch = z.infer<typeof storedWatchSchema>;
@@ -164,7 +182,26 @@ export function describeWakeup(wakeup: StoredWakeup): string {
   if (wakeup.script !== undefined) {
     parts.push(parts.length === 0 ? wakeup.script : `script: ${wakeup.script}`);
   }
+  // The default timeout goes without saying; one given is part of what it waits for.
+  if (typeof wakeup.timeoutSeconds === "number") {
+    const after = formatDuration(wakeup.timeoutSeconds);
+    parts.push(parts.length === 0 ? `after ${after}` : `at the latest after ${after}`);
+  }
   return parts.join(" · or ");
+}
+
+/** The timeout a wakeup has in effect, in seconds; null for none. */
+export function timeoutOf(wakeup: StoredWakeup): number | null {
+  return wakeup.timeoutSeconds === undefined
+    ? DEFAULT_WAKEUP_TIMEOUT_SECONDS
+    : wakeup.timeoutSeconds;
+}
+
+/** When a hibernated workspace with this wakeup wakes at the latest (ms), or null. */
+function deadlineOf(wakeup: StoredWakeup, hibernatedAt: string | undefined): number | null {
+  const timeout = timeoutOf(wakeup);
+  if (timeout === null || hibernatedAt === undefined) return null;
+  return Date.parse(hibernatedAt) + timeout * 1000;
 }
 
 /** What a wakeup script printed: its verdict, or a message saying what is wrong with it. */
@@ -266,6 +303,7 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
           watch: wakeup.watch.map((w) => ({ workspace: w.workspace, until: w.until })),
         }),
       ...(wakeup.all === true && { all: true }),
+      ...(wakeup.timeoutSeconds !== undefined && { timeoutSeconds: wakeup.timeoutSeconds }),
     };
     await store(workspaceRef, stored);
   }
@@ -279,6 +317,10 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
     if (wakeup === undefined) return null;
     const lastRun = lastRuns.get(workspaceRef);
     const error = deps.pollErrors(WAKEUP_OWNER).find((entry) => entry.id === workspaceRef);
+    const deadline =
+      metadata?.[HIBERNATED_METADATA_KEY] === "true"
+        ? deadlineOf(wakeup, readHibernatedAt(metadata[HIBERNATED_AT_METADATA_KEY]))
+        : null;
     return {
       ...(wakeup.script !== undefined && {
         script: wakeup.script,
@@ -293,6 +335,8 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
         })),
       }),
       ...(wakeup.all === true && { all: true }),
+      timeoutSeconds: timeoutOf(wakeup),
+      ...(deadline !== null && { deadline: new Date(deadline).toISOString() }),
       ...(lastRun !== undefined && { lastRun }),
       ...(error !== undefined && {
         error: {
@@ -483,11 +527,19 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
       payload: {},
     });
     const jobs: PollJob[] = [];
+    const timedOut: Promise<unknown>[] = [];
     for (const project of projects ?? []) {
       for (const workspace of project.workspaces) {
         if (workspace.metadata[HIBERNATED_METADATA_KEY] !== "true") continue;
         const wakeup = decodeWakeup(workspace.metadata[WAKEUP_METADATA_KEY]);
-        if (wakeup?.script === undefined) continue;
+        if (wakeup === undefined) continue;
+        const hibernatedAt = readHibernatedAt(workspace.metadata[HIBERNATED_AT_METADATA_KEY]);
+        const deadline = deadlineOf(wakeup, hibernatedAt);
+        if (deadline !== null && now() >= deadline) {
+          timedOut.push(wakeOnTimeout(workspace.ref, wakeup, hibernatedAt));
+          continue;
+        }
+        if (wakeup.script === undefined) continue;
         const env = wakeup.env ?? {};
         jobs.push({
           owner: WAKEUP_OWNER,
@@ -505,7 +557,34 @@ export function createWakeupModule(deps: WakeupModuleDeps): WakeupModule {
         });
       }
     }
+    await Promise.all(timedOut);
     return jobs;
+  }
+
+  /** Wake a workspace whose timeout has passed, telling its agent what it waited for. */
+  async function wakeOnTimeout(
+    workspaceRef: WorkspaceRef,
+    wakeup: StoredWakeup,
+    hibernatedAt: string | undefined
+  ): Promise<void> {
+    const timeout = timeoutOf(wakeup) ?? 0;
+    const given = wakeup.timeoutSeconds === undefined ? " (the default)" : "";
+    const since = hibernatedAt === undefined ? "" : ` since it hibernated at ${hibernatedAt}`;
+    const conditions: string[] = [];
+    if (wakeup.watch !== undefined) {
+      const watches = wakeup.watch.map((w) => `${nameOf(w.workspace)} ${STATE_WORDS[w.until]}`);
+      conditions.push(watches.join(wakeup.all === true ? " and " : " or "));
+    }
+    if (wakeup.script !== undefined) conditions.push("its wakeup script says so");
+    const waited =
+      conditions.length === 0
+        ? ""
+        : `, before what it waited for came (until ${conditions.join(", or ")})`;
+    await wake(
+      workspaceRef,
+      "its timeout passed",
+      `Woken because its timeout of ${formatDuration(timeout)}${given} passed${since}${waited}.`
+    );
   }
 
   /** Act on what a wakeup script printed. Returns what went wrong, for the poll module. */

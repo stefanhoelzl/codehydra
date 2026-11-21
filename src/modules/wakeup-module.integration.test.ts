@@ -71,6 +71,7 @@ import type { OperationContext as EntryContext } from "../api/types";
 import { Path } from "../utils/path/path";
 
 const MINUTE = 60_000;
+const DAY_SECONDS = 24 * 60 * 60;
 const PROJECT_PATH = projPath(testPath("/projects/repo").toString());
 const PROJECT_REF = gitProjectRef(PROJECT_PATH);
 
@@ -189,6 +190,7 @@ function createSetup() {
     (intent, emit) => {
       const workspace = get(intent.payload.workspaceRef);
       workspace.metadata["hibernated"] = "true";
+      workspace.metadata["hibernated-at"] = new Date().toISOString();
       emit({
         type: EVENT_WORKSPACE_HIBERNATED,
         payload: {
@@ -390,8 +392,13 @@ describe("wakeup entries", () => {
       script: "gh pr checks 12",
       shell: "bash",
       env: { GH_HOST: "github.com", EMPTY: "" },
+      timeoutSeconds: 14 * DAY_SECONDS,
     });
-    expect(JSON.parse(ws.metadata[WAKEUP_METADATA_KEY]!)).toEqual(shown);
+    expect(JSON.parse(ws.metadata[WAKEUP_METADATA_KEY]!)).toEqual({
+      script: "gh pr checks 12",
+      shell: "bash",
+      env: { GH_HOST: "github.com", EMPTY: "" },
+    });
     expect(ws.metadata[WAKEUP_TAG_KEY]).toBeUndefined();
   });
 
@@ -613,7 +620,7 @@ describe("wakeup scripts: polling", () => {
       isDirty: false,
       hibernated: false,
       hibernatedAt: null,
-      wakeup: { script: "check", shell: "bash", env: {} },
+      wakeup: { script: "check", shell: "bash", env: {}, timeoutSeconds: 14 * DAY_SECONDS },
     });
     await setup.call("workspace.wakeup.clear", ws.ref);
     await expect(setup.call("workspace.status", ws.ref)).resolves.toEqual({
@@ -837,5 +844,95 @@ describe("wakeup: sidebar description", () => {
         all: true,
       })
     ).toBe("when a hibernates and b hibernates");
+  });
+});
+
+describe("wakeup: timeouts", () => {
+  it("wakes a workspace with a wakeup after 14 days by default, telling its agent why", async () => {
+    const setup = createSetup();
+    const ws = setup.add("pr-12");
+    setup.add("closer");
+    await setup.call("workspace.hibernate", ws.ref, { wakeup: "check", untilDeleted: ["closer"] });
+    const hibernatedAt = ws.metadata["hibernated-at"]!;
+    await expect(setup.call("workspace.wakeup.show", ws.ref)).resolves.toMatchObject({
+      timeoutSeconds: 14 * DAY_SECONDS,
+      deadline: new Date(Date.parse(hibernatedAt) + 14 * DAY_SECONDS * 1000).toISOString(),
+    });
+    await setup.start();
+
+    vi.setSystemTime(Date.parse(hibernatedAt) + 14 * DAY_SECONDS * 1000 - 2 * MINUTE);
+    await setup.tick(); // one minute short of it: the script still runs
+    expect(setup.sent()).toEqual([]);
+    expect(setup.requests).toHaveLength(2);
+
+    await setup.tick();
+    expect(setup.sent()).toEqual([
+      {
+        name: "pr-12",
+        text:
+          `Woken because its timeout of 14d (the default) passed since it hibernated at ` +
+          `${hibernatedAt}, before what it waited for came (until closer is deleted, or its ` +
+          "wakeup script says so).",
+      },
+    ]);
+    expect(setup.requests).toHaveLength(2); // timed out: its script no longer runs
+  });
+
+  it("takes a timeout alone, and one in other units", async () => {
+    const setup = createSetup();
+    const ws = setup.add("nap");
+    await setup.call("workspace.hibernate", ws.ref, { timeout: "2h" });
+    expect(JSON.parse(ws.metadata[WAKEUP_METADATA_KEY]!)).toEqual({ timeoutSeconds: 7200 });
+    await setup.start();
+
+    await vi.advanceTimersByTimeAsync(119 * MINUTE);
+    expect(setup.sent()).toEqual([]);
+    await setup.tick();
+    expect(setup.sent()[0]?.text).toMatch(/^Woken because its timeout of 2h passed since/);
+  });
+
+  it("never times out with timeout never", async () => {
+    const setup = createSetup();
+    const ws = setup.add("pr-12");
+    await setup.call("workspace.hibernate", ws.ref, { wakeup: "check", timeout: "never" });
+    await expect(setup.call("workspace.wakeup.show", ws.ref)).resolves.toMatchObject({
+      timeoutSeconds: null,
+    });
+    await setup.start();
+
+    vi.setSystemTime(Date.now() + 365 * DAY_SECONDS * 1000);
+    await setup.tick();
+    expect(setup.sent()).toEqual([]);
+  });
+
+  it("gives a plain hibernation no timeout", async () => {
+    const setup = createSetup();
+    const ws = setup.add("plain");
+    await setup.call("workspace.hibernate", ws.ref);
+    await setup.start();
+
+    vi.setSystemTime(Date.now() + 30 * DAY_SECONDS * 1000);
+    await setup.tick();
+    expect(setup.sent()).toEqual([]);
+    expect(setup.wakeOp.dispatched).toEqual([]);
+  });
+
+  it("refuses a timeout that is not a duration, and never on its own", async () => {
+    const setup = createSetup();
+    const ws = setup.add("ws");
+    for (const timeout of ["10x", "0d", "d", "-1h", "never"]) {
+      await expect(setup.call("workspace.wakeup.set", ws.ref, { timeout })).rejects.toMatchObject({
+        category: "usage",
+      });
+    }
+    expect(ws.metadata[WAKEUP_METADATA_KEY]).toBeUndefined();
+  });
+
+  it("describes a timeout given in the sidebar, not the default", () => {
+    const describe = (value: object) => describeWakeup(decodeWakeup(JSON.stringify(value))!);
+    expect(describe({ timeoutSeconds: 7200 })).toBe("after 2h");
+    expect(describe({ script: "check", timeoutSeconds: 10 * DAY_SECONDS })).toBe(
+      "check · or at the latest after 10d"
+    );
   });
 });

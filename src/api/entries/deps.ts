@@ -274,10 +274,22 @@ export interface Wakeup {
   readonly watch?: readonly WorkspaceWatch[];
   /** Wake only once every watched workspace has reached its state (default: any). */
   readonly all?: boolean;
+  /**
+   * How long it may sleep at most, counted from when it hibernated: seconds,
+   * or null for no limit. Absent: {@link DEFAULT_WAKEUP_TIMEOUT_SECONDS}.
+   */
+  readonly timeoutSeconds?: number | null;
 }
 
+/** How long a workspace with a wakeup sleeps at most, unless told otherwise: 14 days. */
+export const DEFAULT_WAKEUP_TIMEOUT_SECONDS = 14 * 24 * 60 * 60;
+
 /** A wakeup, with how its script last went. */
-export interface WakeupStatus extends Wakeup {
+export interface WakeupStatus extends Omit<Wakeup, "timeoutSeconds"> {
+  /** The timeout in effect (the default when none was given); null for none. */
+  readonly timeoutSeconds: number | null;
+  /** While hibernated with a timeout: when it wakes at the latest (ISO time). */
+  readonly deadline?: string;
   /** The last run since it was set, if it has run (one that woke it cleared the script). */
   readonly lastRun?: {
     /** ISO time it finished. */

@@ -438,12 +438,19 @@ sleep, and it wakes the workspace on whichever of its conditions comes first:
 - a **wakeup script** that runs every poll and says when to wake — "wake me
   when CI on PR #12 finishes";
 - **other workspaces** it waits for, each to be deleted, to hibernate or to
-  wake — "wake me when `feature-x` is deleted".
+  wake — "wake me when `feature-x` is deleted";
+- its **timeout**: whatever it waits for, it wakes at the latest this long
+  after it hibernated — 14 days unless given another (`--timeout 10d`) or none
+  (`--timeout never`), so a wakeup that never comes (a buggy script, a
+  workspace nobody deletes) cannot leave it asleep and forgotten. A timeout
+  alone is a wakeup too: `ch ws hibernate --timeout 2h` naps for two hours. A
+  workspace you hibernate without any wakeup has no timeout.
 
 ```sh
 ch ws hibernate --wakeup 'gh pr checks 12 >/dev/null && echo "{\"action\":\"wake\",\"message\":\"CI on #12 passed\"}" || true'
 ch ws hibernate --until-deleted feature-x
 ch ws hibernate --until-deleted feature-x --wakeup '…'   # whichever comes first
+ch ws hibernate --until-deleted feature-x --timeout 10d  # …or after 10 days
 ```
 
 - **Setting it** — `ch ws hibernate` with any of the options below sets it
@@ -467,10 +474,11 @@ ch ws hibernate --until-deleted feature-x --wakeup '…'   # whichever comes fir
   | `--until-hibernated <workspace>`               | Wake once that awake workspace hibernates                                                                              |
   | `--until-woken <workspace>`                    | Wake once that hibernated workspace wakes                                                                              |
   | `--all`                                        | With several workspaces to wait for: wake only once every one of them has got there (default: the first one that does) |
+  | `--timeout <duration>`                         | Wake at the latest this long after hibernating: `90s`, `30m`, `12h`, `10d`, `2w`, or `never` (default `14d`)           |
 
   The `--until-*` options repeat, for several workspaces, and mix. A workspace
   is named as for `--workspace`: its name (your own project first),
-  `<project>::<name>` or its ref. A wakeup that waits for nothing is refused,
+  `<project>::<name>` or its ref. A wakeup that waits for nothing (`--timeout never` alone) is refused,
   and so is one that could never mean what was asked: a workspace waiting for
   itself, for one that is not open, or for a state its workspace is already
   in (`--until-hibernated` on a hibernated one, `--until-woken` on an awake
@@ -499,7 +507,9 @@ ch ws hibernate --until-deleted feature-x --wakeup '…'   # whichever comes fir
   stay where you are).
 - **Woken** — by its wakeup, a workspace wakes in place and its agent gets a
   [message](#messages-to-a-running-agent) signed `CodeHydra · wakeup`: the
-  script's message, or why it woke. Woken with a message, it goes from loading
+  script's message, or why it woke (which workspace got where, or that its
+  timeout passed and what it was still waiting for). `ch ws wakeup show`
+  gives the timeout in effect and, while hibernated, the `deadline`. Woken with a message, it goes from loading
   straight to busy and stays busy until its agent has handled the message, so
   it chimes once, when that is done. There is no delete: to have a workspace
   deleted, wake it with a message asking its agent to delete it.
@@ -1979,7 +1989,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `ws create <name> [base]`                                          | New workspace (`--project`, `--tracking`, `--prompt`, `--agent`, `--model`, `--permission-mode`, `--agent-name`)                                                                                                       |
 | `ws delete`                                                        | Delete the workspace (`--keep-branch`, `--ignore-warnings`, `--no-wait`)                                                                                                                                               |
 | `ws hibernate`, `ws wake`                                          | Hibernate (with a [wakeup](#wakeups): `--wakeup <script>`, `--until-deleted` …) / wake                                                                                                                                 |
-| `ws wakeup set [<script>]\|clear\|show`                            | The [wakeup](#wakeups) (`--shell`, `--env KEY=VALUE`, `--until-deleted\|hibernated\|woken <workspace>`, `--all`; `-` reads the script from stdin)                                                                      |
+| `ws wakeup set [<script>]\|clear\|show`                            | The [wakeup](#wakeups) (`--shell`, `--env KEY=VALUE`, `--until-deleted\|hibernated\|woken <workspace>`, `--all`, `--timeout`; `-` reads the script from stdin)                                                         |
 | `ws switch <workspace>`                                            | Make a workspace the active one (`switched: false` while the New workspace form has input)                                                                                                                             |
 | `ws title [title]`                                                 | Sidebar title; with no title, clears it and the row shows the branch again                                                                                                                                             |
 | `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                                                                                                                             |

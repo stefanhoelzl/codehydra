@@ -14,6 +14,7 @@ import type { WorkspaceRef } from "../../intents/contract";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
 import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
 import type { EntryDeps, Wakeup, WakeupScript, WatchState, WorkspaceWatch } from "./deps";
+import { DEFAULT_WAKEUP_TIMEOUT_SECONDS } from "./deps";
 import {
   createReferenceResolver,
   createTargetResolver,
@@ -26,11 +27,47 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** CodeHydra's own variables, which a script may not override. */
 const RESERVED_ENV_PREFIX = "_CH_";
 
+const DURATION = /^(\d+)([smhdw])$/;
+/** Each unit a duration may be given in, largest first, with its seconds. */
+const UNITS = [
+  ["w", 7 * 24 * 60 * 60],
+  ["d", 24 * 60 * 60],
+  ["h", 60 * 60],
+  ["m", 60],
+  ["s", 1],
+] as const;
+
+/** A duration as `10d`, `12h`, `30m`, `90s` or `2w`, in seconds; null for `never`. */
+export function parseDuration(text: string): number | null {
+  if (text === "never") return null;
+  const match = DURATION.exec(text.trim());
+  const unit = UNITS.find(([name]) => name === match?.[2]);
+  const seconds = match && unit ? Number(match[1]) * unit[1] : 0;
+  if (seconds <= 0) {
+    throw new ApiError(
+      "usage",
+      `timeout "${text}" is not a duration like 10d, 12h, 30m, 90s, 2w, or never`
+    );
+  }
+  return seconds;
+}
+
+/** Seconds as the largest whole unit up to days: `14d`, `36h`, `90m`, `45s`. */
+export function formatDuration(seconds: number): string {
+  const [name, size] = UNITS.find(([unit, size]) => unit !== "w" && seconds % size === 0) ?? [
+    "s",
+    1,
+  ];
+  return `${seconds / size}${name}`;
+}
+
 export const WAKEUP_INSTRUCTIONS =
   "A hibernated workspace wakes on whichever comes first: its wakeup script says so, or the " +
   "workspaces it waits on (untilDeleted, untilHibernated, untilWoken; any one of them, every " +
   "one with all) reach their state, checked the moment any workspace is deleted, hibernated " +
-  "or woken. The script runs every poll tick (poll.interval, default 60 s; killed after " +
+  "or woken. Either way it wakes once its timeout has passed since it hibernated (default " +
+  `${formatDuration(DEFAULT_WAKEUP_TIMEOUT_SECONDS)}; never with timeout "never"), so a ` +
+  "condition that never comes cannot leave it asleep for good. The script runs every poll tick (poll.interval, default 60 s; killed after " +
   "poll.timeout, default 30 s) while the workspace is hibernated, in its worktree, with `ch` " +
   'on PATH. It prints nothing or {"action":"keep"} to stay asleep, or ' +
   '{"action":"wake","message":"…"} to wake the workspace in place and send the message to its ' +
@@ -77,6 +114,14 @@ export const wakeupWatchFields = {
       "With several watched workspaces, wake only once every one has reached its state " +
         "(default: the first one does)"
     ),
+  timeout: z
+    .string()
+    .optional()
+    .describe(
+      "Wake at the latest this long after hibernating, as 10d, 12h, 30m, 90s or 2w; never " +
+        `for no limit (default ${formatDuration(DEFAULT_WAKEUP_TIMEOUT_SECONDS)}). ` +
+        "On its own, it wakes the workspace after that long."
+    ),
 };
 
 /** Turn the input fields into a script, refusing a malformed variable. */
@@ -113,6 +158,7 @@ export interface WakeupInput {
   readonly untilHibernated?: readonly string[] | undefined;
   readonly untilWoken?: readonly string[] | undefined;
   readonly all?: boolean | undefined;
+  readonly timeout?: string | undefined;
 }
 
 /** Whether the input gives any wakeup field: then it replaces the wakeup as a whole. */
@@ -125,6 +171,7 @@ export function hasWakeupFields(input: WakeupInput): boolean {
     untilHibernated: input.untilHibernated,
     untilWoken: input.untilWoken,
     all: input.all,
+    timeout: input.timeout,
   }).some((value) => value !== undefined);
 }
 
@@ -164,11 +211,12 @@ export function createWakeupBuilder(
     if (input.all === true && watch.length === 0) {
       throw new ApiError("usage", "all says how to wait for several workspaces: name some.");
     }
-    if (input.script === undefined && watch.length === 0) {
+    const timeoutSeconds = input.timeout === undefined ? undefined : parseDuration(input.timeout);
+    if (input.script === undefined && watch.length === 0 && typeof timeoutSeconds !== "number") {
       throw new ApiError(
         "usage",
-        "Nothing to wake on: give a script, or workspaces to wait for (untilDeleted, " +
-          "untilHibernated, untilWoken)."
+        "Nothing to wake on: give a script, workspaces to wait for (untilDeleted, " +
+          "untilHibernated, untilWoken) or a timeout."
       );
     }
 
@@ -199,6 +247,7 @@ export function createWakeupBuilder(
         toWakeupScript({ script: input.script, shell: input.shell, env: input.env })),
       ...(watch.length > 0 && { watch }),
       ...(input.all === true && { all: true }),
+      ...(timeoutSeconds !== undefined && { timeoutSeconds }),
     };
   };
 }
@@ -211,7 +260,7 @@ export function wakeupEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     name: "workspace.wakeup.set",
     kind: "command",
     description:
-      "Set what wakes a hibernated workspace: a script, workspaces to wait for, or both.",
+      "Set what wakes a hibernated workspace: a script, workspaces to wait for, a timeout.",
     instructions:
       "Replaces the workspace's wakeup, if it has one, as a whole. Set it while awake to arm " +
       "the next hibernation, or hibernate with the same fields in one call. " +
@@ -249,7 +298,8 @@ export function wakeupEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     description: "Show a workspace's wakeup and how its script last ran.",
     instructions:
       "Null when it has none. watch lists the workspaces it waits on, each with the state it " +
-      "is waited for; lastRun is the script's last run since it was set; error is its current " +
+      "is waited for; timeoutSeconds is the timeout in effect (null for none) and deadline, " +
+      "while it is hibernated, when it wakes at the latest; lastRun is the script's last run since it was set; error is its current " +
       "failure, with the failed run's log file.",
     input: z.object(targetFields),
     requiresWorkspace: true,
