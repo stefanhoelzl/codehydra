@@ -51,7 +51,8 @@ export interface ClaudeCodeHookPayload {
    * What the tool returned, for PostToolUse. Checked on 2.1.310: an `Agent`
    * call in the background answers `{agentId, description, …}`, a `Bash` call
    * in the background `{backgroundTaskId, …}` — that task's id in
-   * background_tasks.
+   * background_tasks. A `Monitor` call answers `{taskId, …}`, likewise
+   * (checked on 2.1.332).
    */
   readonly tool_response?: unknown;
   /** Notification type for Notification hook */
@@ -76,6 +77,10 @@ export interface ClaudeCodeHookPayload {
  * - workflow: `{id, type: "workflow", status: "running", description, name}` —
  *   a `Workflow` tool call, which always runs in the background; `description`
  *   is the script's `meta.description` (checked on 2.1.319)
+ * - monitor:  `{id, type: "monitor", status: "running", description, command}` —
+ *   a background shell the `Monitor` tool or a Claude plugin started; an MCP
+ *   monitor carries `server` and `tool` instead of `command`. Listed as "shell"
+ *   before; as "monitor" on 2.1.332.
  * All fields optional — the payload is external input.
  */
 export interface ClaudeCodeBackgroundTask {
@@ -247,10 +252,10 @@ export function isBackgroundWrapped(command: string): boolean {
  * A background sub-agent (type "subagent") or workflow (type "workflow") keeps
  * the workspace busy unless its description starts with `[bg]` (see
  * isBackgroundAgentLabel). A background
- * shell (type "shell") keeps it busy by default — the exception is a shell
- * invoked through the `ch-bg` wrapper, or started by a `[bg]` sub-agent (its id
- * in `optedOutShells`), which opt out. Non-running tasks and other types never
- * qualify.
+ * shell (type "shell") or monitor (type "monitor") keeps it busy by default —
+ * the exception is one invoked through the `ch-bg` wrapper, or started by a
+ * `[bg]` sub-agent (its id in `optedOutShells`), which opt out. Non-running
+ * tasks and other types never qualify.
  */
 export function taskKeepsBusy(
   task: ClaudeCodeBackgroundTask,
@@ -262,7 +267,7 @@ export function taskKeepsBusy(
   if (task.type === "subagent" || task.type === "workflow") {
     return !isBackgroundAgentLabel(task.description);
   }
-  if (task.type !== "shell") {
+  if (!isShellLike(task)) {
     return false;
   }
   return !isBackgroundWrapped(task.command ?? "") && !isOptedOutShell(task, optedOutShells);
@@ -285,8 +290,8 @@ export function isOptedOutWorkflow(task: ClaudeCodeBackgroundTask): boolean {
 }
 
 /**
- * A running background shell a `[bg]` sub-agent started (its id in
- * `optedOutShells`): opted out with the sub-agent, and like it may wake that
+ * A running background shell (or monitor) a `[bg]` sub-agent started (its id
+ * in `optedOutShells`): opted out with the sub-agent, and like it may wake that
  * sub-agent when it exits.
  */
 export function isOptedOutShell(
@@ -294,8 +299,13 @@ export function isOptedOutShell(
   optedOutShells: ReadonlySet<string>
 ): boolean {
   return (
-    isRunning(task) && task.type === "shell" && task.id !== undefined && optedOutShells.has(task.id)
+    isRunning(task) && isShellLike(task) && task.id !== undefined && optedOutShells.has(task.id)
   );
+}
+
+/** A background shell, or a monitor (Claude lists a `Monitor` shell as "monitor"). */
+function isShellLike(task: ClaudeCodeBackgroundTask): boolean {
+  return task.type === "shell" || task.type === "monitor";
 }
 
 function isRunning(task: ClaudeCodeBackgroundTask): boolean {
