@@ -601,6 +601,11 @@ Prefix a long-lived background command with `ch bg` (or the equivalent
 ch bg npm run dev
 ```
 
+In Claude Code, a monitor (the `Monitor` tool, which watches a command's
+output in the background) counts as a background shell: it keeps the
+workspace busy, unless its command runs through `ch bg`. So does a monitor a
+Claude plugin starts on its own, for as long as it runs.
+
 It runs the command unchanged, with the same output and exit code (128 + the
 signal number when a signal kills it, as a shell reports it), and only
 tells CodeHydra to leave the workspace status alone. It matters only for

@@ -260,6 +260,32 @@ describe("deriveStatus", () => {
       expect(result).toMatchObject({ status: "idle", flags: { busyForBackgroundTasks: false } });
     });
 
+    it("stays busy on a Stop while a monitor runs", () => {
+      // The entry Claude 2.1.332 lists for a `Monitor` tool call.
+      const result = derive(input("busy"), "Stop", {
+        background_tasks: [
+          {
+            id: "bd70o3jjt",
+            type: "monitor",
+            status: "running",
+            description: "watch CI",
+            command: "gh run watch 123",
+          },
+        ],
+      });
+      expect(result).toMatchObject({ status: null, flags: { busyForBackgroundTasks: true } });
+      expect(result.suppressed).toEqual([
+        { reason: "background-tasks", tasks: "gh run watch 123" },
+      ]);
+    });
+
+    it("goes idle when a monitor opted out through ch bg", () => {
+      const result = derive(input("busy"), "Stop", {
+        background_tasks: [{ type: "monitor", status: "running", command: "ch bg tail -f log" }],
+      });
+      expect(result).toMatchObject({ status: "idle", flags: { busyForBackgroundTasks: false } });
+    });
+
     it("goes busy when a Stop lifts a dropped AskUserQuestion park while tasks run", () => {
       const result = derive(input("idle", { awaitingUserInputResolution: true }), "Stop", {
         background_tasks: [{ type: "subagent", status: "running", agent_type: "Explore" }],
@@ -575,6 +601,28 @@ describe("trackBackgroundOwners", () => {
       ["PostToolUse", { tool_name: "Bash", tool_response: { backgroundTaskId: "b2" } }]
     );
     expect(owners.optedOutShells.size).toBe(0);
+  });
+
+  it("opts out a monitor a [bg] sub-agent started, so the main Stop goes idle", () => {
+    // A `Monitor` call answers its task id as `taskId` (shape of 2.1.332).
+    const owners = track(
+      INITIAL_BACKGROUND_OWNERS,
+      ["PostToolUse", launchAgent("[bg] measure")],
+      [
+        "PostToolUse",
+        {
+          agent_id: "a1",
+          tool_name: "Monitor",
+          tool_input: { command: "tail -f log", description: "watch log" },
+          tool_response: { taskId: "m1", timeoutMs: 300000, persistent: false },
+        },
+      ]
+    );
+    expect([...owners.optedOutShells]).toEqual(["m1"]);
+    const result = derive(input("busy", {}, false, owners.optedOutShells), "Stop", {
+      background_tasks: [{ id: "m1", type: "monitor", status: "running", command: "tail -f log" }],
+    });
+    expect(result).toMatchObject({ status: "idle", flags: { idleBesideBackgroundAgents: true } });
   });
 
   /** A workflow agent's PostToolUse for a Bash call in the background (shape of 2.1.319). */

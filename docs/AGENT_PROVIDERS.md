@@ -296,7 +296,7 @@ A question put to the user blocks the workspace on them, so it reads **idle** wh
 ### Background Tasks: Sub-agents and Shells (Claude Code)
 
 The `Stop` hook payload carries `background_tasks` — the live snapshot of still-running
-background work, each entry tagged `type: "shell"`, `"subagent"` or `"workflow"`. On every `Stop`
+background work, each entry tagged `type: "shell"`, `"monitor"`, `"subagent"` or `"workflow"`. On every `Stop`
 the bridge evaluates it (`taskKeepsBusy`) and, when any qualifies, keeps the workspace
 busy instead of going idle:
 
@@ -331,6 +331,13 @@ busy instead of going idle:
   on 2.1.310). A shell the main agent's `Stop` no longer lists is forgotten. A Stop that
   goes idle beside such a shell also sets `idleBesideBackgroundAgents`: the sub-agent
   resumes when its shell exits.
+- A running **monitor** (`type: "monitor"`) is treated like a shell (`isShellLike`,
+  `types.ts`). Claude lists the `Monitor` tool's shell this way, where it once said
+  `"shell"` (checked on 2.1.332), with its `command`; a monitor a Claude plugin arms for
+  the session looks the same and keeps the workspace busy too, and an MCP monitor
+  carries `server`/`tool` instead of a command, so it always does. The `Monitor` call's
+  `PostToolUse` answers `tool_response.taskId` rather than `backgroundTaskId`, which is
+  how a `[bg]` sub-agent's monitor is opted out with it.
 
 The decision is stashed to also suppress the `idle_prompt` notification that fires ~60s
 after Stop, and cleared when the agent is re-invoked (`UserPromptSubmit`, which fires

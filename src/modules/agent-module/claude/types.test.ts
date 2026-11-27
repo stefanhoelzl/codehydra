@@ -118,6 +118,21 @@ describe("taskKeepsBusy", () => {
     expect(isOptedOutWorkflow({ ...workflow, type: "subagent" })).toBe(false);
   });
 
+  it("a monitor keeps busy like a shell, unless wrapped", () => {
+    // Claude 2.1.332 lists a `Monitor` tool's shell as type "monitor".
+    const monitor = { ...runningShell, type: "monitor", command: "gh run watch 1" };
+    expect(taskKeepsBusy(monitor)).toBe(true);
+    expect(taskKeepsBusy({ ...monitor, command: "ch bg gh run watch 1" })).toBe(false);
+    expect(taskKeepsBusy({ ...monitor, id: "m1" }, new Set(["m1"]))).toBe(false);
+    expect(taskKeepsBusy({ ...monitor, status: "completed" })).toBe(false);
+  });
+
+  it("an MCP monitor (no command) keeps busy", () => {
+    expect(taskKeepsBusy({ id: "m1", type: "monitor", status: "running", description: "x" })).toBe(
+      true
+    );
+  });
+
   it("other types never keep busy", () => {
     expect(taskKeepsBusy({ ...runningShell, type: "agent" })).toBe(false);
   });

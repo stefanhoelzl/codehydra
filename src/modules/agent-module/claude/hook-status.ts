@@ -111,7 +111,8 @@ export const INITIAL_BACKGROUND_OWNERS: BackgroundOwners = {
  *   background_tasks list names running `[bg]` sub-agents too, should that
  *   PostToolUse arrive late (each hook is a process of its own).
  * - A `[bg]` sub-agent's PostToolUse for a `Bash` call in the background
- *   answers the shell's `backgroundTaskId`, its id in background_tasks.
+ *   answers the shell's `backgroundTaskId`, its id in background_tasks; a
+ *   `Monitor` call its `taskId`.
  * - So does a workflow agent's, and its shell is opted out whatever the
  *   workflow: see {@link isWorkflowAgentShell}.
  * - The main agent's Stop lists every running shell, so a shell it does not
@@ -144,7 +145,8 @@ export function trackBackgroundOwners(
     ) {
       optedOutAgents = new Set([...optedOutAgents, launchedAgent]);
     }
-    const launchedShell = response?.backgroundTaskId;
+    const launchedShell =
+      payload.tool_name === "Monitor" ? response?.taskId : response?.backgroundTaskId;
     if (
       payload.agent_id !== undefined &&
       (optedOutAgents.has(payload.agent_id) || isWorkflowAgentShell(payload, response)) &&
@@ -424,7 +426,8 @@ export function deriveStatus(
   // sub-agents and workflows do unless their description starts with `[bg]`
   // (a workflow's is its script's `meta.description`); shells do by default, unless invoked
   // through the `ch-bg` wrapper (its marker in the command opts the shell out)
-  // or started by a `[bg]` sub-agent (input.optedOutShells).
+  // or started by a `[bg]` sub-agent (input.optedOutShells). A monitor (the
+  // `Monitor` tool's, a plugin's or an MCP one) counts as a shell.
   // When none qualifies but `[bg]` sub-agents, workflows or shells run on, the
   // workspace goes idle and sub-agent hooks are ignored until the main agent's
   // next turn — a `[bg]` sub-agent resumes when its shell exits
